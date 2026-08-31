@@ -1,0 +1,30 @@
+[workspace]
+resolver = "3"
+members = ["crates/yamluna-scanner", "crates/yamluna-core", "crates/yamluna-py"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/qilimanjaro-tech/yamluna"
+authors = ["Vyron Vasileiadis <vyron@qilimanjaro.tech>"]
+
+[workspace.dependencies]
+yamluna-scanner = { path = "crates/yamluna-scanner", version = "0.1.0" }
+yamluna-core = { path = "crates/yamluna-core", version = "0.1.0" }
+arraydeque = { version = "0.5.1", default-features = false }
+thiserror = { version = "2.0", default-features = false }
+hashlink = "0.12"
+pyo3 = "0.29"
+libtest-mimic = "0.8"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = true
+codegen-units = 1

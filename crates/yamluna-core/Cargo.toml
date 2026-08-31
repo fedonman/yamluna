@@ -1,0 +1,16 @@
+[package]
+name = "yamluna-core"
+description = "Round-trip YAML document model, loader and emitter for yamluna."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+yamluna-scanner.workspace = true
+thiserror = { workspace = true, features = ["std"] }
+
+[lints]
+workspace = true

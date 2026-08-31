@@ -1,0 +1,31 @@
+[package]
+name = "yamluna-scanner"
+description = "YAML 1.2 scanner/parser for yamluna: a fork of saphyr-parser that keeps comments, collection styles and anchor names."
+readme = "README.md"
+categories = ["encoding", "parser-implementations"]
+keywords = ["yaml", "parser"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+exclude = ["/tests/yaml-test-suite"]
+
+[features]
+debug_prints = []
+
+[dependencies]
+arraydeque.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+libtest-mimic.workspace = true
+saphyr = "0.0.12"
+
+[lints]
+workspace = true
+
+[[test]]
+name = "yaml-test-suite"
+harness = false

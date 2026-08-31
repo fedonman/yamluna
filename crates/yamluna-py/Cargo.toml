@@ -1,0 +1,20 @@
+[package]
+name = "yamluna-py"
+description = "PyO3 bindings for yamluna."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+name = "_yamluna"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+yamluna-core.workspace = true
+pyo3 = { workspace = true, features = ["extension-module", "abi3-py311"] }
+
+[lints]
+workspace = true

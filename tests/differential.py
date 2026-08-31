@@ -24,8 +24,15 @@ The ruamel configuration is the ordinary round-trip recipe::
 
 and yamluna is given exactly the same two lines.  Everything else is left at its
 default in both, including ``width = 80`` (so refolded long lines show up as a
-failure -- that is a real default-configuration behaviour, not a rigged one) and
-``allow_duplicate_keys = False``.
+failure -- that is a real default-configuration behaviour, not a rigged one).
+
+The one exception is ``allow_duplicate_keys``.  It defaults to ``False``, and
+``corpus/key-duplicate.yaml`` deliberately holds duplicate keys, so both
+libraries correctly *refuse* it -- refusing is the behaviour that file
+specifies, and a correct refusal is not a round-trip failure.  That file is
+therefore measured with ``allow_duplicate_keys = True``, which is the only
+configuration under which a round trip of it is a meaningful question at all;
+``tests/test_duplicate_keys.py`` covers the refusal itself.
 """
 
 from __future__ import annotations
@@ -75,9 +82,16 @@ def dump_with_ruamel(data: list[Any], yaml: YAML | None = None) -> str:
     return buf.getvalue()
 
 
-def roundtrip_with_ruamel(text: str, sequence: int = 2, offset: int = 0) -> str:
+def roundtrip_with_ruamel(
+    text: str,
+    sequence: int = 2,
+    offset: int = 0,
+    *,
+    allow_duplicate_keys: bool = False,
+) -> str:
     """``load`` then ``dump`` through one ruamel instance, as users do."""
     yaml = ruamel_rt(sequence, offset)
+    yaml.allow_duplicate_keys = allow_duplicate_keys
     return dump_with_ruamel(load_with_ruamel(text, yaml), yaml)
 
 
@@ -86,12 +100,13 @@ def roundtrip_with_ruamel(text: str, sequence: int = 2, offset: int = 0) -> str:
 # --------------------------------------------------------------------------
 
 
-def roundtrip_with_yamluna(text: str) -> str:
+def roundtrip_with_yamluna(text: str, *, allow_duplicate_keys: bool = False) -> str:
     """``load_all`` then ``dump_all`` through one ``yamluna.YAML``, as users do."""
     import yamluna
 
     yaml = yamluna.YAML()  # typ='rt'
     yaml.preserve_quotes = True
+    yaml.allow_duplicate_keys = allow_duplicate_keys
     buf = io.StringIO()
     yaml.dump_all(list(yaml.load_all(text)), buf)
     return buf.getvalue()
@@ -104,6 +119,15 @@ def read_corpus_file(path: Path) -> str:
 
 def corpus_files() -> list[Path]:
     return sorted(CORPUS_DIR.glob("*.yaml"))
+
+
+#: Corpus files whose subject matter the default configuration is right to
+#: reject, mapped to the options that make a round trip of them measurable.
+#: Scoring a correct refusal as a round-trip failure would be dishonest in both
+#: columns; the refusal has its own tests.
+CORPUS_OPTIONS: dict[str, dict[str, bool]] = {
+    "key-duplicate": {"allow_duplicate_keys": True},
+}
 
 
 # --------------------------------------------------------------------------
@@ -134,20 +158,21 @@ def check_file(
     path: Path,
     sequence: int = 2,
     offset: int = 0,
-    roundtrip: Callable[[str], str] | None = None,
+    roundtrip: Callable[..., str] | None = None,
     label: str = "ruamel",
 ) -> Result:
     """Round-trip one corpus file through a library and report what changed."""
     if roundtrip is None:
 
-        def roundtrip(text: str) -> str:
-            return roundtrip_with_ruamel(text, sequence, offset)
+        def roundtrip(text: str, **options: bool) -> str:
+            return roundtrip_with_ruamel(text, sequence, offset, **options)
 
+    options = CORPUS_OPTIONS.get(path.stem, {})
     source = read_corpus_file(path)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         try:
-            output = roundtrip(source)
+            output = roundtrip(source, **options)
         except Exception as exc:  # noqa: BLE001 - the failure mode *is* the result
             first = str(exc).strip().splitlines()
             error = f"{type(exc).__name__}: {first[0] if first else ''}".strip()

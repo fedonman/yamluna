@@ -57,3 +57,28 @@ fn tab_at_start_of_block_scalar_is_rejected() {
         err.info()
     );
 }
+
+#[test]
+fn tab_after_colon_in_flow_mapping_is_separation_whitespace() {
+    // YAML 1.2.2 [148]: `:` in a flow mapping is followed by `s-separate(n,c)`, which for a flow
+    // context is `s-separate-lines` -> `s-white+`, and [33] `s-white` includes TAB. There is no
+    // indentation inside a flow collection, so nothing here can be a block collection.
+    let scalars = collect_scalars("flow_map: {a:\tb, c:\td}\n")
+        .expect("parser should accept a tab after ':' inside a flow mapping");
+    assert_eq!(scalars, ["flow_map", "a", "b", "c", "d"]);
+}
+
+#[test]
+fn tab_after_colon_in_block_context_is_still_rejected() {
+    // yaml-test-suite Y79Y-08/Y79Y-10: in block context the value on the same line must be a flow
+    // node; a nested block collection needs `s-indent`, which is spaces only.
+    for yaml in ["? -\n:\t-\n", "? key:\n:\tkey:\n"] {
+        let err = collect_scalars(yaml).expect_err("block context must still reject this");
+        assert!(
+            err.info()
+                .contains("must be followed by a valid YAML whitespace"),
+            "unexpected error for {yaml:?}: {}",
+            err.info()
+        );
+    }
+}

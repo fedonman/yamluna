@@ -15,6 +15,26 @@ Both extension calls go through :func:`_extension`, which is imported *lazily*: 
 type work with no Rust extension built.  Calling :meth:`YAML.load` or :meth:`YAML.dump`
 without it raises an :class:`ImportError` naming the build command.
 
+**Empty documents.**  ``load`` returns the root object, and a document with no root -- a
+file that is only comments, or a bare ``---`` -- has ``None`` for a root.  ``None`` is a
+singleton: it cannot carry the :data:`~yamluna.constructor.DOC_ATTRIB` record every other
+root carries, so ``---``, ``%YAML``, ``%TAG`` and the document's own comments would have
+nowhere to live and the file would round-trip to ``null``.
+
+They live here instead, in :attr:`YAML._empty`: the records of the documents that loaded
+as ``None``, keyed by their position in **the stream this instance loaded last**.
+:meth:`dump_all` hands each record back to the ``None`` at the same position, and since a
+document that loaded as ``None`` has no content the user could have edited, the record
+*is* the document -- it is re-emitted as it was read.
+
+The alternatives were a sentinel object (``load`` would stop returning ``None``, which is
+ruamel's contract and what every ``if data is None:`` in the wild tests) and an empty
+``CommentedMap`` carrier (same problem, plus it is falsely a mapping).  The cost of this
+one is that the association is positional: a load followed by a dump of a *different*
+number of documents can hand a record to the wrong empty document, and every load
+replaces the table.  That is the same "safe way to be wrong" as a stale ``.lc``, and it is
+exact for the load-edit-dump cycle the library exists for.
+
 **Each instance owns its registry** (DIVERGENCES C2).  ruamel's ``register_class`` is a
 classmethod that mutates process-global tables, so two ``YAML()`` objects in one process
 poison each other; here two instances can register different classes under the same tag
@@ -152,6 +172,7 @@ class YAML:
 
     __slots__ = (
         '_cm_docs',
+        '_empty',
         '_output',
         '_version',
         'allow_duplicate_keys',
@@ -200,6 +221,9 @@ class YAML:
 
         self._output: WriteStream = output
         self._cm_docs: list[Any] | None = None
+        #: The document records of the last-loaded stream's empty documents, by position.
+        #: See "Empty documents" in the module docstring for why they live here.
+        self._empty: dict[int, Doc] = {}
 
     def __repr__(self) -> str:
         return f'YAML(typ={self.typ!r})'
@@ -305,7 +329,11 @@ class YAML:
         docs: list[Doc] = parse(text, allow_duplicate_keys=self.allow_duplicate_keys)
         from . import constructor
 
-        return [constructor.construct(doc, self) for doc in docs]
+        built = [constructor.construct(doc, self) for doc in docs]
+        # A document that constructed to `None` has nowhere to keep its record; keep it.
+        pairs = enumerate(zip(docs, built, strict=True))
+        self._empty = {i: doc for i, (doc, obj) in pairs if obj is None}
+        return built
 
     # -- dumping ----------------------------------------------------------------------
 
@@ -330,7 +358,10 @@ class YAML:
         emit = _extension().emit  # before representer, so "not built" is the first error
         from . import representer
 
-        docs: list[Doc] = [representer.represent(d, self) for d in documents]
+        docs: list[Doc] = [
+            representer.represent(d, self, carried=self._empty.get(i) if d is None else None)
+            for i, d in enumerate(documents)
+        ]
         for doc in docs:
             if self.explicit_start is not None:
                 doc.explicit_start = self.explicit_start

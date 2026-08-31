@@ -2593,7 +2593,14 @@ impl<'input, T: Input> Scanner<'input, T> {
 
         // Skip over ':'.
         self.skip_non_blank();
-        if self.input.look_ch() == '\t'
+        // In block context, what follows a `:` on the same line may only be a flow node
+        // (`s-l+flow-in-block`); a nested block collection needs `s-indent`, which is spaces
+        // only, so `:\t-` and `:\tkey:` are errors (yaml-test-suite Y79Y).
+        // Inside a flow collection there is no indentation and no block collection can start,
+        // so a tab there is plain separation white space: `s-separate-lines` admits `s-white+`
+        // and `s-white` includes TAB (YAML 1.2.2 [80], [33], [148]). `{a:\tb}` is valid.
+        if self.flow_level == 0
+            && self.input.look_ch() == '\t'
             && !self.skip_ws_to_eol(SkipTabs::Yes)?.has_valid_yaml_ws()
             && (self.input.peek() == '-' || self.input.next_is_alpha())
         {

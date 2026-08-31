@@ -100,6 +100,11 @@ pub struct Node {
     pub anchor: Option<String>,
     /// The tag.
     pub tag: Option<NodeTag>,
+    /// Whether the tag was written *before* the anchor (`!!str &a v`, not `&a !!str v`).
+    ///
+    /// Not in DESIGN §2. YAML allows either order and neither is canonical, so the emitter has
+    /// to be told which one the source used.
+    pub tag_first: bool,
     /// The style the node was written in.
     pub style: Style,
     /// Cooked scalar value (escapes resolved, block scalars folded). `Scalar` nodes only.
@@ -117,6 +122,22 @@ pub struct Node {
     pub raw: Option<String>,
     /// 0-based line and column of the node's first character.
     pub pos: Position,
+    /// Where the `,` that follows this node inside a flow collection was written, or `None` if
+    /// the source wrote none — the last item of `[1, 2]` as against the last item of `[1, 2, ]`.
+    ///
+    /// Not in DESIGN §2. Read only when the enclosing collection has a [`Node::flow_end`]: a
+    /// collection the user built records no punctuation at all, and the emitter lays it out.
+    pub flow_comma: Option<Position>,
+    /// Where a flow collection's closing `]` or `}` was written.
+    ///
+    /// Not in DESIGN §2. It is also the flag that says this collection's punctuation came from a
+    /// source and is therefore worth reproducing.
+    pub flow_end: Option<Position>,
+    /// A flow-mapping key the source wrote with no `:` and no value at all (`b` in `{a: 1, b}`).
+    ///
+    /// Not in DESIGN §2. The parser supplies the missing value, so without this the emitter
+    /// cannot tell `{a: 1, b}` from `{a: 1, b: }`.
+    pub flow_bare_key: bool,
     /// The node's four trivia slots.
     pub trivia: Trivia4,
 }
@@ -129,10 +150,14 @@ impl Node {
             kind,
             anchor: None,
             tag: None,
+            tag_first: false,
             style,
             value: None,
             raw: None,
             pos: Position::default(),
+            flow_comma: None,
+            flow_end: None,
+            flow_bare_key: false,
             trivia: Trivia4::default(),
         }
     }
@@ -191,6 +216,12 @@ pub struct Document {
     pub version: Option<(u32, u32)>,
     /// The `%TAG` directive lines, in source order.
     pub tag_directives: Vec<TagDirective>,
+    /// How many of [`Self::tag_directives`] were written *above* the `%YAML` line; the rest were
+    /// written below it. `0` when the version came first, or when there is no version.
+    ///
+    /// Not in DESIGN §2. The two kinds of directive interleave freely on the page and the model
+    /// keeps them in separate fields, so this is what says where the `%YAML` line sat among them.
+    pub tags_before_version: usize,
     /// Whether the document was introduced by `---`.
     pub explicit_start: bool,
     /// Whether the document was terminated by `...`.

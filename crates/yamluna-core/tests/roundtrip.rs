@@ -14,36 +14,15 @@ use yamluna_core::{EmitOptions, emit, parse};
 ///
 /// The test fails if an entry starts passing, so a fix to the model never leaves a stale excuse
 /// behind.
-const KNOWN_FAILURES: &[(&str, &str)] = &[
-    (
-        // `flow_map: {a:<TAB>b}` — the scanner's `:`-in-flow check only accepts a space, so this
-        // file does not load at all. Tracked in `tests/corpus.rs` as a scanner defect.
-        "text-tabs.yaml",
-        "the scanner rejects a TAB after `:` in a flow mapping, so the file does not load",
-    ),
-    (
-        // `tag_then_anchor: !!str &ta v` next to `anchor_then_tag: &at !!str v`.
-        "anchors-aliases.yaml",
-        "Node records an anchor and a tag but not which of the two was written first",
-    ),
-    (
-        // Document 2 writes `%TAG` above `%YAML`; document 0 of directive-multiple-tags.yaml
-        // writes them the other way round. Document keeps `version` and `tag_directives` apart.
-        "directive-per-document.yaml",
-        "Document records %YAML and %TAG but not their order on the page",
-    ),
-    (
-        // A flow collection records only where its nodes start, so four spellings in this file
-        // have nowhere to come back from: `[ 1 , 2 ,  3 ]` (a space before each `,`),
-        // `[1, 2, 3, ]` and `{a: 1, b: 2, }` (a trailing `,` on one line), `{a: , b}` (an entry
-        // written with a `:` beside one written without), and a multi-line `{...}` that ends
-        // without a trailing `,` where the three other multi-line collections in the corpus have
-        // one. The emitter writes `, `, and a trailing `,` only when the bracket takes a line of
-        // its own — which is what the other three files in the corpus do.
-        "flow-forms.yaml",
-        "flow separators and trailing commas are not recorded, only where the items start",
-    ),
-];
+const KNOWN_FAILURES: &[(&str, &str)] = &[(
+    // `[a<TAB>, b]`, `[a,<TAB>b]`, `{a:<TAB>b}`. The file loads and every column comes back
+    // right; only the fill character is wrong. The emitter reaches a recorded column with
+    // `Writer::pad_to`, which writes spaces, because the model records lexemes and positions
+    // but not the white space between two lexemes. Fixing it means recording inter-token
+    // white-space runs, not patching the emitter.
+    "text-tabs.yaml",
+    "the model does not record which white space filled the gap between two lexemes",
+)];
 
 fn corpus_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus")

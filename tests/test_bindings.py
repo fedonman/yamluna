@@ -44,7 +44,10 @@ UNICODE = 'café: ☕\nemoji: 😀 tail\nlast: [1, 2\n'
 #: Corpus files the *scanner* cannot load yet, mirroring `KNOWN_SCANNER_DEFECTS` in
 #: `crates/yamluna-core/tests/corpus.rs`.  `test_the_known_scanner_defect_still_fails`
 #: below is what makes the entry disappear when the fork is fixed.
-KNOWN_SCANNER_DEFECTS = {'text-tabs': "':' must be followed by a valid YAML whitespace"}
+#:
+#: Empty: fork patch B5 closed `text-tabs` (a TAB after `:` inside a flow mapping is
+#: separation white space, not an error).
+KNOWN_SCANNER_DEFECTS: dict[str, str] = {}
 
 #: Corpus files the *record classes* cannot carry, with the field that is missing.  These are
 #: gaps in `python/yamluna/_record.py`, not in this crate: `yamluna_core` records each fact and
@@ -53,10 +56,25 @@ KNOWN_SCANNER_DEFECTS = {'text-tabs': "':' must be followed by a valid YAML whit
 #: entry disappears when the slot is added.
 #: Corpus files the record path cannot carry, and the record field that would carry them.
 #:
-#: Empty: `Node.explicit`, `Doc.bom` and `Doc.final_line_break` closed the last three.  The
-#: test below fails if an entry starts passing, so a closed gap cannot leave a stale excuse
-#: behind -- and an entry added here has to name the field it needs.
-KNOWN_RECORD_GAPS: dict[str, str] = {}
+#: `Node.explicit`, `Doc.bom` and `Doc.final_line_break` closed three of these.  The test
+#: below fails if an entry starts passing, so a closed gap cannot leave a stale excuse behind
+#: -- and an entry added here has to name the field it needs.
+_FLOW_PUNCTUATION = (
+    'needs Node.flow_comma, Node.flow_end and Node.flow_bare_key: where a flow collection '
+    'put its commas and its closing bracket, and which of its keys were written with no `:`. '
+    '`yamluna_core::Node` records all three; the record classes have no slot for them, so a '
+    'document that goes through Python gets the emitter layout for its flow punctuation '
+    'instead of the source spelling'
+)
+
+KNOWN_RECORD_GAPS: dict[str, str] = {
+    # `{a: 1, b: 2, }` beside `{a: 1, b: 2}`, `[ 1 , 2 ]` beside `[1, 2]`, `{a: , b}` beside
+    # `{a: , b: }`.
+    'flow-forms': _FLOW_PUNCTUATION,
+    # `[a<TAB>, b]`: the TAB comes back as spaces either way, but the comma lands in the
+    # column the source put it in only on the Rust side.
+    'text-tabs': _FLOW_PUNCTUATION,
+}
 
 
 @pytest.fixture(autouse=True)
@@ -247,13 +265,31 @@ def test_the_bom_is_stripped_and_does_not_shift_positions() -> None:
 
 
 def test_the_known_scanner_defect_still_fails_the_same_way() -> None:
-    """The mirror of `known_scanner_defects_still_fail_the_same_way` in yamluna-core: when
-    the fork learns to accept a tab after `:` in flow context, this test says so."""
+    """The mirror of `known_scanner_defects_still_fail_the_same_way` in yamluna-core: an
+    entry that starts loading has to be dropped from the list rather than left as a stale
+    excuse."""
     for stem, message in KNOWN_SCANNER_DEFECTS.items():
         text = (Path(__file__).parent / 'corpus' / f'{stem}.yaml').read_bytes().decode('utf-8')
         with pytest.raises(ScannerError) as excinfo:
             parse(text)
         assert excinfo.value.problem == message, f'{stem}: different failure -- update the list'
+
+
+def test_a_tab_is_separation_whitespace_inside_a_flow_collection() -> None:
+    """Fork patch B5.  YAML 1.2.2 [148]/[80]/[33]: `:` in a flow mapping is followed by
+    `s-separate`, which admits `s-white+`, and `s-white` includes TAB.  There is no
+    indentation inside a flow collection, so nothing there can be a block collection."""
+    doc = parse('flow: {a:\tb, c:\td}\n')[0]
+    values = [n.value for n in doc.nodes if n.value is not None]
+    assert values == ['flow', 'a', 'b', 'c', 'd']
+
+
+def test_a_tab_after_a_colon_in_block_context_is_still_rejected() -> None:
+    """The other half of B5: yaml-test-suite Y79Y-10.  A block collection needs `s-indent`,
+    which is spaces only, so `:<TAB>key:` stays an error."""
+    with pytest.raises(ScannerError) as excinfo:
+        parse('? key:\n:\tkey:\n')
+    assert 'valid YAML whitespace' in excinfo.value.problem
 
 
 # -- errors cross as data -----------------------------------------------------------------

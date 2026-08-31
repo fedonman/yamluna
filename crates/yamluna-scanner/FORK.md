@@ -65,6 +65,29 @@ trip impossible for quoted scalars and duplicated end-of-line comments into scal
   `yamluna-core` builds a char→byte table instead.
 - Test: `tests/roundtrip_extras.rs::markers_are_char_offsets_and_zero_based_columns`.
 
+### B5 — a TAB after `:` inside a flow mapping was rejected (spec compliance)
+
+`fetch_value` errored on `':' must be followed by a valid YAML whitespace` whenever a `:` was
+followed by a tab and then `-` or an alphanumeric — regardless of context. That check only makes
+sense in **block** context, where what follows a `:` on the same line must be an
+`s-l+flow-in-block` node: a nested block collection would need `s-indent`, which is spaces only,
+so `:\t-` and `:\tkey:` are genuinely errors (yaml-test-suite `Y79Y-08`, `Y79Y-10`).
+
+Inside a flow collection there is no indentation and no block collection can start, so a tab
+after `:` is ordinary separation white space. YAML 1.2.2 [148] `c-ns-flow-map-separate-value`
+is `":" ( s-separate(n,c) ns-flow-node(n,c) | e-node )`; [80] `s-separate` in a flow context is
+`s-separate-lines(n)`, whose second alternative is `s-white+`; [33] `s-white ::= s-space |
+s-tab`. `{a:\tb}` is therefore valid, and ruamel 0.19.1 (libyaml-derived) loads it — libyaml
+rejects tabs in *block* context, not in flow.
+
+- `src/scanner.rs:2595` — the check is gated on `self.flow_level == 0`. Nothing else changed;
+  the tab is then consumed by `skip_to_next_token`'s `'\t' | ' ' => self.skip_blank()` arm,
+  which already treats a tab as a blank outside block indentation.
+- Tests: `tests/plain_tab.rs::{tab_after_colon_in_flow_mapping_is_separation_whitespace,
+  tab_after_colon_in_block_context_is_still_rejected}`; the 402-case suite is unchanged.
+- **Upstreamable**: yes. It is a one-condition spec-compliance fix in `saphyr-parser`'s own
+  `fetch_value`, with the suite as the regression net.
+
 ---
 
 ## yamluna features
@@ -169,7 +192,7 @@ this choice.
 ```
 src/parser.rs      Event::Comment, AnchorRef, StructureStyle, Parser::{keep_comments, version},
                    pending-event queue, comment-forwarding load path, B1, B2
-src/scanner.rs     TokenType::Comment, keep_comments/pending_comments plumbing, B3, B4
+src/scanner.rs     TokenType::Comment, keep_comments/pending_comments plumbing, B3, B4, B5
 src/input.rs       skip_ws_to_eol comment capture, fetch_while_non_breakz
 src/input/str.rs   skip_ws_to_eol override kept in sync
 src/lib.rs         re-export AnchorRef and StructureStyle

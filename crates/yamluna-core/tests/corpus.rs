@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use yamluna_core::{Document, Trivia};
-use yamluna_scanner::{Event, Parser};
+use yamluna_scanner::{Event, Parser, ScalarStyle};
 
 fn corpus_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus")
@@ -16,12 +16,7 @@ fn corpus_dir() -> PathBuf {
 
 /// Corpus files the *scanner* cannot load yet. Each entry is a defect in the fork, not in the
 /// loader, and is asserted to still fail exactly this way so the entry disappears when it is fixed.
-const KNOWN_SCANNER_DEFECTS: &[(&str, &str)] = &[(
-    // `flow_map: {a:<TAB>b}`. TAB is `s-white`, so the spec allows it and ruamel 0.19.1 loads it;
-    // the fork's `:`-in-flow check only accepts a space.
-    "text-tabs.yaml",
-    "':' must be followed by a valid YAML whitespace",
-)];
+const KNOWN_SCANNER_DEFECTS: &[(&str, &str)] = &[];
 
 fn known_defect(path: &Path) -> Option<&'static str> {
     let name = path.file_name()?.to_str()?;
@@ -136,12 +131,23 @@ fn blank_line_totals_match_the_source() {
 /// Blank source lines that no scalar covers, i.e. the ones that are trivia.
 fn free_blank_lines(src: &str) -> usize {
     let src = src.strip_prefix('\u{feff}').unwrap_or(src);
+    let lines: Vec<&str> = src.lines().collect();
     let mut inside = vec![false; src.lines().count() + 2];
     let mut parser = Parser::new_from_str(src).keep_comments(true);
     while let Some(ev) = parser.next_event() {
         match ev.expect("corpus file parses") {
-            (Event::Scalar(..), span) => {
-                for l in span.start.line()..=span.end.line() {
+            (Event::Scalar(_, style, ..), span) => {
+                // A block scalar's span starts at its *body*, but its lexeme starts at the
+                // `|`/`>` header, and every blank line in between is content — `|+` keeps it,
+                // and the cooked value begins with it. Walk back over those so they are not
+                // counted as trivia the tree failed to record.
+                let mut start = span.start.line();
+                if matches!(style, ScalarStyle::Literal | ScalarStyle::Folded) {
+                    while start > 1 && lines[start - 2].trim().is_empty() {
+                        start -= 1;
+                    }
+                }
+                for l in start..=span.end.line() {
                     if let Some(slot) = inside.get_mut(l) {
                         *slot = true;
                     }

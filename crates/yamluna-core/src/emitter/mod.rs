@@ -25,10 +25,8 @@
 //! choose. Each choice below is the common spelling, and each is listed in the round-trip test's
 //! `KNOWN_FAILURES` where a corpus file exercises the other one:
 //!
-//! * `&anchor !tag value` — the model records both but not their order.
-//! * `%YAML` before `%TAG` — the model records both but not their order.
-//! * flow separators are written `, `, and a trailing comma appears only when the closing bracket
-//!   goes on a line of its own.
+//! * the white space between two lexemes — [`Writer::pad_to`](layout::Writer::pad_to) reaches a
+//!   recorded column with spaces, so a source that reached it with a TAB comes back with spaces.
 
 mod layout;
 mod scalar;
@@ -225,13 +223,22 @@ impl Emitter<'_> {
     fn document(&mut self, d: &Document, force_start: bool) -> Result<(), EmitError> {
         let (lead_lines, marker_comment) = trivia::split_marker_comment(&d.leading);
         trivia::run(&mut self.w, lead_lines);
+        // `%TAG` lines sit on both sides of the `%YAML` line, and `tags_before_version` says how
+        // many of them were above it.
+        let split = d.tags_before_version.min(d.tag_directives.len());
+        let tag_line = |w: &mut Writer, t: &crate::node::TagDirective| {
+            w.fresh_line();
+            w.push(&format!("%TAG {} {}", t.handle, t.prefix));
+        };
+        for t in &d.tag_directives[..split] {
+            tag_line(&mut self.w, t);
+        }
         if let Some((major, minor)) = d.version {
             self.w.fresh_line();
             self.w.push(&format!("%YAML {major}.{minor}"));
         }
-        for t in &d.tag_directives {
-            self.w.fresh_line();
-            self.w.push(&format!("%TAG {} {}", t.handle, t.prefix));
+        for t in &d.tag_directives[split..] {
+            tag_line(&mut self.w, t);
         }
         // A directive line, or a second document that the one before it did not close, has to be
         // introduced: `---` is not decoration there, it is what keeps the stream parseable.
@@ -414,14 +421,25 @@ impl Emitter<'_> {
         if let Place::Same { sep: true, .. } = place {
             self.w.space();
         }
-        if let Some(a) = &n.anchor {
-            self.w.push(&format!("&{a}"));
-        }
-        if let Some(t) = &n.tag {
-            if n.anchor.is_some() {
-                self.w.space();
+        let mut first = true;
+        let mut write = |w: &mut Writer, text: String| {
+            if !std::mem::take(&mut first) {
+                w.space();
             }
-            self.w.push(&render_tag(t));
+            w.push(&text);
+        };
+        if n.tag_first {
+            if let Some(t) = &n.tag {
+                write(&mut self.w, render_tag(t));
+            }
+        }
+        if let Some(a) = &n.anchor {
+            write(&mut self.w, format!("&{a}"));
+        }
+        if !n.tag_first {
+            if let Some(t) = &n.tag {
+                write(&mut self.w, render_tag(t));
+            }
         }
         true
     }
@@ -673,6 +691,19 @@ impl Emitter<'_> {
         self.w.push_char(':');
     }
 
+    /// The `,` after a flow item, in the column the source put it in.
+    ///
+    /// `pad_to` only ever moves forward, so a stale column collapses to "right after the item"
+    /// rather than opening a hole.
+    fn comma(&mut self, prev: &Node, echo: bool) {
+        if let Some(p) = prev.flow_comma.filter(|_| echo) {
+            if self.w.line() == p.line {
+                self.w.pad_to(p.col);
+            }
+        }
+        self.w.push_char(',');
+    }
+
     // ------------------------------------------------------------------ flow collections
 
     fn flow(
@@ -721,12 +752,15 @@ impl Emitter<'_> {
         let home = self.w.home();
         let open = self.w.line();
         let content = ind.max(home + self.map_ind);
+        // What the source's own punctuation was, while the source is still steering. A collection
+        // the user built recorded none, and the layout below answers for it instead.
+        let punctuated = n.flow_end.filter(|_| echo);
         trivia::run(&mut self.w, &n.trivia.inner);
 
         let mut prev: Option<(NodeId, bool)> = None;
         for pair in children.chunks(if map { 2 } else { 1 }) {
             if let Some((p, written)) = prev {
-                self.w.push_char(',');
+                self.comma(d.node(p), echo);
                 if !written {
                     trivia::eol(&mut self.w, d.node(p).trivia.eol.as_ref());
                 }
@@ -755,8 +789,14 @@ impl Emitter<'_> {
             let last = *pair.last().expect("chunks are never empty");
             if map {
                 let key = pair[0];
-                let written = self.node(d, key, site(lead, true, pair.len() == 1))?;
-                if pair.len() == 1 {
+                // `{a: 1, b}`: a key the source wrote with no `:` and no value. The parser
+                // supplied the value, and writing it back would invent a `:` — unless it has
+                // picked up trivia of its own, which must not be dropped to save the two
+                // characters.
+                let bare = pair.len() == 1
+                    || (d.node(key).flow_bare_key && d.node(last).trivia.is_empty());
+                let written = self.node(d, key, site(lead, true, bare))?;
+                if bare {
                     prev = Some((key, written));
                 } else {
                     self.colon(d.node(key));
@@ -782,23 +822,50 @@ impl Emitter<'_> {
         }
 
         if let Some((p, written)) = prev {
-            // A closing bracket on a line of its own takes a trailing comma with it.
-            if self.w.line() > open {
-                self.w.push_char(',');
+            // A trailing `,` is the source's business, not the layout's: whether one was written
+            // is recorded. Only a collection with no recorded punctuation falls back to the
+            // spelling most files use — a comma when the closing bracket takes its own line.
+            let trailing = if punctuated.is_some() {
+                d.node(p).flow_comma.is_some()
+            } else {
+                self.w.line() > open
+            };
+            if trailing {
+                self.comma(d.node(p), echo);
             }
             if !written {
                 trivia::eol(&mut self.w, d.node(p).trivia.eol.as_ref());
             }
         }
         trivia::run(&mut self.w, &n.trivia.after);
-        if self.w.line() > open || self.w.commented() {
-            self.w.fresh_line();
-            self.w.pad_to(home);
-        }
+        self.close_flow(punctuated.filter(|_| braces), home, open, echo);
         if braces {
             self.w.push_char(if map { '}' } else { ']' });
         }
         Ok(())
+    }
+
+    /// Move the cursor to where a flow collection's closing bracket goes.
+    ///
+    /// A collection whose content took more than one line closes on a line of its own, whatever
+    /// else is known — that is what keeps the bracket off the end of the last item, and it holds
+    /// even for a tree that has stopped matching its source. `end`, where the source put the
+    /// bracket, then decides the column by the usual rule: recorded while the cursor is still on
+    /// the recorded line, computed once it is not.
+    fn close_flow(&mut self, end: Option<Position>, home: u32, open: u32, echo: bool) {
+        if self.w.line() > open || self.w.commented() {
+            self.w.fresh_line();
+        }
+        match end {
+            Some(end) => {
+                let place = Place::Same {
+                    sep: false,
+                    fallback: home,
+                };
+                self.w.place(end, place, echo);
+            }
+            None => self.w.pad_to(home),
+        }
     }
 
     fn flow_style(&self, n: &Node) -> bool {
@@ -894,6 +961,21 @@ mod tests {
         exact("a: [\n  one,\n  two,\n]\n");
     }
 
+    /// Where a flow collection's commas, brackets and `:` went is recorded, not guessed: each of
+    /// these has a sibling that spells the same thing the other way, and only a recorded fact can
+    /// tell the two apart.
+    #[test]
+    fn flow_punctuation_is_reproduced() {
+        exact("a: [1, 2, 3, ]\n");
+        exact("a: {x: 1, y: 2, }\n");
+        exact("a: [ 1 , 2 ,  3 ]\n");
+        exact("a: {x: , y}\n");
+        exact("a: [\n  one,\n  two\n]\n");
+        exact("a: {\n  x: 1,\n  y: 2\n}\n");
+        // A key with no `:` beside one with a value, and a `,` after each.
+        exact("a: {w, x: 1, y, z: 2}\n");
+    }
+
     #[test]
     fn anchors_aliases_and_tags() {
         exact("anchor: &s plain value\nalias: *s\n");
@@ -901,6 +983,23 @@ mod tests {
         exact("anchor: &s v\nalias_as_key:\n  *s : value\n");
         exact("tagged: !!str 123\nlocal: !mytag value\nverbatim: !<tag:x,2000:t> v\n");
         exact("base: &base\n  a: 1\nmerge:\n  <<: *base\n  b: 2\n");
+    }
+
+    /// Either order of the two node properties comes back the way it was written.
+    #[test]
+    fn anchor_and_tag_keep_the_order_they_were_written_in() {
+        exact("anchor_then_tag: &a !!str v\ntag_then_anchor: !!str &t v\n");
+        exact("tag_then_anchor: !!str &t v\nanchor_then_tag: &a !!str v\n");
+        // On a collection, whose properties stay on the `key:` line.
+        exact("seq: !!seq &s\n  - 1\nmap: &m !!map\n  a: 1\n");
+        exact("flow: !!seq &s [1]\nother: &m !!map {a: 1}\n");
+        // With a comment between the previous token and the properties.
+        exact("k: # c\n  !!str &t v\n");
+        // As the document root, with no `---` to scan forward from.
+        exact("!!str &t v\n");
+        exact("--- !!str &t v\n");
+        // An empty node the properties are all there is of.
+        exact("empty: !!str &t\nnext: 1\n");
     }
 
     #[test]
@@ -920,6 +1019,16 @@ mod tests {
         exact("%TAG ! tag:x/\n---\na: !Thing {}\n");
         exact("--- # after the marker\na: 1\n... # after the end marker\n");
         exact("---\n---\n---\n");
+    }
+
+    /// `%YAML` sits where the source put it among the `%TAG` lines, on either side or between.
+    #[test]
+    fn directives_keep_the_order_they_were_written_in() {
+        exact("%YAML 1.2\n%TAG ! tag:x/\n---\na: !Thing {}\n");
+        exact("%TAG ! tag:x/\n%YAML 1.2\n---\na: !Thing {}\n");
+        exact("%TAG !a! tag:a/\n%YAML 1.2\n%TAG !b! tag:b/\n---\na: !a!T {}\n");
+        // Per document, not per stream.
+        exact("%TAG ! tag:x/\n%YAML 1.2\n---\na: 1\n...\n%YAML 1.2\n%TAG ! tag:y/\n---\nb: 2\n");
     }
 
     #[test]

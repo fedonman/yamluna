@@ -447,6 +447,68 @@ whitespace-only lines are reproduced as written.
 
 ---
 
+### B10. Comments inside flow collections are destroyed
+
+**ruamel.** (`tests/corpus/comment-flow.yaml`; `differential.py --ruamel comment-flow`)
+A plain `load` → `dump`, nothing mutated:
+
+```
+'flow_map: {\n  # inside\n  x: 1,\n}\n'   ->  'flow_map: {x: 1}\n'
+'flow_seq: [\n  a,\n  # inside\n  b,\n]\n'  ->  'flow_seq: [a, b]\n'
+```
+
+Over the whole corpus file that is 2 own-line and 6 end-of-line comments lost, and 22 lines
+collapsed to 8. The loader populates slot 1 of `.ca.items` for own-line comments *only*
+inside a flow sequence (RUAMEL-BEHAVIOR §1, the `.ca.items` slot table), and the emitter re-lays
+out the collection from the values alone, so whatever was between two tokens is gone.
+
+**Why it is wrong.** Losing a comment on an untouched round trip is the defect this library
+exists to not have, and a flow collection is exactly where a comment is most likely to be
+explaining a magic value.
+
+**yamluna.** A comment between any two tokens of a flow collection is a `Trivia` in the slot
+that names where it sat — `inner` for one after the opening bracket, `before` on the item it
+precedes, `eol` for one after an item — and the emitter writes it back there. The
+distinction that decides this is `inner` versus `before`: promoting a flow collection's
+`inner` trivia to `before` would push the opening brace onto the next line, so the
+projection keeps them apart (`_leading_is_before` in `python/yamluna/representer.py`).
+
+Every comment survives, in place, in both the Rust and the Python path;
+`corpus/comment-flow.yaml` round-trips byte-for-byte. What is *not* yet reproduced through
+Python is where the collection's own brackets sat: keeping an opening `[` on a line of its
+own needs `Node.flow_end`, which the record classes do not carry, so an isolated
+`'flow_seq: [\n  a,\n  # inside\n  b,\n]\n'` comes back as `'flow_seq: [a,\n  # inside\n
+b,\n]\n'` — the comment kept, the bracket moved. That is the `flow-forms` known gap
+(`tests/README.md`), not a comment defect.
+
+---
+
+### B11. A block scalar's header is re-spelled rather than reproduced
+
+**ruamel.** (`tests/corpus/block-scalar-indent.yaml`)
+
+```
+'keep: |+2\n\n    body\nlast: end\n'  ->  'keep: |2\n\n    body\nlast: end\n'
+'keep: |\n\n  body\nlast: end\n'      ->  'keep: |2\n\n  body\nlast: end\n'
+'chomp_then_explicit: |-2\n...'       ->  'chomp_then_explicit: |2-\n...'
+```
+
+The header is rebuilt from the parsed scalar: a `+` with no trailing blank line to keep is
+dropped, an explicit indentation indicator is added where the source had none, and the
+indicator/chomping pair is reordered into ruamel's preferred spelling.
+
+**Why it is wrong.** None of these change the scalar's *value* — ruamel keeps `|+` when
+there are trailing blank lines that depend on it, and both spellings of the
+indicator/chomping pair are legal. It is a round-trip defect, not a semantic one, of the
+same kind as B5 and B9: a file under version control gains a diff nobody asked for.
+
+**yamluna.** The header is part of the scalar's lexeme, so an untouched node re-emits it
+verbatim. The lexeme spans from the `|`/`>` through the last body line, *including* the
+blank lines between the header and the body — those are content that `|+` keeps, and the
+cooked value begins with them, so recording them as trivia as well would write them twice.
+
+---
+
 ## C. The tag registry
 
 ### C1. `register_class` keys the constructor registry on the class *name*

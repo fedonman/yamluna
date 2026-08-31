@@ -106,6 +106,8 @@ from yamluna.timestamp import from_lexeme as _timestamp_from_lexeme
 __all__ = [
     'DOC_ATTRIB',
     'EXPLICIT_ATTRIB',
+    'NULL_ATTRIB',
+    'SOURCE_ATTRIB',
     'UNRESOLVED',
     'Constructor',
     'construct',
@@ -130,6 +132,38 @@ DOC_ATTRIB: Final = '_yaml_doc'
 #: back into ``Node.explicit``.  A key added since the load is simply not in it, and is
 #: written in the implicit form.
 EXPLICIT_ATTRIB: Final = '_yaml_explicit'
+
+#: Where a container records the source spelling of its ``None`` children.
+#:
+#: ``~``, ``null``, ``Null``, ``NULL`` and the empty lexeme all construct to the one
+#: ``None`` singleton, which -- unlike every other scalar -- has nowhere to keep the lexeme
+#: it came from, so without this the representer can only guess and the round trip rewrites
+#: ``tilde: ~`` as ``tilde:``.  A ``{key or index: lexeme}`` dict on the parent, keyed the
+#: way ``.lc`` is, allocated only when a null is written as something other than nothing.
+#: A null *key* is not recorded (the empty spelling reparses as the same null, and a
+#: two-slot record for `?~: x` is not worth the code); neither is a ``!!null`` tag.
+NULL_ATTRIB: Final = '_yaml_null'
+
+#: Where a container records the source form of a scalar child that cannot carry it.
+#:
+#: A **tag** has nowhere to live on the value a tagged scalar constructs to: ``!!str 123`` is
+#: a bare ``str``, ``!!int "42"`` an ``int``, ``!!binary |`` a ``bytes``, and a
+#: :class:`~yamluna.scalarstring.ScalarString` has no slot for one either.  An **anchor** on a
+#: null has the same problem for the same reason (:meth:`Constructor._anchored` promotes every
+#: other builtin to a class that can hold one; ``None`` has nowhere to go).  Without this the
+#: emitter is handed a bare, untagged node and reformats what the Rust core had preserved:
+#: ``!!str 123`` -> ``'123'``, a ``!!binary`` block scalar -> a re-wrapped double-quoted one,
+#: ``&empty`` -> nothing.
+#:
+#: The **lexeme** rides along with them, because they are one fact: a node that keeps its tag
+#: but loses its spelling is still not a round trip.  So the record is the loaded
+#: :class:`~yamluna._record.Node` itself, next to the value that was built from it:
+#: ``{key or index: (value, node)}`` on the parent, keyed like :data:`NULL_ATTRIB`.
+#: :mod:`yamluna.representer` applies it only while the entry still holds that value, so an
+#: edited value is written from scratch like any other.
+# ponytail: two stores for one idea (NULL_ATTRIB is this, for the one untagged, unanchored
+# value that cannot carry its own lexeme); fold them together if a third case turns up.
+SOURCE_ATTRIB: Final = '_yaml_source'
 
 #: The `tag:yaml.org,2002:` namespace: the tags a YAML processor knows without being told.
 YAML_ORG: Final = 'tag:yaml.org,2002:'
@@ -313,6 +347,7 @@ class Constructor:
                 trailing=list(doc.trailing),
                 bom=doc.bom,
                 final_line_break=doc.final_line_break,
+                tags_before_version=doc.tags_before_version,
             ))
         return root
 
@@ -451,6 +486,8 @@ class Constructor:
             value = self._build(child)
             seq.append(value)
             self._entry_trivia(seq, position, item, item, value)
+            self._note_null(seq, position, value, item)
+            self._note_source(seq, position, value, item)
             seq.lc.add_idx_line_col(position, [item.line, item.col])
         self._decorate(seq, node)
         return self._tagged_container(seq, node)
@@ -513,6 +550,8 @@ class Constructor:
             value = self._build(value_index)
             mapping[key] = value
             self._entry_trivia(mapping, key, key_node, value_node, value)
+            self._note_null(mapping, key, value, value_node)
+            self._note_source(mapping, key, value, value_node)
             mapping.lc.add_kv_line_col(
                 key, [key_node.line, key_node.col, value_node.line, value_node.col]
             )
@@ -556,6 +595,11 @@ class Constructor:
         if resolved == YAML_ORG + 'set' and isinstance(container, dict):
             members = CommentedSet(container)
             container.copy_attributes(members)
+            # `copy_attributes` knows only ruamel's attributes; the three yamluna adds are
+            # ours to carry, and `? a` is written with the first of them.
+            for attrib in (EXPLICIT_ATTRIB, NULL_ATTRIB, SOURCE_ATTRIB):
+                if (carried := getattr(container, attrib, None)) is not None:
+                    setattr(members, attrib, carried)
             return self._register(node, members)
         return container
 
@@ -634,6 +678,32 @@ class Constructor:
                 return self._register(node, value)
         value.yaml_set_anchor(node.anchor, always_dump=True)
         return self._register(node, value)
+
+    @staticmethod
+    def _note_null(owner: Any, key: Any, value: Any, node: Node) -> None:
+        """Record how a ``None`` child was spelled, when it was spelled at all.
+
+        Only ``None`` has this problem: every other scalar type carries its own lexeme.
+        See :data:`NULL_ATTRIB`.
+        """
+        if value is not None or not node.raw:
+            return
+        store = getattr(owner, NULL_ATTRIB, None)
+        if store is None:
+            store = {}
+            setattr(owner, NULL_ATTRIB, store)
+        store[key] = node.raw
+
+    @staticmethod
+    def _note_source(owner: Any, key: Any, value: Any, node: Node) -> None:
+        """Park the record of a scalar whose value cannot carry it.  See :data:`SOURCE_ATTRIB`."""
+        if node.kind != KIND_SCALAR or (node.tag is None and not node.anchor):
+            return
+        store = getattr(owner, SOURCE_ATTRIB, None)
+        if store is None:
+            store = {}
+            setattr(owner, SOURCE_ATTRIB, store)
+        store[key] = (value, node)
 
     # -- trivia ---------------------------------------------------------------------------
 

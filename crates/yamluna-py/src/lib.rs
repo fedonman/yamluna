@@ -162,6 +162,7 @@ fn build_node<'py>(py: Python<'py>, n: &Node) -> PyResult<Bound<'py, PyAny>> {
         },
         build_trivia_list(py, &n.trivia.inner)?.into_any(),
         build_trivia_list(py, &n.trivia.after)?.into_any(),
+        n.tag_first.into_bound_py_any(py)?,
     ];
     node_class(py)?.call1(PyTuple::new(py, args)?)
 }
@@ -190,6 +191,7 @@ fn build_doc<'py>(py: Python<'py>, d: &Document) -> PyResult<Bound<'py, PyAny>> 
         build_trivia_list(py, &d.trailing)?,
         d.bom,
         d.final_line_break,
+        d.tags_before_version,
     ))
 }
 
@@ -267,6 +269,7 @@ fn read_node(o: &Bound<'_, PyAny>) -> PyResult<Node> {
             suffix,
             resolved,
         }),
+        tag_first: o.getattr(intern!(py, "tag_first"))?.extract()?,
         style: style_from_code(o.getattr(intern!(py, "style"))?.extract()?)?,
         value: o.getattr(intern!(py, "value"))?.extract()?,
         raw: o.getattr(intern!(py, "raw"))?.extract()?,
@@ -274,6 +277,12 @@ fn read_node(o: &Bound<'_, PyAny>) -> PyResult<Node> {
             line: o.getattr(intern!(py, "line"))?.extract()?,
             col: o.getattr(intern!(py, "col"))?.extract()?,
         },
+        // The flow collection's own punctuation — where its `,`s and its closing bracket went,
+        // and which of its keys were written bare. The record contract does not carry these yet,
+        // so a document that has been through Python gets the emitter's layout for them.
+        flow_comma: None,
+        flow_end: None,
+        flow_bare_key: false,
         trivia: Trivia4 {
             before: read_trivia_list(&o.getattr(intern!(py, "before"))?)?,
             eol: if eol.is_none() {
@@ -324,6 +333,7 @@ fn read_doc(o: &Bound<'_, PyAny>) -> PyResult<Document> {
             .into_iter()
             .map(|(handle, prefix)| TagDirective { handle, prefix })
             .collect(),
+        tags_before_version: o.getattr(intern!(py, "tags_before_version"))?.extract()?,
         explicit_start: o.getattr(intern!(py, "explicit_start"))?.extract()?,
         explicit_end: o.getattr(intern!(py, "explicit_end"))?.extract()?,
         bom: o.getattr(intern!(py, "bom"))?.extract()?,

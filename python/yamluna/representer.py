@@ -109,7 +109,14 @@ from yamluna.comments import (
     tag_attrib,
     trivia_attrib,
 )
-from yamluna.constructor import DOC_ATTRIB, EXPLICIT_ATTRIB, UNRESOLVED, resolve
+from yamluna.constructor import (
+    DOC_ATTRIB,
+    EXPLICIT_ATTRIB,
+    NULL_ATTRIB,
+    SOURCE_ATTRIB,
+    UNRESOLVED,
+    resolve,
+)
 from yamluna.error import RepresenterError
 from yamluna.registry import TagRegistry, WirePlan
 from yamluna.registry import _split as _split_tag
@@ -314,6 +321,30 @@ def _record_of(container: Any, key: Any) -> list[Any] | None:
     return record
 
 
+def _null_lexeme(container: Any, key: Any) -> str | None:
+    """How `container` recorded its ``None`` child at `key` being spelled (:data:`NULL_ATTRIB`)."""
+    store = getattr(container, NULL_ATTRIB, None)
+    if not store:
+        return None
+    try:
+        lexeme: str | None = store.get(key)
+    except TypeError:  # an unhashable key was never recorded
+        return None
+    return lexeme
+
+
+def _source_of(container: Any, key: Any) -> tuple[Any, Node] | None:
+    """The ``(value, node)`` `container` recorded for a child (:data:`SOURCE_ATTRIB`)."""
+    store = getattr(container, SOURCE_ATTRIB, None)
+    if not store:
+        return None
+    try:
+        found: tuple[Any, Node] | None = store.get(key)
+    except TypeError:  # an unhashable key was never recorded
+        return None
+    return found
+
+
 def _tokens(value: Any) -> list[CommentToken]:
     if value is None:
         return []
@@ -366,7 +397,26 @@ def _stream_trivia(carried: Doc | None, root: Node) -> tuple[list[Trivia], list[
 
 
 def _leading_is_before(node: Node) -> None:
-    """Move ``inner`` to ``before``: ``.ca`` cannot tell the two apart (see the module doc)."""
+    """Move ``inner`` to ``before``: ``.ca`` cannot tell the two apart (see the module doc).
+
+    Only for a *block* collection, where the two render identically -- it starts on the line
+    after its parent's ``:``, so a comment before it and a comment inside it both sit on their
+    own lines above the first child.  A flow collection opens with a bracket on the parent's
+    line, and there the distinction is the whole layout::
+
+        flow_map: {        # `inner`: the comment is after the `{`
+          # comment
+          x: 1, ... }
+
+        flow_map:          # `before`: the comment pushes the `{` onto the next line
+          # comment
+          {x: 1, ... }
+
+    so promoting `inner` there rewrites the source.  `.ca` keeps the slot for a flow
+    collection, so nothing is lost by leaving it alone.
+    """
+    if node.style == STYLE_FLOW:
+        return
     node.before, node.inner = node.inner + node.before, []
 
 
@@ -426,12 +476,31 @@ class _Representer:
         version: tuple[int, int] | None = None,
         explicit_start: bool = False,
         explicit_end: bool = False,
+        carried: Doc | None = None,
     ) -> Doc:
         # `%YAML`, `%TAG`, `---` and `...` belong to the document, not to the root object;
         # the constructor parks them on the root and this is where they come back.  An
         # explicit argument still wins, and so does `YAML.explicit_start`, which `main.py`
-        # applies to the finished record.
-        carried = getattr(data, DOC_ATTRIB, None)
+        # applies to the finished record.  `carried` is the record for a document that has
+        # no root object to park anything on -- `YAML._empty`, see that module's docstring.
+        if carried is None:
+            carried = getattr(data, DOC_ATTRIB, None)
+        elif data is None:
+            # An empty document has no content to re-represent: the record *is* the
+            # document, comments, `---` and all.  Copied, because a dump is a read (A8).
+            return Doc(
+                version=carried.version if version is None else version,
+                tag_directives=list(carried.tag_directives),
+                explicit_start=explicit_start or carried.explicit_start,
+                explicit_end=explicit_end or carried.explicit_end,
+                root=carried.root,
+                nodes=list(carried.nodes),
+                leading=list(carried.leading),
+                trailing=list(carried.trailing),
+                bom=carried.bom,
+                final_line_break=carried.final_line_break,
+                tags_before_version=carried.tags_before_version,
+            )
         if carried is not None:
             version = carried.version if version is None else version
             explicit_start = explicit_start or carried.explicit_start
@@ -457,6 +526,9 @@ class _Representer:
             trailing=trailing,
             bom=bom,
             final_line_break=final_line_break,
+            # Where the `%YAML` line sat among the `%TAG` lines. A plan's directives are
+            # appended, so they land below it exactly as the source's own tail did.
+            tags_before_version=0 if carried is None else carried.tags_before_version,
         )
 
     def _directives(self, carried: Doc | None) -> list[tuple[str, str]]:
@@ -572,6 +644,9 @@ class _Representer:
             self._entry_trivia(self.nodes[key_index], record, C_KEY_PRE, C_KEY_EOL, None)
             value_index = self._emit(value)
             self._at(value_index, _lc_of(obj, key, 'value'))
+            if value is None:
+                self._spell_null(value_index, _null_lexeme(obj, key))
+            self._respell(value_index, value, _source_of(obj, key))
             _leading_is_before(self.nodes[value_index])  # a value has no `before` slot of its own
             self._entry_trivia(self.nodes[value_index], record, None, C_VALUE_EOL, C_VALUE_POST)
             if is_merge:
@@ -590,6 +665,9 @@ class _Representer:
             record = _record_of(obj, position)
             child = self._emit(item)
             self._at(child, _lc_of(obj, position, 'item'))
+            if item is None:
+                self._spell_null(child, _null_lexeme(obj, position))
+            self._respell(child, item, _source_of(obj, position))
             self._entry_trivia(self.nodes[child], record, C_ELEM_PRE, C_ELEM_EOL, C_ELEM_POST)
             node.children.append(child)
         return index
@@ -600,12 +678,18 @@ class _Representer:
                     anchor=anchor, tag=self._tag_of(obj) or _SET_TAG)
         index = self._add(node)
         self._own_trivia(obj, node)
+        explicit = getattr(obj, EXPLICIT_ATTRIB, None) or frozenset()
         for member in obj:
             record = _record_of(obj, member)
             key_index = self._emit(member)
             self._at(key_index, _lc_of(obj, member, 'key'))
             self._entry_trivia(self.nodes[key_index], record, C_KEY_PRE, C_KEY_EOL, None)
-            node.children += [key_index, self._add(Node(KIND_SCALAR, STYLE_PLAIN, value=''))]
+            if _in(explicit, member):
+                node.explicit.append(len(node.children))
+            # `raw=''` is the *absent* value the emitter writes nothing for -- a set member
+            # is `? a`, not `a: ''`.  It is the same empty lexeme `_scalar(None)` returns.
+            absent = self._add(Node(KIND_SCALAR, STYLE_PLAIN, value='', raw=''))
+            node.children += [key_index, absent]
         return index
 
     def _custom(self, obj: Any, anchor: str | None) -> int:
@@ -633,6 +717,47 @@ class _Representer:
         for key, value in _state(obj).items():
             node.children += [self._emit(key), self._emit(value)]
         return index
+
+    def _spell_null(self, index: int, lexeme: str | None) -> None:
+        """Give a null node back the spelling it was loaded with (``~``, ``null``, ...).
+
+        ``_scalar(None)`` can only produce the empty lexeme -- ``key:`` with nothing after
+        it -- because ``None`` carries nothing; the parent remembers the rest.
+        """
+        if lexeme:
+            node = self.nodes[index]
+            node.value = node.raw = lexeme
+
+    def _respell(self, index: int, value: Any, found: tuple[Any, Node] | None) -> None:
+        """Give a scalar back the tag, anchor and lexeme its value has nowhere to keep.
+
+        `found` is the parent's ``(value, node)`` record
+        (:data:`~yamluna.constructor.SOURCE_ATTRIB`).  It is applied only while the entry
+        still holds the value that was loaded -- an edited value is a new value and is
+        written from scratch like any other -- and only over what the value did not already
+        supply: a `TaggedScalar` brings its own tag and a `ScalarString` its own anchor.
+        """
+        if found is None or not isinstance(value, _ATOMS):
+            return
+        node = self.nodes[index]
+        if node.kind != KIND_SCALAR:
+            return
+        was, src = found
+        if type(was) is not type(value) or was != value:
+            return
+        if node.tag is None:
+            # `tag_first` is which of `!!str &ta` and `&ta !!str` the source wrote: part of
+            # how the tag was written, so it travels with it.
+            node.tag, node.tag_first = src.tag, src.tag_first
+        if node.anchor is None:
+            node.anchor = src.anchor
+        if src.raw is not None:
+            # The record is the authority, not what the value could reconstruct: a
+            # `ScalarFloat` built from `!!float "1.5"` remembers `1.5`, not the quotes, and
+            # re-encoding `!!binary` loses the line wrapping of the payload.  The three
+            # travel together -- the emitter reads a block scalar's header off the lexeme,
+            # and the cooked value is what the lexeme meant.
+            node.style, node.value, node.raw = src.style, src.value, src.raw
 
     # -- trivia ---------------------------------------------------------------------------
 

@@ -42,6 +42,12 @@ Field conventions that the type annotations cannot express:
 ``Node.explicit``
     positions in ``children`` holding the key of an entry written in the explicit ``? key``
     / ``: value`` form (so always even), in source order.  Same shape as ``merge``.
+``Node.tag_first``
+    the tag was written *before* the anchor (``!!str &a v``, not ``&a !!str v``).  YAML
+    allows either order, so the order the source used has to be carried.
+``Doc.tags_before_version``
+    how many of ``tag_directives`` were written above the ``%YAML`` line; the rest were
+    written below it.
 ``Doc.bom``
     the stream began with a byte-order mark.  Only ever true on the first document; the
     loader strips it and the emitter writes it back.
@@ -163,6 +169,7 @@ class Node(_Record):
         'eol',
         'inner',
         'after',
+        'tag_first',
     )
 
     kind: int
@@ -180,6 +187,7 @@ class Node(_Record):
     eol: Trivia | None
     inner: list[Trivia]
     after: list[Trivia]
+    tag_first: bool
 
     def __init__(
         self,
@@ -198,6 +206,7 @@ class Node(_Record):
         eol: Trivia | None = None,
         inner: list[Trivia] | None = None,
         after: list[Trivia] | None = None,
+        tag_first: bool = False,
     ) -> None:
         self.kind = kind
         self.style = style
@@ -214,6 +223,7 @@ class Node(_Record):
         self.eol = eol
         self.inner = [] if inner is None else inner
         self.after = [] if after is None else after
+        self.tag_first = tag_first
 
     def _show(self, name: str, value: Any) -> str:
         if name == 'kind' and 0 <= value < len(KIND_NAMES):
@@ -261,6 +271,7 @@ class Doc(_Record):
         'trailing',
         'bom',
         'final_line_break',
+        'tags_before_version',
     )
 
     version: tuple[int, int] | None
@@ -273,6 +284,7 @@ class Doc(_Record):
     trailing: list[Trivia]
     bom: bool
     final_line_break: bool
+    tags_before_version: int
 
     def __init__(
         self,
@@ -286,6 +298,7 @@ class Doc(_Record):
         trailing: list[Trivia] | None = None,
         bom: bool = False,
         final_line_break: bool = True,
+        tags_before_version: int = 0,
     ) -> None:
         self.version = version
         self.tag_directives = [] if tag_directives is None else tag_directives
@@ -297,6 +310,7 @@ class Doc(_Record):
         self.trailing = [] if trailing is None else trailing
         self.bom = bom
         self.final_line_break = final_line_break
+        self.tags_before_version = tags_before_version
 
 
 class EmitOptions(_Record):

@@ -600,6 +600,14 @@ class TestTags:
 
 # -- the round trip -----------------------------------------------------------------------
 
+def _tag(suffix: str) -> tuple[str, str, str]:
+    """The `!!suffix` form of a `tag:yaml.org,2002:` tag, as the loader records it."""
+    return ('!!', suffix, f'tag:yaml.org,2002:{suffix}')
+
+
+_STR = _tag('str')
+_BINARY = _tag('binary')
+
 #: One entry per feature above.  Each is a record tree that a *load* could have produced,
 #: so `construct` -> `represent` must return it unchanged.
 ROUND_TRIP: dict[str, Doc] = {
@@ -622,6 +630,33 @@ ROUND_TRIP: dict[str, Doc] = {
         ('f', scalar('1_000.5', raw='1_000.5')),
         ('b', scalar('yes', raw='yes')),
         ('t', scalar('2002-12-14', raw='2002-12-14')),
+    ])),
+    # The tag, the anchor and the lexeme of a scalar whose Python value can hold none of
+    # them: `!!str 123` is a bare `str`, `!!binary` a `bytes`, `&empty` an anchored `None`.
+    # The parent parks the record (constructor.SOURCE_ATTRIB) and the representer reads it
+    # back, so what the loader preserved is not reformatted on the way out.
+    'standard-tags': doc(mapping([
+        ('str', scalar('123', raw='123', tag=_STR)),
+        ('int', scalar('42', STYLE_DOUBLE, raw='"42"', tag=_tag('int'))),
+        ('float', scalar('1.5', STYLE_DOUBLE, raw='"1.5"', tag=_tag('float'))),
+        ('bool', scalar('true', STYLE_DOUBLE, raw='"true"', tag=_tag('bool'))),
+        # not `null` as the key: that is a plain scalar, and it resolves to `None`.
+        ('nil', scalar('', STYLE_DOUBLE, raw='""', tag=_tag('null'))),
+        ('non-specific', scalar('plain', raw='plain', tag=('', '!', '!'))),
+    ])),
+    'binary': doc(mapping([
+        ('block', scalar('aGVs\nbG8=\n', STYLE_LITERAL, raw='|\n  aGVs\n  bG8=', tag=_BINARY)),
+        ('quoted', scalar('aGVsbG8=', STYLE_DOUBLE, raw='"aGVsbG8="', tag=_BINARY)),
+        ('empty', scalar('', STYLE_DOUBLE, raw='""', tag=_BINARY)),
+    ])),
+    'tagged-properties': doc(mapping([
+        ('tag-first', scalar('v', raw='v', tag=_STR, anchor='ta', tag_first=True)),
+        ('anchor-first', scalar('v', raw='v', tag=_STR, anchor='at')),
+        ('anchored-null', scalar('', raw='', anchor='empty')),
+    ])),
+    'tagged-in-a-sequence': doc(seq([
+        scalar('1', raw='1', tag=_tag('str')),
+        scalar('aGk=', STYLE_DOUBLE, raw='"aGk="', tag=_BINARY),
     ])),
     'comments': doc(mapping([
         (scalar('a', before=[comment('# about a')]), scalar('1', eol=comment('# eol a', False, 6))),
@@ -696,6 +731,28 @@ def test_round_trip_of_a_registered_class(construct: Any) -> None:
     tree = construct(original, registry=registry)
     assert isinstance(tree['main'], Circuit) and tree['main'].qubits == 2
     assert normalise(represent(tree, registry=registry)) == normalise(original)
+
+
+def test_an_edited_value_drops_the_parked_tag_and_lexeme(construct: Any) -> None:
+    """The staleness guard: what the parent parked describes the value that was loaded.
+
+    Overwrite the entry and the record no longer applies -- the new value is formatted from
+    scratch, tag and all, exactly as it would be in a tree nobody loaded.
+    """
+    tree = construct(doc(mapping([
+        ('kept', scalar('123', raw='123', tag=_STR)),
+        ('edited', scalar('456', raw='456', tag=_STR)),
+        ('binary', scalar('aGk=', STYLE_DOUBLE, raw='"aGk="', tag=_BINARY)),
+    ])))
+    tree['edited'] = 'a string'
+    tree['binary'] = b'bye'
+    written = represent(tree).nodes
+    assert (written[2].tag, written[2].raw) == (_STR, '123')
+    assert (written[4].tag, written[4].raw) == (None, None)
+    assert written[4].value == 'a string'
+    # `bytes` is always `!!binary`; what it loses is the spelling of the payload it replaced.
+    assert (written[6].tag, written[6].raw) == (_BINARY, None)
+    assert written[6].value == 'Ynll'
 
 
 def test_round_trip_of_an_unregistered_tag(construct: Any) -> None:

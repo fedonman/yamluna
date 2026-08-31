@@ -391,6 +391,99 @@ def test_setting_version_forces_the_directive_and_the_marker() -> None:
     assert yaml.dump(yaml.load('a: 1\n')) == '%YAML 1.2\n---\na: 1\n'
 
 
+# -- documents with no root object (main.py, "Empty documents") -------------------------
+
+
+@pytest.mark.usefixtures('pipeline')
+def test_a_comment_only_file_still_loads_as_none() -> None:
+    """`load` keeps ruamel's contract: no root node means `None`, carrier or not."""
+    assert YAML().load('# nothing but this\n') is None
+
+
+@pytest.mark.usefixtures('pipeline')
+def test_a_comment_only_file_round_trips() -> None:
+    yaml = YAML()
+    source = '# one\n# two\n\n# after a blank line\n'
+    assert yaml.dump(yaml.load(source)) == source
+
+
+@pytest.mark.usefixtures('pipeline')
+def test_an_empty_document_keeps_its_marker_and_its_comment() -> None:
+    yaml = YAML()
+    source = '---\n# the whole document\n---\na: 1\n'
+    assert yaml.dump_all(yaml.load_all(source)) == source
+
+
+@pytest.mark.usefixtures('pipeline')
+def test_each_empty_document_keeps_its_own_trivia() -> None:
+    """The table is keyed by position, so document 2's comment cannot land on document 0."""
+    yaml = YAML()
+    source = '---\n# first\n---\nkept: 1\n---\n# third\n'
+    documents = yaml.load_all(source)
+    assert documents == [None, {'kept': 1}, None]
+    assert yaml.dump_all(documents) == source
+
+
+@pytest.mark.usefixtures('pipeline')
+def test_the_table_is_replaced_by_the_next_load() -> None:
+    """No record survives a load that did not produce it: a bare `None` dumps as `null`."""
+    yaml = YAML()
+    yaml.load('# a comment\n')
+    yaml.load('a: 1\n')
+    assert yaml.dump(None) == 'null\n'
+
+
+@pytest.mark.usefixtures('pipeline')
+def test_a_none_with_no_record_is_still_a_null_document() -> None:
+    assert YAML().dump(None) == 'null\n'
+
+
+@pytest.mark.usefixtures('pipeline')
+def test_dumping_an_empty_document_twice_is_a_fixed_point() -> None:
+    """A dump is a read: the record must not be consumed or mutated by emitting it (A8)."""
+    yaml = YAML()
+    source = '---\n# the whole document\n'
+    document = yaml.load(source)
+    assert yaml.dump(document) == source
+    assert yaml.dump(document) == source
+
+
+# -- null spelling (constructor.NULL_ATTRIB) --------------------------------------------
+
+
+@pytest.mark.parametrize('source', ['a: ~\n', 'a: null\n', 'a: Null\n', 'a: NULL\n', 'a:\n'])
+@pytest.mark.usefixtures('pipeline')
+def test_a_null_keeps_the_spelling_it_was_written_with(source: str) -> None:
+    yaml = YAML()
+    document = yaml.load(source)
+    assert document['a'] is None
+    assert yaml.dump(document) == source
+
+
+@pytest.mark.usefixtures('pipeline')
+def test_a_null_sequence_item_keeps_its_spelling() -> None:
+    yaml = YAML()
+    source = '- ~\n- null\n-\n'
+    assert yaml.dump(yaml.load(source)) == source
+
+
+@pytest.mark.usefixtures('pipeline')
+def test_a_null_written_in_python_has_no_spelling_to_keep() -> None:
+    """Nothing is invented for a key the user added: the empty lexeme is the default."""
+    yaml = YAML()
+    document = yaml.load('a: ~\n')
+    document['b'] = None
+    assert yaml.dump(document) == 'a: ~\nb:\n'
+
+
+@pytest.mark.usefixtures('pipeline')
+def test_replacing_a_null_drops_its_spelling() -> None:
+    yaml = YAML()
+    document = yaml.load('a: ~\n')
+    document['a'] = 1
+    assert yaml.dump(document) == 'a: 1\n'
+
+
 # -- the package surface ---------------------------------------------------------------
 
 

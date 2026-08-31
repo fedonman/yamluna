@@ -89,7 +89,6 @@ from yamluna.error import DuplicateKeyFutureWarning, MarkedYAMLError, make_error
 from yamluna.registry import ConstructorError as _RegistryError
 from yamluna.registry import Registration, TagRegistry
 from yamluna.scalarbool import ScalarBoolean
-from yamluna.scalarfloat import ScalarFloat
 from yamluna.scalarfloat import from_lexeme as _float_from_lexeme
 from yamluna.scalarint import ScalarInt
 from yamluna.scalarint import from_lexeme as _int_from_lexeme
@@ -101,14 +100,13 @@ from yamluna.scalarstring import (
     ScalarString,
     SingleQuotedScalarString,
 )
-from yamluna.timestamp import TimeStamp
 from yamluna.timestamp import from_lexeme as _timestamp_from_lexeme
 
 __all__ = [
     'UNRESOLVED',
     'Constructor',
     'construct',
-    'construct_document',
+    'construct_all',
     'resolve',
 ]
 
@@ -250,6 +248,19 @@ class Constructor:
 
     # -- entry points ---------------------------------------------------------------------
 
+    @classmethod
+    def for_yaml(cls, yaml: Any, **overrides: Any) -> Constructor:
+        """A constructor taking its settings from a :class:`~yamluna.main.YAML` instance."""
+        return cls(
+            **{
+                'registry': getattr(yaml, 'registry', None),
+                'preserve_quotes': bool(getattr(yaml, 'preserve_quotes', False)),
+                'allow_duplicate_keys': bool(getattr(yaml, 'allow_duplicate_keys', False)),
+                'version': getattr(yaml, 'version', None),
+                **overrides,
+            }
+        )
+
     def construct_all(self, docs: Iterable[Doc]) -> list[Any]:
         return [self.construct(d) for d in docs]
 
@@ -371,9 +382,9 @@ class Constructor:
         self._register(node, seq)
         for position, child in enumerate(node.children):
             item = self._nodes[child]
-            seq.append(self._build(child))
-            record = seq._ca_record(position)
-            self._entry_trivia(record, item, item, seq[position])
+            value = self._build(child)
+            seq.append(value)
+            self._entry_trivia(seq, position, item, item, value)
             seq.lc.add_idx_line_col(position, [item.line, item.col])
         self._decorate(seq, node)
         return self._tagged_container(seq, node)
@@ -396,7 +407,7 @@ class Constructor:
 
         for entry, (key_index, value_index) in enumerate(pairs):
             key_node, value_node = self._nodes[key_index], self._nodes[value_index]
-            if key_index in merge_positions or 2 * entry in merge_positions:
+            if 2 * entry in merge_positions:
                 if merge_pos is not None:
                     raise self._error(
                         'duplicatekey',
@@ -406,19 +417,16 @@ class Constructor:
                     )
                 merge_pos = entry
                 merges.extend(self._merge_values(value_index, value_node))
-                self._entry_trivia(
-                    mapping._ca_record('<<'), key_node, value_node, None
-                )
+                self._entry_trivia(mapping, '<<', key_node, value_node, None)
                 continue
 
             key = self._build(key_index, as_key=True)
             if key in seen:
                 self._duplicate(key, seen[key], key_node)
             seen[key] = key_node
-            mapping[key] = self._build(value_index)
-            self._entry_trivia(
-                mapping._ca_record(key), key_node, value_node, mapping[key]
-            )
+            value = self._build(value_index)
+            mapping[key] = value
+            self._entry_trivia(mapping, key, key_node, value_node, value)
             mapping.lc.add_kv_line_col(
                 key, [key_node.line, key_node.col, value_node.line, value_node.col]
             )
@@ -427,8 +435,7 @@ class Constructor:
             mapping.add_yaml_merge(merges)
             mapping.merge.merge_pos = merge_pos or 0
         self._decorate(mapping, node)
-        result = self._tagged_container(mapping, node)
-        return result
+        return self._tagged_container(mapping, node)
 
     def _merge_values(self, index: int, node: Node) -> list[Mapping[Any, Any]]:
         """The mappings behind a ``<<``: one alias, or a sequence of them."""
@@ -506,7 +513,10 @@ class Constructor:
 
     def _decorate(self, obj: Any, node: Node) -> None:
         """``.fa`` / ``.anchor`` / ``.tag`` / ``.lc`` / own trivia of a container."""
-        obj.fa.set_flow_style() if node.style == STYLE_FLOW else obj.fa.set_block_style()
+        if node.style == STYLE_FLOW:
+            obj.fa.set_flow_style()
+        else:
+            obj.fa.set_block_style()
         if node.anchor:
             # always_dump: an anchor in the source is source text, so it is always
             # re-emitted, however few times it is referenced (DIVERGENCES B1).
@@ -540,31 +550,36 @@ class Constructor:
     # -- trivia ---------------------------------------------------------------------------
 
     def _entry_trivia(
-        self, record: list[Any], key_node: Node, value_node: Node, value: Any
+        self, owner: CommentedBase, key: Any, key_node: Node, value_node: Node, value: Any
     ) -> None:
-        """Fill one ``.ca`` record from an entry's key and value nodes.
+        """Write one entry's trivia into `owner`'s store, allocating a record only if needed.
 
         For a sequence element `key_node` and `value_node` are the same node, so the element
         gets ``C_ELEM_PRE`` / ``C_ELEM_EOL`` (which *are* the key slots) and its own ``eol``
         is not written twice.
         """
-        if key_node.before:
-            record[C_KEY_PRE] = self._tokens(key_node.before)
-        if key_node.eol is not None:
-            record[C_KEY_EOL] = self._token(key_node.eol)
-        if value_node is not key_node and value_node.eol is not None:
-            record[C_VALUE_EOL] = self._token(value_node.eol)
+        same = value_node is key_node
+        post: list[CommentToken] = []
         if isinstance(value, CommentedBase):
-            # `after` is already on the container's own ca.end via _decorate.
-            self._prepend_pre(value, self._tokens(value_node.before))
+            if not same:  # `after` is already on the container's own ca.end via _decorate
+                self._prepend_pre(value, self._tokens(value_node.before))
         else:
-            before = [] if value_node is key_node else self._tokens(value_node.before)
-            post = before + self._tokens(value_node.after)
-            if post:
-                record[C_VALUE_POST] = post
+            if not same:
+                post = self._tokens(value_node.before)
+            post += self._tokens(value_node.after)
+        pre = self._tokens(key_node.before)
+        key_eol = None if key_node.eol is None else self._token(key_node.eol)
+        value_eol = None if same or value_node.eol is None else self._token(value_node.eol)
+        if not (pre or post or key_eol or value_eol):
+            return
+        record = owner._ca_record(key)
+        record[C_KEY_PRE] = pre or None
+        record[C_KEY_EOL] = key_eol
+        record[C_VALUE_EOL] = value_eol
+        record[C_VALUE_POST] = post or None
 
     def _tokens(self, trivia: Iterable[Trivia]) -> list[CommentToken]:
-        """Own-line trivia -> tokens.  A ``BlankLines(n)`` becomes *n* blank tokens."""
+        """A trivia list -> tokens.  A ``BlankLines(n)`` becomes *n* blank-line tokens."""
         out: list[CommentToken] = []
         for item in trivia:
             if item.blank_lines:
@@ -573,11 +588,13 @@ class Constructor:
                     for _ in range(item.blank_lines)
                 ]
             elif item.text is not None:
-                out.append(CommentToken(item.text + '\n', CommentMark(item.col)))
+                out.append(self._token(item))
         return out
 
     def _token(self, trivia: Trivia) -> CommentToken:
-        """One end-of-line comment: no trailing newline, per ``comments.CommentToken``."""
+        """One trivium.  ``own_line`` carries the trailing newline, an eol comment does not
+        -- ``comments.CommentToken``'s convention, and what makes the flag survive the trip.
+        """
         if trivia.blank_lines or trivia.text is None:
             return CommentToken('\n' * max(trivia.blank_lines, 1), CommentMark(trivia.col))
         text = trivia.text + '\n' if trivia.own_line else trivia.text
@@ -637,11 +654,19 @@ def _message(exc: Exception) -> str:
     return str(exc) if str(exc) else repr(exc)
 
 
-def construct_document(doc: Doc, **options: Any) -> Any:
-    """One document's Python tree.  Keywords are :class:`Constructor`'s."""
-    return Constructor(**options).construct(doc)
+def construct(doc: Doc, yaml: Any = None, **options: Any) -> Any:
+    """One document record -> its Python tree.
+
+    `yaml` is an optional :class:`~yamluna.main.YAML` whose settings supply the defaults;
+    keyword arguments are :class:`Constructor`'s and override it.
+    """
+    return _for(yaml, options).construct(doc)
 
 
-def construct(docs: Iterable[Doc], **options: Any) -> list[Any]:
-    """Every document's Python tree.  Keywords are :class:`Constructor`'s."""
-    return Constructor(**options).construct_all(docs)
+def construct_all(docs: Iterable[Doc], yaml: Any = None, **options: Any) -> list[Any]:
+    """A stream of document records -> one Python tree each.  Anchors do not cross docs."""
+    return _for(yaml, options).construct_all(docs)
+
+
+def _for(yaml: Any, options: dict[str, Any]) -> Constructor:
+    return Constructor(**options) if yaml is None else Constructor.for_yaml(yaml, **options)

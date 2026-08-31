@@ -19,13 +19,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import Final, NamedTuple
 
-try:
-    from .errors import ConstructorError
-except ImportError:  # ponytail: errors.py lands with the loader; delete this fallback then.
-
-    class ConstructorError(Exception):  # type: ignore[no-redef]
-        """Stand-in until ``yamluna.errors`` exists."""
-
+from .error import ConstructorError
 
 __all__ = ["ConstructorError", "Registration", "TagDirective", "TagRegistry", "WirePlan"]
 

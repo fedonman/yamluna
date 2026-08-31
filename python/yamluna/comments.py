@@ -297,7 +297,11 @@ class LineCol:
     def _kv(self, k: Any, x0: int, x1: int) -> tuple[int, int] | None:
         if self.data is None:
             return None
-        data = self.data[k]
+        # DIVERGENCES D7: ruamel raises KeyError for a key it never recorded a position for,
+        # which makes `.lc.key(k)` unusable without a try/except on every call. Absent is None.
+        data = self.data.get(k)
+        if data is None:
+            return None
         return data[x0], data[x1]
 
     def __repr__(self) -> str:

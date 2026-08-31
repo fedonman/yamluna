@@ -5,9 +5,10 @@ fixtures and is parametrised over ``tests/corpus/*.yaml`` automatically, with
 the file's stem as the test id, so ``-k comment-eol`` selects one file.
 
 The yamluna side of the harness is deliberately a *single* fixture,
-``yamluna_roundtrip``.  The Rust extension does not exist yet, so it skips;
-when it does, filling in that one function turns the whole corpus into the
-DESIGN 6.2 acceptance run without touching any test.
+``yamluna_roundtrip``: ``text -> load -> dump -> text``.  It skips when the
+Rust extension has not been built (``maturin develop --uv``), so the pure
+Python tests still run without it; ``test_roundtrip.py`` is the DESIGN 6.2
+acceptance run over that one fixture.
 """
 
 from __future__ import annotations
@@ -59,9 +60,8 @@ def yamluna() -> Any:
 def yamluna_roundtrip(yamluna: Any) -> Callable[[str], str]:
     """``text -> load -> dump -> text``, the DESIGN 6.2 acceptance operation.
 
-    The single seam the whole corpus goes through.  It skips until `YAML` and
-    the Rust extension behind it exist; once they do, nothing else in the suite
-    needs to change to turn the corpus into the acceptance run.
+    The single seam the whole corpus goes through: parse in Rust, construct,
+    represent, emit in Rust.  It skips when the extension has not been built.
     """
     import io
 

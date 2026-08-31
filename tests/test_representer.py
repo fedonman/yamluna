@@ -254,11 +254,27 @@ class TestStructure:
         d = represent('a', version=(1, 2), explicit_start=True, explicit_end=True)
         assert (d.version, d.explicit_start, d.explicit_end) == ((1, 2), True, True)
 
-    def test_line_and_col_are_not_carried(self) -> None:
-        """Source positions describe a source; a tree being dumped has none (see the module doc)."""
+    def test_line_and_col_come_back_from_lc(self) -> None:
+        """A recorded position is what lets the emitter reproduce the source's own layout.
+
+        DESIGN 6.2 wants `load -> dump` byte-identical, and the emitter gets there by
+        writing an untouched node where the source wrote it.  A bare `str` or `int` has
+        nowhere to keep a position of its own, so the parent's `.lc` is where every scalar's
+        comes back from.  A stale one cannot open a hole in the output: the emitter stops
+        believing recorded lines at the first construct that does not land on one.
+        """
         m = CommentedMap({'a': 1})
         m.lc.line, m.lc.col = 7, 3
-        assert (root(m).line, root(m).col) == (0, 0)
+        m.lc.add_kv_line_col('a', [7, 3, 7, 6])
+        d = represent(m)
+        assert (d.nodes[0].line, d.nodes[0].col) == (7, 3)  # the mapping, from its own .lc
+        assert (d.nodes[1].line, d.nodes[1].col) == (7, 3)  # the key
+        assert (d.nodes[2].line, d.nodes[2].col) == (7, 6)  # the value, a bare int
+
+    def test_a_tree_with_no_recorded_positions_has_none(self) -> None:
+        """Nothing is invented: a tree the user built is laid out, not echoed."""
+        d = represent({'a': 1})
+        assert all((n.line, n.col) == (0, 0) for n in d.nodes)
 
 
 # -- anchors ------------------------------------------------------------------------------

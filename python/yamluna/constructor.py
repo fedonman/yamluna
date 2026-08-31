@@ -82,6 +82,7 @@ from yamluna.comments import (
     CommentedSet,
     CommentMark,
     CommentToken,
+    LineCol,
     Tag,
     TaggedScalar,
 )
@@ -103,12 +104,32 @@ from yamluna.scalarstring import (
 from yamluna.timestamp import from_lexeme as _timestamp_from_lexeme
 
 __all__ = [
+    'DOC_ATTRIB',
+    'EXPLICIT_ATTRIB',
     'UNRESOLVED',
     'Constructor',
     'construct',
     'construct_all',
     'resolve',
 ]
+
+#: Where the document-level facts of a loaded document are parked, on the root object.
+#:
+#: ``%YAML``, ``%TAG``, ``---`` and ``...`` belong to the *document*, and the object model has
+#: no document object -- ``load`` returns the root.  They ride on the root as one :class:`Doc`
+#: with an empty arena, and :mod:`yamluna.representer` reads them back, so a dump reproduces
+#: the directives and the markers the source had.  A document whose root is a bare ``str`` or
+#: ``int`` (or is empty) has nowhere to park them and loses them; that is the same class of
+#: gap as a bare scalar losing its lexeme.
+DOC_ATTRIB: Final = '_yaml_doc'
+
+#: Where a mapping records which of its keys were written in the explicit ``? key`` form.
+#:
+#: A ``frozenset`` of keys on the ``CommentedMap``.  ``.ca`` has no slot for it and ruamel
+#: has no notion of it at all, so this is yamluna's own; :mod:`yamluna.representer` reads it
+#: back into ``Node.explicit``.  A key added since the load is simply not in it, and is
+#: written in the implicit form.
+EXPLICIT_ATTRIB: Final = '_yaml_explicit'
 
 #: The `tag:yaml.org,2002:` namespace: the tags a YAML processor knows without being told.
 YAML_ORG: Final = 'tag:yaml.org,2002:'
@@ -274,13 +295,51 @@ class Constructor:
             return None
         node = doc.nodes[doc.root]
         root = self._build(doc.root)
-        if isinstance(root, CommentedBase):
-            self._prepend_pre(root, self._tokens(doc.leading) + self._tokens(node.before))
-            if node.eol is not None:
-                self._set_own_eol(root, node.eol)
-            if doc.trailing:
-                root.ca.end = list(root.ca.end) + self._tokens(doc.trailing)
+        if not isinstance(root, CommentedBase) and _has_document_facts(doc):
+            root = self._promote(root, node)
+        if isinstance(root, CommentedBase) or hasattr(type(root), 'lexeme'):
+            if isinstance(root, CommentedBase):
+                self._prepend_pre(root, self._tokens(doc.leading) + self._tokens(node.before))
+                if node.eol is not None:
+                    self._set_own_eol(root, node.eol)
+                if doc.trailing:
+                    root.ca.end = list(root.ca.end) + self._tokens(doc.trailing)
+            setattr(root, DOC_ATTRIB, Doc(
+                version=doc.version,
+                tag_directives=list(doc.tag_directives),
+                explicit_start=doc.explicit_start,
+                explicit_end=doc.explicit_end,
+                leading=list(doc.leading),
+                trailing=list(doc.trailing),
+                bom=doc.bom,
+                final_line_break=doc.final_line_break,
+            ))
         return root
+
+    def _promote(self, value: Any, node: Node) -> Any:
+        """A bare builtin root as the scalar type that can hold the document's own facts.
+
+        ``%YAML``, ``%TAG``, ``---`` and ``...`` belong to the document, and the object model
+        has no document object.  A mapping or a sequence root can carry them; a bare ``str``
+        or ``int`` cannot, so it is promoted to the class that can -- the same promotion
+        :meth:`_anchored` already does for a scalar that has to hold an anchor.  ``None``,
+        ``bytes`` and an empty document have nowhere to go and lose them.
+        """
+        lexeme = node.raw if node.raw is not None else (node.value or '')
+        if isinstance(value, bool):
+            promoted: Any = ScalarBoolean(value, lexeme=lexeme)
+        elif isinstance(value, int):
+            promoted = _int_from_lexeme(lexeme)
+        elif isinstance(value, float):
+            promoted = _float_from_lexeme(lexeme)
+        elif isinstance(value, str) and not isinstance(value, ScalarString):
+            promoted = _STYLE_CLASS.get(node.style, PlainScalarString)(value, lexeme=node.raw)
+        else:
+            return value
+        # A root has no parent to place it, so it carries its own position.  A scalar's `.lc`
+        # reads as `None` until assigned (it is a descriptor, not CommentedBase's property).
+        promoted.lc = LineCol(node.line, node.col)
+        return promoted
 
     # -- dispatch -------------------------------------------------------------------------
 
@@ -329,15 +388,21 @@ class Constructor:
     def _string(self, node: Node) -> str:
         """The style's `ScalarString` subclass, or a bare ``str`` where that loses nothing.
 
-        A plain scalar is a bare ``str`` (DIVERGENCES, "not a divergence"); quoted scalars
-        only keep their class under ``preserve_quotes``; an anchored scalar always keeps a
-        class, because a bare ``str`` has nowhere to hold ``&name``.
+        A plain scalar is a bare ``str`` (DIVERGENCES, "not a divergence") -- but only where
+        the value reproduces the lexeme, which is the same rule :func:`_int` uses.  A plain
+        scalar folded over several lines does not, so it keeps its class and its lexeme.
+        Quoted scalars only keep their class under ``preserve_quotes``; an anchored scalar
+        always keeps a class, because a bare ``str`` has nowhere to hold ``&name``.
         """
         value = node.value if node.value is not None else ''
         cls = _STYLE_CLASS.get(node.style, PlainScalarString)
-        bare = node.style == STYLE_PLAIN or (
-            node.style in _QUOTED and not self.preserve_quotes
-        )
+        if node.style == STYLE_PLAIN:
+            # A plain scalar is a bare `str` only where the value reproduces the lexeme --
+            # the same rule `_int` uses.  A plain scalar folded over several lines does not,
+            # so it keeps its class and with it the lexeme, and the round trip stays exact.
+            bare = node.raw is None or node.raw == value
+        else:
+            bare = node.style in _QUOTED and not self.preserve_quotes
         if bare and not node.anchor:
             return str(value)
         return cls(value, lexeme=node.raw)
@@ -377,6 +442,7 @@ class Constructor:
             # A key must hash, so it is a tuple and cannot be filled after the fact.
             seq: Any = CommentedKeySeq(self._build(i, True) for i in node.children)
             self._decorate(seq, node)
+            self._place_children(seq, enumerate(node.children))
             return seq
         seq = CommentedSeq()
         self._register(node, seq)
@@ -389,16 +455,31 @@ class Constructor:
         self._decorate(seq, node)
         return self._tagged_container(seq, node)
 
+    def _place_children(self, owner: Any, items: Iterable[tuple[int, int]]) -> None:
+        """Record where each child of a *key* collection was written.
+
+        A key is built in one go (it has to hash before it can be stored), so it misses the
+        per-item bookkeeping the mutable containers do inline -- and without it the emitter
+        lays the key's contents out afresh instead of echoing them.
+        """
+        for position, child in items:
+            item = self._nodes[child]
+            owner.lc.add_idx_line_col(position, [item.line, item.col])
+
     def _mapping(self, node: Node, as_key: bool) -> Any:
         pairs = list(zip(node.children[::2], node.children[1::2], strict=True))
         if as_key:
-            key_map: Any = CommentedKeyMap(
-                (self._build(k, True), self._build(v, True)) for k, v in pairs
-            )
+            built = [(self._build(k, True), self._build(v, True)) for k, v in pairs]
+            key_map: Any = CommentedKeyMap(built)
             self._decorate(key_map, node)
+            for (key, _), (key_index, value_index) in zip(built, pairs, strict=True):
+                k, v = self._nodes[key_index], self._nodes[value_index]
+                key_map.lc.add_kv_line_col(key, [k.line, k.col, v.line, v.col])
             return key_map
 
         merge_positions = set(node.merge)
+        explicit_positions = set(node.explicit)
+        explicit_keys: list[Any] = []
         mapping = CommentedMap()
         self._register(node, mapping)
         merges: list[Mapping[Any, Any]] = []
@@ -418,9 +499,14 @@ class Constructor:
                 merge_pos = entry
                 merges.extend(self._merge_values(value_index, value_node))
                 self._entry_trivia(mapping, '<<', key_node, value_node, None)
+                mapping.lc.add_kv_line_col(
+                    '<<', [key_node.line, key_node.col, value_node.line, value_node.col]
+                )
                 continue
 
             key = self._build(key_index, as_key=True)
+            if 2 * entry in explicit_positions:
+                explicit_keys.append(key)
             if key in seen:
                 self._duplicate(key, seen[key], key_node)
             seen[key] = key_node
@@ -431,6 +517,8 @@ class Constructor:
                 key, [key_node.line, key_node.col, value_node.line, value_node.col]
             )
 
+        if explicit_keys:
+            setattr(mapping, EXPLICIT_ATTRIB, frozenset(explicit_keys))
         if merges:
             mapping.add_yaml_merge(merges)
             mapping.merge.merge_pos = merge_pos or 0
@@ -647,6 +735,20 @@ class Constructor:
         if not resolved:
             resolved = YAML_ORG + suffix if handle == '!!' else handle + suffix
         return handle + suffix, resolved
+
+
+def _has_document_facts(doc: Doc) -> bool:
+    """Whether this document says anything a bare scalar root would throw away."""
+    return bool(
+        doc.version
+        or doc.tag_directives
+        or doc.explicit_start
+        or doc.explicit_end
+        or doc.leading
+        or doc.trailing
+        or doc.bom
+        or not doc.final_line_break
+    )
 
 
 def _message(exc: Exception) -> str:

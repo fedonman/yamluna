@@ -117,7 +117,10 @@ class _Anchored:
 
 #: Slot names every scalar type needs.  ``int`` subclasses cannot use ``__slots__`` at all
 #: ("nonempty __slots__ not supported for subtype of 'int'"), so they carry a ``__dict__``.
-_SCALAR_SLOTS = ('_yaml_anchor', '_yaml_line_col', '_comment', '_lexeme')
+#:
+#: ``_yaml_doc`` is ``constructor.DOC_ATTRIB``: a document whose root is a scalar has nowhere
+#: else to keep its own ``%YAML``, ``%TAG``, ``---`` and ``...``.
+_SCALAR_SLOTS = ('_yaml_anchor', '_yaml_line_col', '_comment', '_lexeme', '_yaml_doc')
 
 
 class ScalarString(_Anchored, str):

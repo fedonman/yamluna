@@ -39,6 +39,15 @@ Field conventions that the type annotations cannot express:
     positions in ``children`` holding the key of a ``<<`` entry (so always even), in source
     order.  The merge is *not* expanded; the Python layer resolves it lazily so a dump
     re-emits ``<<: *base``.
+``Node.explicit``
+    positions in ``children`` holding the key of an entry written in the explicit ``? key``
+    / ``: value`` form (so always even), in source order.  Same shape as ``merge``.
+``Doc.bom``
+    the stream began with a byte-order mark.  Only ever true on the first document; the
+    loader strips it and the emitter writes it back.
+``Doc.final_line_break``
+    the source ended with a line break.  A file whose last line is an unterminated comment
+    is the case this exists for.
 ``Node.before`` / ``eol`` / ``inner`` / ``after``
     the four trivia slots of DESIGN.md §2.1, keyed by node identity rather than by index.
 ``Trivia``
@@ -149,6 +158,7 @@ class Node(_Record):
         'col',
         'children',
         'merge',
+        'explicit',
         'before',
         'eol',
         'inner',
@@ -165,6 +175,7 @@ class Node(_Record):
     col: int
     children: list[int]
     merge: list[int]
+    explicit: list[int]
     before: list[Trivia]
     eol: Trivia | None
     inner: list[Trivia]
@@ -182,6 +193,7 @@ class Node(_Record):
         col: int = 0,
         children: list[int] | None = None,
         merge: list[int] | None = None,
+        explicit: list[int] | None = None,
         before: list[Trivia] | None = None,
         eol: Trivia | None = None,
         inner: list[Trivia] | None = None,
@@ -197,6 +209,7 @@ class Node(_Record):
         self.col = col
         self.children = [] if children is None else children
         self.merge = [] if merge is None else merge
+        self.explicit = [] if explicit is None else explicit
         self.before = [] if before is None else before
         self.eol = eol
         self.inner = [] if inner is None else inner
@@ -246,6 +259,8 @@ class Doc(_Record):
         'nodes',
         'leading',
         'trailing',
+        'bom',
+        'final_line_break',
     )
 
     version: tuple[int, int] | None
@@ -256,6 +271,8 @@ class Doc(_Record):
     nodes: list[Node]
     leading: list[Trivia]
     trailing: list[Trivia]
+    bom: bool
+    final_line_break: bool
 
     def __init__(
         self,
@@ -267,6 +284,8 @@ class Doc(_Record):
         nodes: list[Node] | None = None,
         leading: list[Trivia] | None = None,
         trailing: list[Trivia] | None = None,
+        bom: bool = False,
+        final_line_break: bool = True,
     ) -> None:
         self.version = version
         self.tag_directives = [] if tag_directives is None else tag_directives
@@ -276,6 +295,8 @@ class Doc(_Record):
         self.nodes = [] if nodes is None else nodes
         self.leading = [] if leading is None else leading
         self.trailing = [] if trailing is None else trailing
+        self.bom = bom
+        self.final_line_break = final_line_break
 
 
 class EmitOptions(_Record):

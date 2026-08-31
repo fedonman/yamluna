@@ -197,6 +197,25 @@ def test_tag_in_our_namespace_with_no_registration_is_an_error():
     assert "tag:libx/Ghost" in str(excinfo.value)
 
 
+def test_a_namespace_nothing_is_registered_in_is_not_ours():
+    """A `%TAG ! tag:libx/` file loaded by a `YAML()` that has never heard of `libx`.
+
+    5.4.1 refuses to guess *within* a source this registry knows -- `!Ghost` beside a
+    registered `tag:libx/Circuit` is a typo, and the test above pins that.  A source it has
+    never heard of is somebody else's document, and 5.4.3 says that round-trips untouched;
+    `corpus/tag-unregistered.yaml` is the file this exists for.
+    """
+    empty = TagRegistry()
+    assert empty.resolve("!Circuit", [("!", "tag:libx/")]) is None
+
+    other = TagRegistry()
+    other.register_class(cls_in("liby.gates", "Hadamard"))
+    assert other.resolve("!Circuit", [("!", "tag:libx/")]) is None
+    # ... but its own source is still checked.
+    with pytest.raises(ConstructorError, match="tag:liby/Ghost"):
+        other.resolve("!Ghost", [("!", "tag:liby/")])
+
+
 @pytest.mark.parametrize(
     ("tag", "directives"),
     [

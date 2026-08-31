@@ -18,11 +18,15 @@
 #![warn(missing_docs)]
 
 mod charmap;
+mod emitter;
 mod loader;
 mod node;
 mod trivia;
 
 pub use charmap::CharMap;
+pub use emitter::{
+    EmitError, EmitOptions, LineBreak, ScalarAnalysis, ScalarContext, analyze, choose_style, emit,
+};
 pub use loader::{ErrorKind, ParseError, parse};
 pub use node::{
     Document, DuplicateKey, Entry, Node, NodeId, NodeKind, NodeTag, Position, ScalarStyle, Style,

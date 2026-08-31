@@ -166,6 +166,7 @@ def _rewire(n: Node, children: list[int]) -> Node:
         n.col,
         children,
         list(n.merge),
+        list(n.explicit),
         list(n.before),
         n.eol,
         list(n.inner),

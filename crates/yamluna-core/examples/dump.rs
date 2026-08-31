@@ -61,7 +61,7 @@ fn show(d: &Document, id: NodeId, ind: usize) {
     match &n.kind {
         NodeKind::Sequence { items } => {
             for i in items {
-                show(d, *i, ind + 2)
+                show(d, *i, ind + 2);
             }
         }
         NodeKind::Mapping { entries } => {
@@ -94,7 +94,7 @@ fn main() {
             d.leading.iter().map(tv).collect::<Vec<_>>().join(", ")
         );
         if let Some(r) = d.root {
-            show(d, r, 2)
+            show(d, r, 2);
         }
         println!(
             "  trailing=[{}]",

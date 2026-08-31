@@ -226,10 +226,17 @@ class TagRegistry:
         if len(found) == 1:
             return found[0]
         if not found:
-            raise ConstructorError(
-                f"unresolved tag {written!r} (= {uri!r}): no class is registered as "
-                f"{name!r} in source {source!r}"
-            )
+            # A source this registry knows is a source whose spelling mistakes it can see:
+            # `!Ghost` next to a registered `tag:libx/Circuit` is a typo, not someone else's
+            # document, and guessing is what 5.4 forbids.  A source it has never heard of is
+            # simply not ours, and round-trips untouched (5.4.3) -- a `YAML()` with an empty
+            # registry must be able to load a file full of `!Circuit` without failing.
+            if any(r.source == source for r in self._by_path.values()):
+                raise ConstructorError(
+                    f"unresolved tag {written!r} (= {uri!r}): no class is registered as "
+                    f"{name!r} in source {source!r}"
+                )
+            return None
         raise self._ambiguous(written, found)
 
     def _by_name(self, name: str, written: str) -> Registration | None:

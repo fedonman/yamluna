@@ -21,15 +21,15 @@
 
 #![deny(missing_docs)]
 
-use pyo3::exceptions::{PyNotImplementedError, PyValueError};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyList, PyTuple, PyType};
 use pyo3::{IntoPyObjectExt, intern};
 
 use yamluna_core::{
-    Document, Entry, ErrorKind, Node, NodeId, NodeKind, NodeTag, ParseError, Position, ScalarStyle,
-    Style, TagDirective, Trivia, Trivia4,
+    Document, EmitError, EmitOptions, Entry, ErrorKind, LineBreak, Node, NodeId, NodeKind, NodeTag,
+    ParseError, Position, ScalarStyle, Style, TagDirective, Trivia, Trivia4,
 };
 
 /// The module that owns the record classes. Imported once; see [`PyOnceLock::import`].
@@ -53,6 +53,7 @@ cached!(node_class, RECORD, "Node", PyType);
 cached!(trivia_class, RECORD, "Trivia", PyType);
 cached!(doc_class, RECORD, "Doc", PyType);
 cached!(make_error, ERROR, "make_error", PyAny);
+cached!(emitter_error, ERROR, "EmitterError", PyType);
 
 // -- the kind and style codes of `_record.py` ---------------------------------------------
 
@@ -122,16 +123,21 @@ fn build_node<'py>(py: Python<'py>, n: &Node) -> PyResult<Bound<'py, PyAny>> {
         NodeKind::Mapping { .. } => (KIND_MAPPING, n.anchor.clone()),
         NodeKind::Alias { anchor } => (KIND_ALIAS, Some(anchor.clone())),
     };
-    // `merge` holds positions in `children`, so an entry's key sits at twice its entry index.
-    let merge: Vec<usize> = match &n.kind {
-        NodeKind::Mapping { entries } => entries
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| e.merge)
-            .map(|(i, _)| i * 2)
-            .collect(),
-        _ => Vec::new(),
+    // `merge` and `explicit` hold positions in `children`, so an entry's key sits at twice its
+    // entry index.
+    let positions = |pick: fn(&Entry) -> bool| -> Vec<usize> {
+        match &n.kind {
+            NodeKind::Mapping { entries } => entries
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| pick(e))
+                .map(|(i, _)| i * 2)
+                .collect(),
+            _ => Vec::new(),
+        }
     };
+    let merge = positions(|e| e.merge);
+    let explicit = positions(|e| e.explicit);
     let tag = n
         .tag
         .as_ref()
@@ -148,6 +154,7 @@ fn build_node<'py>(py: Python<'py>, n: &Node) -> PyResult<Bound<'py, PyAny>> {
         n.pos.col.into_bound_py_any(py)?,
         n.children().into_bound_py_any(py)?,
         merge.into_bound_py_any(py)?,
+        explicit.into_bound_py_any(py)?,
         build_trivia_list(py, &n.trivia.before)?.into_any(),
         match &n.trivia.eol {
             Some(t) => build_trivia(py, t)?,
@@ -181,6 +188,8 @@ fn build_doc<'py>(py: Python<'py>, d: &Document) -> PyResult<Bound<'py, PyAny>> 
         nodes,
         build_trivia_list(py, &d.leading)?,
         build_trivia_list(py, &d.trailing)?,
+        d.bom,
+        d.final_line_break,
     ))
 }
 
@@ -212,6 +221,7 @@ fn read_node(o: &Bound<'_, PyAny>) -> PyResult<Node> {
     let anchor: Option<String> = o.getattr(intern!(py, "anchor"))?.extract()?;
     let children: Vec<NodeId> = o.getattr(intern!(py, "children"))?.extract()?;
     let merge: Vec<usize> = o.getattr(intern!(py, "merge"))?.extract()?;
+    let explicit: Vec<usize> = o.getattr(intern!(py, "explicit"))?.extract()?;
 
     let kind = match kind {
         KIND_SCALAR => NodeKind::Scalar,
@@ -230,9 +240,7 @@ fn read_node(o: &Bound<'_, PyAny>) -> PyResult<Node> {
                         key: kv[0],
                         value: kv[1],
                         merge: merge.contains(&(i * 2)),
-                        // ponytail: the `Doc` record has no slot for the explicit `? key` form,
-                        // so a hand-built entry is always implicit. See the note in lib.rs.
-                        explicit: false,
+                        explicit: explicit.contains(&(i * 2)),
                     })
                     .collect(),
             }
@@ -318,10 +326,8 @@ fn read_doc(o: &Bound<'_, PyAny>) -> PyResult<Document> {
             .collect(),
         explicit_start: o.getattr(intern!(py, "explicit_start"))?.extract()?,
         explicit_end: o.getattr(intern!(py, "explicit_end"))?.extract()?,
-        // ponytail: neither `bom` nor `final_line_break` has a slot on the `Doc` record, so a
-        // round trip through Python loses them. Defaults chosen to match the common file.
-        bom: false,
-        final_line_break: true,
+        bom: o.getattr(intern!(py, "bom"))?.extract()?,
+        final_line_break: o.getattr(intern!(py, "final_line_break"))?.extract()?,
         root,
         nodes,
         leading: read_trivia_list(&o.getattr(intern!(py, "leading"))?)?,
@@ -330,35 +336,52 @@ fn read_doc(o: &Bound<'_, PyAny>) -> PyResult<Document> {
     })
 }
 
-/// The emitter knobs, read off an `EmitOptions` record.
-#[allow(clippy::struct_excessive_bools)] // ten independent knobs; grouping them buys nothing
-#[derive(Clone, Debug)]
-struct EmitOpts {
-    map_indent: usize,
-    seq_indent: usize,
-    seq_offset: usize,
-    width: usize,
-    line_break: String,
-    explicit_start: bool,
-    explicit_end: bool,
-    default_flow_style: bool,
-    canonical: bool,
-    preserve_quotes: bool,
-}
-
-fn read_opts(o: &Bound<'_, PyAny>) -> PyResult<EmitOpts> {
+/// Read an `EmitOptions` record into the core's options.
+///
+/// Three fields cannot be carried across as they stand, and each collapse is deliberate:
+///
+/// * `line_break` is a plain `str` on the record and `main.py` writes `self.line_break or '\n'`,
+///   so "unset" and "LF" are the same value by the time they get here. `'\n'` therefore means
+///   [`LineBreak::Auto`] — the emitter then takes the break from the lexemes, which is what keeps
+///   a CRLF file byte-identical through a default `YAML()`.
+///   ponytail: an `Optional[str]` slot on the record would make the two cases distinguishable.
+/// * `explicit_start`, `explicit_end` and `default_flow_style` are `Option<bool>` in the core —
+///   `None` keeps what each document had, `Some` overrides it — and plain `bool` on the record,
+///   where `False` is what an unset `YAML.explicit_start` collapses to. `False` is therefore
+///   "leave the documents alone", which is the only reading under which an unmodified round trip
+///   survives.
+/// * `canonical` has no counterpart in the core emitter and is ignored; `allow_unicode` has no
+///   counterpart on the record and keeps its default.
+fn read_opts(o: &Bound<'_, PyAny>) -> PyResult<EmitOptions> {
     let py = o.py();
-    Ok(EmitOpts {
+    let force = |name: &str| -> PyResult<Option<bool>> {
+        Ok(if o.getattr(name)?.extract::<bool>()? {
+            Some(true)
+        } else {
+            None
+        })
+    };
+    let line_break: String = o.getattr(intern!(py, "line_break"))?.extract()?;
+    Ok(EmitOptions {
         map_indent: o.getattr(intern!(py, "map_indent"))?.extract()?,
         seq_indent: o.getattr(intern!(py, "seq_indent"))?.extract()?,
         seq_offset: o.getattr(intern!(py, "seq_offset"))?.extract()?,
         width: o.getattr(intern!(py, "width"))?.extract()?,
-        line_break: o.getattr(intern!(py, "line_break"))?.extract()?,
-        explicit_start: o.getattr(intern!(py, "explicit_start"))?.extract()?,
-        explicit_end: o.getattr(intern!(py, "explicit_end"))?.extract()?,
-        default_flow_style: o.getattr(intern!(py, "default_flow_style"))?.extract()?,
-        canonical: o.getattr(intern!(py, "canonical"))?.extract()?,
+        line_break: match line_break.as_str() {
+            "\n" => LineBreak::Auto,
+            "\r\n" => LineBreak::CrLf,
+            "\r" => LineBreak::Cr,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "EmitOptions.line_break must be one of '\\n', '\\r\\n', '\\r', not {other:?}"
+                )));
+            }
+        },
+        explicit_start: force("explicit_start")?,
+        explicit_end: force("explicit_end")?,
+        default_flow_style: force("default_flow_style")?,
         preserve_quotes: o.getattr(intern!(py, "preserve_quotes"))?.extract()?,
+        ..EmitOptions::default()
     })
 }
 
@@ -369,6 +392,20 @@ fn read_opts(o: &Bound<'_, PyAny>) -> PyResult<EmitOpts> {
 fn kind_name(kind: ErrorKind) -> &'static str {
     match kind {
         ErrorKind::Scanner => "scanner",
+    }
+}
+
+/// Turn an [`EmitError`] into `yamluna.error.EmitterError`.
+///
+/// It goes to the class directly rather than through `make_error`: an emit failure has no
+/// position in any source text, and a `Mark` pointing at line 1 column 1 would be a lie. The
+/// class is still chosen by the Rust type, never by matching the message.
+fn emit_error(py: Python<'_>, e: &EmitError) -> PyErr {
+    let built = emitter_error(py)
+        .and_then(|cls| cls.call1((py.None(), py.None(), e.to_string(), py.None())));
+    match built {
+        Ok(exc) => PyErr::from_value(exc),
+        Err(err) => err,
     }
 }
 
@@ -413,9 +450,9 @@ fn parse<'py>(
 ) -> PyResult<Bound<'py, PyList>> {
     let _ = allow_duplicate_keys;
     // The core reports positions relative to the text it scanned, which is BOM-stripped.
-    let scanned = source.strip_prefix('\u{feff}').unwrap_or(source);
+    let scanned = strip_bom(source);
     let docs = py
-        .detach(|| yamluna_core::parse(scanned))
+        .detach(|| load(scanned, source))
         .map_err(|e| parse_error(py, &e, scanned, name))?;
     PyList::new(
         py,
@@ -433,12 +470,56 @@ fn emit(py: Python<'_>, docs: &Bound<'_, PyAny>, opts: &Bound<'_, PyAny>) -> PyR
         .map(|d| read_doc(&d?))
         .collect::<PyResult<_>>()?;
     let opts = read_opts(opts)?;
+    py.detach(|| yamluna_core::emit(&docs, &opts))
+        .map_err(|e| emit_error(py, &e))
+}
+
+/// `parse` then `emit`, without ever building a record: the reference the record path is
+/// measured against.
+///
+/// It exists so a round-trip failure is attributable. When `emit(parse(text))` differs from the
+/// source, this says whether the difference survives a trip through Python — in which case it is
+/// a boundary bug, something the record model cannot carry — or not, in which case the emitter
+/// and the boundary agree and the defect is upstream of both.
+#[pyfunction]
+fn _roundtrip_in_rust(py: Python<'_>, source: &str, opts: &Bound<'_, PyAny>) -> PyResult<String> {
+    let opts = read_opts(opts)?;
+    let scanned = strip_bom(source);
     py.detach(|| {
-        // TODO(emitter): replace with `yamluna_core::emit(&docs, &opts)` once it lands.
-        let _ = (&docs, &opts);
-        Err::<String, _>("yamluna_core::emit is not implemented yet")
+        load(scanned, source)
+            .map_err(|e| RoundTrip::Parse(Box::new(e)))
+            .and_then(|docs| yamluna_core::emit(&docs, &opts).map_err(RoundTrip::Emit))
     })
-    .map_err(PyNotImplementedError::new_err)
+    .map_err(|e| match e {
+        RoundTrip::Parse(e) => parse_error(py, &e, scanned, "<unicode string>"),
+        RoundTrip::Emit(e) => emit_error(py, &e),
+    })
+}
+
+/// The source with a leading byte-order mark taken off.
+///
+/// The core strips one of its own and records it on the first document, but it never gets to:
+/// stripping here is what keeps [`ParseError::index`] a char offset into the very text `Mark`
+/// slices to build a snippet.
+fn strip_bom(source: &str) -> &str {
+    source.strip_prefix('\u{feff}').unwrap_or(source)
+}
+
+/// [`yamluna_core::parse`] over the stripped text, with the BOM put back on the first document.
+fn load(scanned: &str, source: &str) -> Result<Vec<Document>, ParseError> {
+    let mut docs = yamluna_core::parse(scanned)?;
+    if scanned.len() != source.len()
+        && let Some(first) = docs.first_mut()
+    {
+        first.bom = true;
+    }
+    Ok(docs)
+}
+
+/// Which half of [`_roundtrip_in_rust`] failed.
+enum RoundTrip {
+    Parse(Box<ParseError>),
+    Emit(EmitError),
 }
 
 /// The extension module: `yamluna._yamluna`.
@@ -446,5 +527,6 @@ fn emit(py: Python<'_>, docs: &Bound<'_, PyAny>, opts: &Bound<'_, PyAny>) -> PyR
 fn _yamluna(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse, m)?)?;
     m.add_function(wrap_pyfunction!(emit, m)?)?;
+    m.add_function(wrap_pyfunction!(_roundtrip_in_rust, m)?)?;
     Ok(())
 }

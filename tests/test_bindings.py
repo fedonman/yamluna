@@ -46,6 +46,18 @@ UNICODE = 'café: ☕\nemoji: 😀 tail\nlast: [1, 2\n'
 #: below is what makes the entry disappear when the fork is fixed.
 KNOWN_SCANNER_DEFECTS = {'text-tabs': "':' must be followed by a valid YAML whitespace"}
 
+#: Corpus files the *record classes* cannot carry, with the field that is missing.  These are
+#: gaps in `python/yamluna/_record.py`, not in this crate: `yamluna_core` records each fact and
+#: the emitter uses it, but there is no slot to put it in on the way through Python.
+#: `test_the_record_path_matches_the_pure_rust_round_trip` asserts each one still fails, so the
+#: entry disappears when the slot is added.
+#: Corpus files the record path cannot carry, and the record field that would carry them.
+#:
+#: Empty: `Node.explicit`, `Doc.bom` and `Doc.final_line_break` closed the last three.  The
+#: test below fails if an entry starts passing, so a closed gap cannot leave a stale excuse
+#: behind -- and an entry added here has to name the field it needs.
+KNOWN_RECORD_GAPS: dict[str, str] = {}
+
 
 @pytest.fixture(autouse=True)
 def _skip_known_defects(request: pytest.FixtureRequest) -> None:
@@ -171,19 +183,26 @@ def test_a_scalar_lexeme_sits_where_the_node_says_it_does(corpus_text: str) -> N
             assert lines[n.line][n.col : n.col + len(head)] == head, (n.line, n.col, head)
 
 
-def test_every_corpus_record_makes_the_trip_back_into_rust(corpus_text: str) -> None:
-    """The read direction: every record `parse` builds is one `emit` can read back.
+def test_the_record_path_matches_the_pure_rust_round_trip(
+    corpus_text: str, corpus_path: Path
+) -> None:
+    """`emit(parse(text))` through the records == `parse` then `emit` inside Rust.
 
-    While the emitter is unwritten, getting as far as `NotImplementedError` is the proof --
-    it means every `Doc`, `Node` and `Trivia` converted.  When `yamluna_core::emit` lands,
-    the DESIGN 6.2 byte-identity assertion below arms itself with no edit here.
+    This is the boundary's own acceptance criterion, and the reason
+    `_roundtrip_in_rust` exists: it holds the emitter fixed, so the only thing it can
+    measure is what a trip through the `_record` classes loses.  DESIGN 6.2 (the output
+    equals the *source*) is the emitter's to pass; this is the half that is ours.
     """
-    docs = parse(corpus_text)
-    try:
-        out = _yamluna.emit(docs, EmitOptions())
-    except NotImplementedError:
-        pytest.skip('yamluna_core::emit is not written yet; the record conversion passed')
-    assert out == corpus_text
+    opts = EmitOptions()
+    reference = _yamluna._roundtrip_in_rust(corpus_text, opts)
+    through_records = _yamluna.emit(parse(corpus_text), opts)
+    if corpus_path.stem in KNOWN_RECORD_GAPS:
+        assert through_records != reference, (
+            f'{corpus_path.stem} now survives the records: '
+            f'drop it from KNOWN_RECORD_GAPS ({KNOWN_RECORD_GAPS[corpus_path.stem]})'
+        )
+    else:
+        assert through_records == reference
 
 
 # -- positions are char offsets, all the way to `Mark` ------------------------------------

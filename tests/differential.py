@@ -1,14 +1,16 @@
-"""ruamel.yaml oracle for the yamluna acceptance corpus.
+"""ruamel.yaml oracle -- and yamluna's own score -- for the acceptance corpus.
 
 Importable (pytest uses the helpers) and runnable::
 
     python tests/differential.py               # the whole corpus, as a table
     python tests/differential.py --diff        # ... plus a unified diff per failure
     python tests/differential.py comment-eol   # one file, with its diff
+    python tests/differential.py --ruamel      # what ruamel changed, not yamluna
 
-What this measures: whether ``ruamel.yaml==0.19.1`` in round-trip mode reads a
-corpus file and writes back the exact same bytes.  DESIGN 6.2 holds yamluna to
-byte-identity on every one of these files, which is *stricter* than ruamel;
+What this measures: whether a round-trip YAML library reads a corpus file and
+writes back the exact same bytes.  Both libraries are measured the same way and
+the table prints one column each.  DESIGN 6.2 holds yamluna to byte-identity on
+every one of these files, which is *stricter* than ruamel;
 DESIGN 6.3 says every divergence from ruamel must be a deliberate fix recorded
 in ``docs/DIVERGENCES.md``.  The rows below that say "no" are the list of
 places where being bug-compatible with ruamel is the wrong goal -- measured
@@ -20,9 +22,10 @@ The ruamel configuration is the ordinary round-trip recipe::
     yaml = YAML()            # typ='rt'
     yaml.preserve_quotes = True
 
-Everything else is left at its default, including ``width = 80`` (so refolded
-long lines show up as a failure -- that is a real default-configuration
-behaviour, not a rigged one) and ``allow_duplicate_keys = False``.
+and yamluna is given exactly the same two lines.  Everything else is left at its
+default in both, including ``width = 80`` (so refolded long lines show up as a
+failure -- that is a real default-configuration behaviour, not a rigged one) and
+``allow_duplicate_keys = False``.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ import io
 import re
 import sys
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -77,6 +81,22 @@ def roundtrip_with_ruamel(text: str, sequence: int = 2, offset: int = 0) -> str:
     return dump_with_ruamel(load_with_ruamel(text, yaml), yaml)
 
 
+# --------------------------------------------------------------------------
+# yamluna, measured identically
+# --------------------------------------------------------------------------
+
+
+def roundtrip_with_yamluna(text: str) -> str:
+    """``load_all`` then ``dump_all`` through one ``yamluna.YAML``, as users do."""
+    import yamluna
+
+    yaml = yamluna.YAML()  # typ='rt'
+    yaml.preserve_quotes = True
+    buf = io.StringIO()
+    yaml.dump_all(list(yaml.load_all(text)), buf)
+    return buf.getvalue()
+
+
 def read_corpus_file(path: Path) -> str:
     """Read a corpus file as text without touching newlines or the BOM."""
     return path.read_bytes().decode("utf-8")
@@ -110,13 +130,24 @@ class Result:
         return self.path.stem
 
 
-def check_file(path: Path, sequence: int = 2, offset: int = 0) -> Result:
-    """Round-trip one corpus file through ruamel and report what changed."""
+def check_file(
+    path: Path,
+    sequence: int = 2,
+    offset: int = 0,
+    roundtrip: Callable[[str], str] | None = None,
+    label: str = "ruamel",
+) -> Result:
+    """Round-trip one corpus file through a library and report what changed."""
+    if roundtrip is None:
+
+        def roundtrip(text: str) -> str:
+            return roundtrip_with_ruamel(text, sequence, offset)
+
     source = read_corpus_file(path)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         try:
-            output = roundtrip_with_ruamel(source, sequence, offset)
+            output = roundtrip(source)
         except Exception as exc:  # noqa: BLE001 - the failure mode *is* the result
             first = str(exc).strip().splitlines()
             error = f"{type(exc).__name__}: {first[0] if first else ''}".strip()
@@ -128,17 +159,17 @@ def check_file(path: Path, sequence: int = 2, offset: int = 0) -> Result:
     notes = summarize(source, output)
     if warned:
         notes = f"{notes}; warns {', '.join(warned)}"
-    return Result(path, False, notes, unified(source, output))
+    return Result(path, False, notes, unified(source, output, label))
 
 
-def unified(source: str, output: str) -> str:
+def unified(source: str, output: str, label: str = "ruamel") -> str:
     """Unified diff with the invisible characters made visible."""
     return "".join(
         difflib.unified_diff(
             [_visible(line) + "\n" for line in source.split("\n")],
             [_visible(line) + "\n" for line in output.split("\n")],
             fromfile="input",
-            tofile="ruamel",
+            tofile=label,
             lineterm="\n",
         )
     )
@@ -320,21 +351,39 @@ def lint_corpus() -> list[str]:
 # --------------------------------------------------------------------------
 
 
-def _table(results: list[Result]) -> str:
-    width = max(len(r.name) for r in results)
+def _mark(ok: bool) -> str:
+    return "yes" if ok else "**no**"
+
+
+def _table(rows: list[tuple[Result, Result]], notes_from: str = "yamluna") -> str:
+    """One row per corpus file: does ruamel round-trip it, does yamluna."""
+    width = max(len(r.name) for r, _ in rows) + 2  # the backticks around the name
     lines = [
-        f"| {'corpus file':<{width}} | round-trips | what ruamel changed |",
-        f"| {'-' * width} | ----------- | ------------------- |",
+        f"| {'corpus file':<{width}} | ruamel | yamluna | what {notes_from} changed |",
+        f"| {'-' * width} | ------ | ------- | {'-' * (len(notes_from) + 13)} |",
     ]
-    for r in results:
-        mark = "yes" if r.ok else "**no**"
-        cell = r.summary.replace("|", "\\|")  # keep the markdown table intact
-        lines.append(f"| `{r.name}`{' ' * (width - len(r.name))} | {mark:<11} | {cell} |")
+    for ruamel, yamluna in rows:
+        note = (yamluna if notes_from == "yamluna" else ruamel).summary
+        cell = note.replace("|", "\\|")  # keep the markdown table intact
+        lines.append(
+            f"| {'`' + ruamel.name + '`':<{width}} "
+            f"| {_mark(ruamel.ok):<6} | {_mark(yamluna.ok):<7} | {cell} |"
+        )
     return "\n".join(lines)
+
+
+def _yamluna_version() -> str:
+    try:
+        import yamluna
+
+        return getattr(yamluna, "__version__", "(unknown version)")
+    except ImportError as exc:  # pragma: no cover -- only when the wheel is missing
+        return f"(not importable: {exc})"
 
 
 def main(argv: list[str]) -> int:
     show_diffs = "--diff" in argv
+    show_ruamel = "--ruamel" in argv
     # ruamel emits one global indentation; `--seq-indent` measures the corpus
     # again with the style most of it is written in, to separate "ruamel cannot
     # keep this file's layout" from "ruamel was pointed at the other layout".
@@ -350,20 +399,34 @@ def main(argv: list[str]) -> int:
             print(f"no corpus file matches {sorted(names)}", file=sys.stderr)
             return 2
 
-    results = [check_file(p, sequence, offset) for p in paths]
-    clean = sum(r.ok for r in results)
+    rows = [
+        (
+            check_file(p, sequence, offset),
+            check_file(p, roundtrip=roundtrip_with_yamluna, label="yamluna"),
+        )
+        for p in paths
+    ]
+    total = len(rows)
+    ruamel_clean = sum(r.ok for r, _ in rows)
+    yamluna_clean = sum(y.ok for _, y in rows)
 
     config = f"indent(mapping=2, sequence={sequence}, offset={offset})"
     print(f"ruamel.yaml {RUAMEL_VERSION}, typ='rt', preserve_quotes=True, {config}")
-    print(f"{clean}/{len(results)} corpus files round-trip byte-identically\n")
-    print(_table(results))
+    print(f"yamluna {_yamluna_version()}, typ='rt', preserve_quotes=True, defaults")
+    print()
+    print(f"ruamel : {ruamel_clean:>2}/{total} corpus files round-trip byte-identically")
+    print(f"yamluna: {yamluna_clean:>2}/{total} corpus files round-trip byte-identically")
+    print()
+    print(_table(rows, "ruamel" if show_ruamel else "yamluna"))
 
     if show_diffs:
-        for r in results:
-            if r.ok:
+        for ruamel, yamluna in rows:
+            shown = ruamel if show_ruamel else yamluna
+            if shown.ok:
                 continue
-            print(f"\n{'=' * 72}\n{r.name}: {r.summary}\n{'=' * 72}")
-            print(r.diff or f"(no diff: {r.error})")
+            label = "ruamel" if show_ruamel else "yamluna"
+            print(f"\n{'=' * 72}\n{shown.name} ({label}): {shown.summary}\n{'=' * 72}")
+            print(shown.diff or f"(no diff: {shown.error})")
 
     problems = lint_corpus()
     if problems:

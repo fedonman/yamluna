@@ -54,12 +54,18 @@ and the per-node string on ``Node.tag`` (DESIGN.md §5.3).  A class with a ``to_
 classmethod gets to build its own node through :meth:`_Representer.represent_scalar` /
 ``represent_mapping`` / ``represent_sequence``, keeping ruamel's hook signature.
 
-``Node.line`` / ``Node.col`` stay 0: they are *source* positions, and a tree being dumped
-has no source.  The emitter computes layout from ``raw``, ``style`` and the trivia.
+**Positions.**  ``Node.line`` / ``Node.col`` are the source positions the emitter echoes an
+untouched node at, and they come from ``.lc``: a container's own, and for every scalar the
+parent's ``lc.key`` / ``lc.value`` / ``lc.item`` -- a bare ``str`` or ``int`` has nowhere to
+keep one.  An alias site is placed by its parent only, never by the object, which remembers
+where its *anchor* was written.  A tree the user built has no ``.lc`` and gets no positions,
+so it is laid out from ``EmitOptions`` instead; a tree that was edited has stale ones, and
+the emitter stops believing recorded lines at the first construct that misses.
 """
 
 from __future__ import annotations
 
+import base64
 import datetime
 import math
 from collections.abc import Iterable, Iterator, Mapping
@@ -98,11 +104,12 @@ from yamluna.comments import (
     anchor_attrib,
     comment_attrib,
     format_attrib,
+    line_col_attrib,
     merge_attrib,
     tag_attrib,
     trivia_attrib,
 )
-from yamluna.constructor import UNRESOLVED, resolve
+from yamluna.constructor import DOC_ATTRIB, EXPLICIT_ATTRIB, UNRESOLVED, resolve
 from yamluna.error import RepresenterError
 from yamluna.registry import TagRegistry, WirePlan
 from yamluna.registry import _split as _split_tag
@@ -133,6 +140,7 @@ _INDICATOR_START = frozenset('-?:,[]{}#&*!|>\'"%@`')
 _ATOMS = (str, bytes, bytearray, int, float, complex, datetime.date, datetime.time, type(None))
 
 _SET_TAG = ('!!', 'set', 'tag:yaml.org,2002:set')
+_BINARY_TAG = ('!!', 'binary', 'tag:yaml.org,2002:binary')
 
 
 # -- scalar style choice ------------------------------------------------------------------
@@ -183,7 +191,10 @@ def _float_text(value: float) -> str:
 def _scalar(obj: Any, version: tuple[int, int] | None = None) -> tuple[int, str, str | None]:
     """``(style, cooked value, source lexeme or None)`` for one scalar object."""
     if obj is None:
-        return STYLE_PLAIN, '', None
+        # `null`'s lexeme is the empty one: `key:` with nothing after it.  It goes in as a
+        # lexeme rather than as a bare empty value so the emitter writes nothing rather than
+        # the `''` an empty *string* has to be written as.
+        return STYLE_PLAIN, '', ''
     if isinstance(obj, TaggedScalar):
         return _STYLE_BY_INDICATOR.get(obj.style, STYLE_PLAIN), obj.value, None
     if isinstance(obj, ScalarString):
@@ -204,6 +215,9 @@ def _scalar(obj: Any, version: tuple[int, int] | None = None) -> tuple[int, str,
         return STYLE_PLAIN, _float_text(obj), None
     if isinstance(obj, (datetime.datetime, datetime.date, datetime.time)):
         return STYLE_PLAIN, obj.isoformat(), None
+    if isinstance(obj, (bytes, bytearray)):
+        # `!!binary`; the tag comes from `_tag_of`, which reads `_BINARY_TAG` for bytes.
+        return STYLE_DOUBLE, base64.b64encode(bytes(obj)).decode('ascii'), None
     raise RepresenterError(f'cannot represent an object: {obj!r}')
 
 
@@ -244,6 +258,39 @@ def _children(obj: Any) -> Iterator[Any]:
         yield from obj
     elif not isinstance(obj, _ATOMS):
         yield from _state(obj).values()
+
+
+def _lc(obj: Any) -> tuple[int, int] | None:
+    """`obj`'s own recorded source position, without creating a ``.lc`` (A8)."""
+    lc = getattr(obj, line_col_attrib, None)
+    if lc is None or lc.line is None or lc.col is None:
+        return None
+    return lc.line, lc.col
+
+
+def _lc_of(container: Any, key: Any, which: str) -> tuple[int, int] | None:
+    """The position `container` recorded for one of its children.
+
+    A bare ``str``/``int`` has nowhere to hold its own position, so the parent's ``.lc`` is
+    where most scalars get theirs back.  It is also the only right answer for an *alias*
+    site: the object knows where its anchor was written, not where the ``*name`` is.
+    """
+    lc = getattr(container, line_col_attrib, None)
+    if lc is None:
+        return None
+    try:
+        found: tuple[int, int] | None = getattr(lc, which)(key)
+    except TypeError:  # an unhashable key was never recorded
+        return None
+    return found
+
+
+def _in(keys: Any, key: Any) -> bool:
+    """``key in keys``, for a `key` that may not be hashable (and so cannot be in there)."""
+    try:
+        return key in keys
+    except TypeError:
+        return False
 
 
 def _flow_style(obj: Any, default: bool) -> int:
@@ -292,6 +339,30 @@ def _trivia_list(value: Any) -> list[Trivia]:
             text = text.lstrip(' \t')  # the record's text starts at the `#`; `col` positions it
         out.append(Trivia(text, own_line, token.column))
     return out
+
+
+def _stream_trivia(carried: Doc | None, root: Node) -> tuple[list[Trivia], list[Trivia]]:
+    """Take the *stream*'s own trivia back off the root node.
+
+    A comment above `---` and one below `...` belong to the document, not to its root: the
+    emitter writes them outside the directives and the markers.  ``.ca`` has no slot for
+    them, so the constructor folds them into the root's own comments and the loaded document
+    record -- parked on the root by :data:`~yamluna.constructor.DOC_ATTRIB` -- is what says
+    how many of them there were.  A prefix or suffix the user has since edited no longer
+    matches and simply stays on the root, which is the safe way to be wrong.
+    """
+    if carried is None:
+        return [], []
+    leading, trailing = list(carried.leading), list(carried.trailing)
+    if leading and root.before[: len(leading)] == leading:
+        root.before = root.before[len(leading) :]
+    else:
+        leading = []
+    if trailing and root.after[-len(trailing) :] == trailing:
+        root.after = root.after[: -len(trailing)]
+    else:
+        trailing = []
+    return leading, trailing
 
 
 def _leading_is_before(node: Node) -> None:
@@ -356,20 +427,50 @@ class _Representer:
         explicit_start: bool = False,
         explicit_end: bool = False,
     ) -> Doc:
+        # `%YAML`, `%TAG`, `---` and `...` belong to the document, not to the root object;
+        # the constructor parks them on the root and this is where they come back.  An
+        # explicit argument still wins, and so does `YAML.explicit_start`, which `main.py`
+        # applies to the finished record.
+        carried = getattr(data, DOC_ATTRIB, None)
+        if carried is not None:
+            version = carried.version if version is None else version
+            explicit_start = explicit_start or carried.explicit_start
+            explicit_end = explicit_end or carried.explicit_end
+            bom, final_line_break = carried.bom, carried.final_line_break
+        else:
+            bom, final_line_break = False, True
         self.version = version  # `%YAML 1.1` puts `yes` and `on` back in the boolean set
         self._scan(data, set())
         if self.registry is not None and self.used:
             self.plan = self.registry.plan(self.used)
         root = self._add(Node(value='null')) if data is None else self._emit(data)
         _leading_is_before(self.nodes[root])  # no parent holds the root's leading comments
+        leading, trailing = _stream_trivia(carried, self.nodes[root])
         return Doc(
             version=version,
-            tag_directives=[(d.handle, d.prefix) for d in self.plan.directives],
+            tag_directives=self._directives(carried),
             explicit_start=explicit_start,
             explicit_end=explicit_end,
             root=root,
             nodes=self.nodes,
+            leading=leading,
+            trailing=trailing,
+            bom=bom,
+            final_line_break=final_line_break,
         )
+
+    def _directives(self, carried: Doc | None) -> list[tuple[str, str]]:
+        """The document's ``%TAG`` lines: the source's, in source order, plus the plan's.
+
+        A handle the source declared and the wire plan also wants keeps its place on the page
+        and takes the plan's prefix; a handle only the plan wants is appended (DESIGN 5.3).
+        """
+        planned = {d.handle: d.prefix for d in self.plan.directives}
+        out = [
+            (handle, planned.pop(handle, prefix))
+            for handle, prefix in (() if carried is None else carried.tag_directives)
+        ]
+        return out + list(planned.items())
 
     # -- pre-pass: which objects are shared, which registered classes are used -------------
 
@@ -404,7 +505,28 @@ class _Representer:
                 return name
 
     def _emit(self, obj: Any) -> int:
-        """Append `obj`'s subtree to the arena, pre-order; return its index."""
+        """Append `obj`'s subtree to the arena, pre-order; return its index.
+
+        The node also gets `obj`'s recorded source position, which is what lets the emitter
+        reproduce the file's own indentation instead of laying the node out afresh.  A stale
+        position cannot open a hole in the output -- the emitter stops believing recorded
+        lines at the first construct that does not land on one -- so an edited tree degrades
+        to the layout path rather than to garbage.
+        """
+        index = self._emit_node(obj)
+        node = self.nodes[index]
+        # An alias site is not where its anchor was written; only the parent can place it.
+        if node.kind != KIND_ALIAS and (pos := _lc(obj)) is not None:
+            node.line, node.col = pos
+        return index
+
+    def _at(self, index: int, pos: tuple[int, int] | None) -> None:
+        """Give a node the position its *parent* recorded, when it carries none itself."""
+        node = self.nodes[index]
+        if pos is not None and node.line == 0 and node.col == 0:
+            node.line, node.col = pos
+
+    def _emit_node(self, obj: Any) -> int:
         if not _trackable(obj):
             return self._add(self._scalar_node(obj))
         key = id(obj)
@@ -442,15 +564,20 @@ class _Representer:
                     anchor=anchor, tag=self._tag_of(obj))
         index = self._add(node)
         self._own_trivia(obj, node)
+        explicit = getattr(obj, EXPLICIT_ATTRIB, None) or frozenset()
         for key, value, is_merge in _entries(obj):
             record = _record_of(obj, key)
             key_index = self._emit(key)
+            self._at(key_index, _lc_of(obj, key, 'key'))
             self._entry_trivia(self.nodes[key_index], record, C_KEY_PRE, C_KEY_EOL, None)
             value_index = self._emit(value)
+            self._at(value_index, _lc_of(obj, key, 'value'))
             _leading_is_before(self.nodes[value_index])  # a value has no `before` slot of its own
             self._entry_trivia(self.nodes[value_index], record, None, C_VALUE_EOL, C_VALUE_POST)
             if is_merge:
                 node.merge.append(len(node.children))
+            elif _in(explicit, key):
+                node.explicit.append(len(node.children))
             node.children += [key_index, value_index]
         return index
 
@@ -462,6 +589,7 @@ class _Representer:
         for position, item in enumerate(obj):
             record = _record_of(obj, position)
             child = self._emit(item)
+            self._at(child, _lc_of(obj, position, 'item'))
             self._entry_trivia(self.nodes[child], record, C_ELEM_PRE, C_ELEM_EOL, C_ELEM_POST)
             node.children.append(child)
         return index
@@ -475,6 +603,7 @@ class _Representer:
         for member in obj:
             record = _record_of(obj, member)
             key_index = self._emit(member)
+            self._at(key_index, _lc_of(obj, member, 'key'))
             self._entry_trivia(self.nodes[key_index], record, C_KEY_PRE, C_KEY_EOL, None)
             node.children += [key_index, self._add(Node(KIND_SCALAR, STYLE_PLAIN, value=''))]
         return index
@@ -536,6 +665,8 @@ class _Representer:
     # -- tags -----------------------------------------------------------------------------
 
     def _tag_of(self, obj: Any) -> tuple[str, str, str] | None:
+        if isinstance(obj, (bytes, bytearray)):
+            return _BINARY_TAG
         written = self.plan.tags.get(type(obj))
         if written is not None:
             return self._triple(written, type(obj))

@@ -67,7 +67,7 @@ class TimeStamp(_Anchored, datetime.datetime):
             )
             tzinfo = datetime.timezone(-offset if m['tz_sign'] == '-' else offset)
         elif m['tz'] == 'Z':
-            tzinfo = datetime.timezone.utc
+            tzinfo = datetime.UTC
 
         self = cls(
             int(m['year']), int(m['month']), int(m['day']),

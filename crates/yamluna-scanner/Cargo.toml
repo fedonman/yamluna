@@ -23,8 +23,11 @@ thiserror.workspace = true
 libtest-mimic.workspace = true
 saphyr = "0.0.12"
 
-[lints]
-workspace = true
+# Vendored fork (see FORK.md).  We keep the diff against upstream saphyr-parser 0.0.12 as
+# small as we can, so we do not rewrite upstream code to satisfy pedantic *style* lints.
+# The correctness lints (`clippy::all`) and the workspace's `unsafe_op_in_unsafe_fn` stay on.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
 
 [[test]]
 name = "yaml-test-suite"

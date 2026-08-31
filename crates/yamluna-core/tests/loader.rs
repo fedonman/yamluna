@@ -286,9 +286,18 @@ fn degenerate_inputs_load_without_inventing_anything() {
     }
     assert!(yamluna_core::parse("").unwrap()[0].root.is_none());
     assert!(yamluna_core::parse("\n\n").unwrap()[0].root.is_none());
+    // Three breaks are three empty lines, and emitting three is what reproduces the source.
     assert_eq!(
         yamluna_core::parse("\n\n\n").unwrap()[0].trailing,
-        vec![yamluna_core::Trivia::BlankLines(2)]
+        vec![yamluna_core::Trivia::BlankLines(3)]
+    );
+    assert_eq!(
+        yamluna_core::emit(
+            &yamluna_core::parse("\n\n\n").unwrap(),
+            &yamluna_core::EmitOptions::default()
+        )
+        .unwrap(),
+        "\n\n\n"
     );
     // An explicitly started but empty document does have a (null) root.
     let d = &yamluna_core::parse("---\n").unwrap()[0];

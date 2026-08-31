@@ -56,25 +56,12 @@ KNOWN_SCANNER_DEFECTS: dict[str, str] = {}
 #: entry disappears when the slot is added.
 #: Corpus files the record path cannot carry, and the record field that would carry them.
 #:
-#: `Node.explicit`, `Doc.bom` and `Doc.final_line_break` closed three of these.  The test
-#: below fails if an entry starts passing, so a closed gap cannot leave a stale excuse behind
-#: -- and an entry added here has to name the field it needs.
-_FLOW_PUNCTUATION = (
-    'needs Node.flow_comma, Node.flow_end and Node.flow_bare_key: where a flow collection '
-    'put its commas and its closing bracket, and which of its keys were written with no `:`. '
-    '`yamluna_core::Node` records all three; the record classes have no slot for them, so a '
-    'document that goes through Python gets the emitter layout for its flow punctuation '
-    'instead of the source spelling'
-)
-
-KNOWN_RECORD_GAPS: dict[str, str] = {
-    # `{a: 1, b: 2, }` beside `{a: 1, b: 2}`, `[ 1 , 2 ]` beside `[1, 2]`, `{a: , b}` beside
-    # `{a: , b: }`.
-    'flow-forms': _FLOW_PUNCTUATION,
-    # `[a<TAB>, b]`: the TAB comes back as spaces either way, but the comma lands in the
-    # column the source put it in only on the Rust side.
-    'text-tabs': _FLOW_PUNCTUATION,
-}
+#: Empty: `Node.explicit`, `Doc.bom`, `Doc.final_line_break` and `Node.flow_seps` closed
+#: every one of these -- the last two were `flow-forms` and `text-tabs`, which needed a flow
+#: collection's own separation to cross the FFI.  The test below fails if an entry starts
+#: passing, so a closed gap cannot leave a stale excuse behind -- and an entry added here has
+#: to name the field it needs.
+KNOWN_RECORD_GAPS: dict[str, str] = {}
 
 
 @pytest.fixture(autouse=True)

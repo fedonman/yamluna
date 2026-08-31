@@ -6,8 +6,10 @@ emit in Rust -- rather than at any one seam.  ``tests/test_bindings.py`` measure
 FFI records lose, ``crates/yamluna-core/tests/roundtrip.rs`` measures what the emitter
 loses; what is left over is what the *Python object model* loses, and that is this file.
 
-For reference, ``ruamel.yaml==0.19.1`` round-trips 3 of the 41 corpus files byte-identically
-and yamluna round-trips 38 (``python tests/differential.py`` prints both columns).
+For reference, ``ruamel.yaml==0.19.1`` round-trips 3 of the 40 round-trippable corpus files
+byte-identically and yamluna round-trips 38 (``python tests/differential.py`` prints both
+columns; it scores ``key-duplicate`` on behaviour, since no `dict` can write two equal keys
+back, while :data:`KNOWN_LOSSES` below still records it as the byte-level loss it is).
 
 Every file that does not round-trip is in :data:`KNOWN_LOSSES` with the fact the object
 model cannot carry.  The test fails if one of them starts passing, so a fix can never leave
@@ -39,20 +41,9 @@ import pytest
 #: * *scanner* -- the file does not load at all.  Also in `KNOWN_SCANNER_DEFECTS` in
 #:   `crates/yamluna-core/tests/corpus.rs`.
 KNOWN_LOSSES: dict[str, str] = {
-    'flow-forms': (
-        'records: `yamluna_core::Node` has `flow_comma`, `flow_end` and `flow_bare_key`, '
-        'and the pure-Rust round trip keeps this file, but the record classes have no slot '
-        'for them, so ` , `, a trailing comma and `{a: , b}` cannot cross the FFI '
-        '(`KNOWN_RECORD_GAPS` in tests/test_bindings.py names the fields)'
-    ),
     'key-duplicate': (
         'object model: `CommentedMap` is a `dict`, so two entries with equal keys collapse '
         'into one (and the default `allow_duplicate_keys=False` refuses the file first)'
-    ),
-    'text-tabs': (
-        'document model: positions and lexemes are recorded but not the white space between '
-        'two lexemes, so the emitter reaches each recorded column with spaces and `[a<TAB>, '
-        'b]` comes back as `[a,  b]`'
     ),
 }
 
@@ -81,7 +72,7 @@ def test_a_known_loss_still_loses(
         pytest.skip('not a known loss')
     try:
         output: str | None = yamluna_roundtrip(corpus_text)
-    except Exception:  # noqa: BLE001 - refusing the file is one of the failure modes
+    except Exception:
         output = None
     assert output != corpus_text, (
         f'{corpus_path.stem} now round-trips: drop it from KNOWN_LOSSES '
@@ -99,7 +90,7 @@ def test_dumping_twice_is_a_fixed_point(
     """
     try:
         once = yamluna_roundtrip(corpus_text)
-    except Exception:  # noqa: BLE001 - the file does not load; owned by the tests above
+    except Exception:
         pytest.skip('does not load')
     assert yamluna_roundtrip(once) == once
 
@@ -115,7 +106,7 @@ def test_no_comment_is_ever_lost(
     """
     try:
         output = yamluna_roundtrip(corpus_text)
-    except Exception:  # noqa: BLE001 - owned by the tests above
+    except Exception:
         pytest.skip('does not load')
     assert _comments(output) == _comments(corpus_text)
 
@@ -147,9 +138,9 @@ def test_a_comment_inside_a_flow_collection_stays_inside_it(
     what the bug did.
 
     Only the `inner` slot is asserted byte-for-byte here.  Whether a flow collection's
-    *opening bracket* keeps its own line is a different fact -- it needs `Node.flow_end`,
-    which the record classes do not carry (`flow-forms` in :data:`KNOWN_LOSSES`) -- so the
-    sequence shapes that depend on it are pinned by `corpus/comment-flow.yaml` instead.
+    *opening bracket* keeps its own line is a different fact -- it is in `Node.flow_seps`,
+    the separation the source wrote in front of the first child -- and the sequence shapes
+    that depend on it are pinned by `corpus/comment-flow.yaml`.
     """
     assert yamluna_roundtrip(source) == source
 

@@ -22,7 +22,8 @@ error hierarchy and the tag registry are pure Python.  :meth:`YAML.load` and
 
 from __future__ import annotations
 
-from importlib.metadata import PackageNotFoundError, version as _dist_version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _dist_version
 
 from .comments import (
     Anchor,

@@ -45,6 +45,14 @@ Field conventions that the type annotations cannot express:
 ``Node.tag_first``
     the tag was written *before* the anchor (``!!str &a v``, not ``&a !!str v``).  YAML
     allows either order, so the order the source used has to be carried.
+``Node.flow_seps``
+    a flow collection's separation: what the source wrote *between* its lexemes, one run in
+    front of each child and one in front of the closing bracket, so a recorded list is
+    always ``len(children) + 1`` long.  Each run is the white space, ``,``, ``:`` and ``?``
+    verbatim, comments taken out.  It is what tells ``[1, 2]`` from ``[1, 2, ]`` from
+    ``[ 1 , 2 ]``, and which key of ``{a: 1, b}`` was written with no ``:``.  Empty for a
+    collection the user built -- and an insertion or a deletion changes ``children``, which
+    is what stops a stale list from being believed.
 ``Doc.tags_before_version``
     how many of ``tag_directives`` were written above the ``%YAML`` line; the rest were
     written below it.
@@ -170,6 +178,7 @@ class Node(_Record):
         'inner',
         'after',
         'tag_first',
+        'flow_seps',
     )
 
     kind: int
@@ -188,6 +197,7 @@ class Node(_Record):
     inner: list[Trivia]
     after: list[Trivia]
     tag_first: bool
+    flow_seps: list[str]
 
     def __init__(
         self,
@@ -207,6 +217,7 @@ class Node(_Record):
         inner: list[Trivia] | None = None,
         after: list[Trivia] | None = None,
         tag_first: bool = False,
+        flow_seps: list[str] | None = None,
     ) -> None:
         self.kind = kind
         self.style = style
@@ -224,6 +235,7 @@ class Node(_Record):
         self.inner = [] if inner is None else inner
         self.after = [] if after is None else after
         self.tag_first = tag_first
+        self.flow_seps = [] if flow_seps is None else flow_seps
 
     def _show(self, name: str, value: Any) -> str:
         if name == 'kind' and 0 <= value < len(KIND_NAMES):
@@ -272,6 +284,8 @@ class Doc(_Record):
         'bom',
         'final_line_break',
         'tags_before_version',
+        'directives_raw',
+        'stream_tail',
     )
 
     version: tuple[int, int] | None
@@ -285,6 +299,13 @@ class Doc(_Record):
     bom: bool
     final_line_break: bool
     tags_before_version: int
+    #: The document's directive region as written, and how many of ``leading``'s trivia were
+    #: read from inside it.  ``None`` for a document with no ``%`` line.  A directive line's
+    #: spelling does not follow from its meaning, so it is carried verbatim.
+    directives_raw: tuple[str, int] | None
+    #: White space the source ends with that no line break closes.  Always ``''`` when
+    #: ``final_line_break`` is set.
+    stream_tail: str
 
     def __init__(
         self,
@@ -299,6 +320,8 @@ class Doc(_Record):
         bom: bool = False,
         final_line_break: bool = True,
         tags_before_version: int = 0,
+        directives_raw: tuple[str, int] | None = None,
+        stream_tail: str = '',
     ) -> None:
         self.version = version
         self.tag_directives = [] if tag_directives is None else tag_directives
@@ -311,6 +334,8 @@ class Doc(_Record):
         self.bom = bom
         self.final_line_break = final_line_break
         self.tags_before_version = tags_before_version
+        self.directives_raw = directives_raw
+        self.stream_tail = stream_tail
 
 
 class EmitOptions(_Record):

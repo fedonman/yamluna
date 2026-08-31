@@ -106,6 +106,7 @@ from yamluna.timestamp import from_lexeme as _timestamp_from_lexeme
 __all__ = [
     'DOC_ATTRIB',
     'EXPLICIT_ATTRIB',
+    'FLOW_SEPS_ATTRIB',
     'NULL_ATTRIB',
     'SOURCE_ATTRIB',
     'UNRESOLVED',
@@ -132,6 +133,14 @@ DOC_ATTRIB: Final = '_yaml_doc'
 #: back into ``Node.explicit``.  A key added since the load is simply not in it, and is
 #: written in the implicit form.
 EXPLICIT_ATTRIB: Final = '_yaml_explicit'
+
+#: Where a flow collection records what the source wrote *between* its lexemes.
+#:
+#: ``Node.flow_seps`` verbatim -- one run in front of each child and one in front of the
+#: closing bracket -- parked on the ``CommentedMap``/``CommentedSeq``, which has no slot of
+#: its own for it.  :mod:`yamluna.representer` reads it back, and the emitter believes it only
+#: while its length still matches the children, so an insertion or a deletion retires it.
+FLOW_SEPS_ATTRIB: Final = '_yaml_flow_seps'
 
 #: Where a container records the source spelling of its ``None`` children.
 #:
@@ -597,7 +606,7 @@ class Constructor:
             container.copy_attributes(members)
             # `copy_attributes` knows only ruamel's attributes; the three yamluna adds are
             # ours to carry, and `? a` is written with the first of them.
-            for attrib in (EXPLICIT_ATTRIB, NULL_ATTRIB, SOURCE_ATTRIB):
+            for attrib in (EXPLICIT_ATTRIB, FLOW_SEPS_ATTRIB, NULL_ATTRIB, SOURCE_ATTRIB):
                 if (carried := getattr(container, attrib, None)) is not None:
                     setattr(members, attrib, carried)
             return self._register(node, members)
@@ -656,6 +665,8 @@ class Constructor:
         if node.tag is not None:
             obj.tag = Tag(*node.tag)
         obj.lc.line, obj.lc.col = node.line, node.col
+        if node.flow_seps:
+            setattr(obj, FLOW_SEPS_ATTRIB, node.flow_seps)
         if node.inner:
             self._prepend_pre(obj, self._tokens(node.inner))
         if node.after:

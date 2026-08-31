@@ -36,8 +36,7 @@ struct SuiteCase {
 }
 
 fn suite_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../yamluna-scanner/tests/yaml-test-suite/src")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../yamluna-scanner/tests/yaml-test-suite/src")
 }
 
 /// The suite writes white space it wants you to see with visible stand-ins. Same table as
@@ -113,7 +112,38 @@ fn suite_cases() -> Vec<SuiteCase> {
 ///
 /// Each entry is a real defect, minimised in `tests/README.md` under "Known gaps". The test below
 /// fails if one starts passing, so fixing a gap forces the entry out.
-const KNOWN_GAPS: &[(&str, &str)] = &[];
+const KNOWN_GAPS: &[(&str, &str)] = &[
+    (
+        "6HB6",
+        "an end-of-line comment inside a flow collection is written from a trivia slot, so the \
+         separation run around it cannot be echoed and the comment lands a line low",
+    ),
+    (
+        "7TMG",
+        "a `,` the source wrote *after* an own-line comment inside a flow collection is \
+         re-emitted before it: the run holding the comma is split by trivia written from a slot",
+    ),
+    (
+        "CN3R",
+        "an anchored single-pair mapping inside a flow sequence (`&c c: d`) is re-emitted with \
+         braces the source did not write",
+    ),
+    (
+        "CT4Q",
+        "an explicit `? key` inside a flow collection loses its `?`: `Entry::explicit` is \
+         recorded but the flow emitter never writes the indicator",
+    ),
+    (
+        "M5C3",
+        "a block-scalar header the source put on a line of its own below the node's tag is \
+         pulled up onto the tag's line; the header has no recorded position of its own",
+    ),
+    (
+        "M7A3",
+        "a `...` that ends a document with no content at all is not a parser event and has no \
+         document of its own to hang on, so it is dropped",
+    ),
+];
 
 /// **The headline number.** Every suite case that the loader accepts must re-emit byte-identically.
 #[test]
@@ -205,7 +235,7 @@ enum Val {
     Plain(String),
     /// `'` or `"` quoted; the string is already escaped for that quote.
     Quoted(char, String),
-    /// `|` or `>` with a `` or `-` chomping indicator, and one or more body lines.
+    /// `|` or `>` with a clip or `-` chomping indicator, and one or more body lines.
     Block(char, bool, Vec<String>),
     /// `*name`, resolved at render time against the anchors already written.
     Alias,
@@ -231,7 +261,13 @@ struct Doc {
     root: Node,
 }
 
-const TAGS: &[&str] = &["!!str", "!!map", "!!seq", "!foo", "!<tag:example.com,2000:bar>"];
+const TAGS: &[&str] = &[
+    "!!str",
+    "!!map",
+    "!!seq",
+    "!foo",
+    "!<tag:example.com,2000:bar>",
+];
 
 // -------------------------------------------------------------------------------------------
 // strategies
@@ -274,7 +310,7 @@ fn node(val: impl Strategy<Value = Val>) -> impl Strategy<Value = Node> {
     (
         val,
         any::<bool>(),
-        prop::option::of(0u8..TAGS.len() as u8),
+        prop::option::of(0u8..u8::try_from(TAGS.len()).expect("a handful of tags")),
         prop::collection::vec(trivia(), 0..2),
         prop::option::of(comment()),
     )
@@ -318,6 +354,9 @@ struct Render {
     out: String,
     anchors: Vec<String>,
     next: usize,
+    /// Whether the document just written closed itself with `...`. A directive line may not
+    /// follow one that did not, so the next document has to close it before its `%YAML`.
+    closed: bool,
 }
 
 impl Render {
@@ -449,31 +488,28 @@ impl Render {
             self.out.push(' ');
             self.out.push_str(head.trim_end());
         }
-        match &n.val {
-            Val::Block(h, strip, lines) => {
-                self.out.push(' ');
-                self.out.push(*h);
-                if *strip {
-                    self.out.push('-');
-                }
-                // Gap `block-header-comment`: an end-of-line comment on a block-scalar header
-                // is re-emitted before the `-` that introduces the item, or swallows the header
-                // outright at the document root. As a mapping value it is written correctly.
-                if map_value {
-                    self.eol(n);
-                }
-                self.out.push('\n');
-                for l in lines {
-                    self.pad(child);
-                    self.out.push_str(l);
-                    self.out.push('\n');
-                }
+        if let Val::Block(h, strip, lines) = &n.val {
+            self.out.push(' ');
+            self.out.push(*h);
+            if *strip {
+                self.out.push('-');
             }
-            _ => {
+            // Gap `block-header-comment`: an end-of-line comment on a block-scalar header is
+            // re-emitted before the `-` that introduces the item, or swallows the header
+            // outright at the document root. As a mapping value it is written correctly.
+            if map_value {
                 self.eol(n);
-                self.out.push('\n');
-                self.collection(n, child);
             }
+            self.out.push('\n');
+            for l in lines {
+                self.pad(child);
+                self.out.push_str(l);
+                self.out.push('\n');
+            }
+        } else {
+            self.eol(n);
+            self.out.push('\n');
+            self.collection(n, child);
         }
     }
 
@@ -503,6 +539,10 @@ impl Render {
 
     fn document(&mut self, doc: &Doc, forced_start: bool) {
         if doc.directives {
+            // `%YAML` after a document nothing closed is a parse error, not a round-trip case.
+            if forced_start && !self.closed {
+                self.out.push_str("...\n");
+            }
             self.out.push_str("%YAML 1.2\n");
         }
         let block = Self::is_block(&doc.root);
@@ -517,7 +557,8 @@ impl Render {
         // Gap `anchor-own-line` / `tag-own-line`: `&a` or `!!str` on a line of its own above a
         // block collection is rewritten by the emitter. On the `---` line it is not, so a root
         // that carries one gets an explicit start.
-        let explicit = doc.directives || doc.explicit_start || forced_start || (block && !head.is_empty());
+        let explicit =
+            doc.directives || doc.explicit_start || forced_start || (block && !head.is_empty());
 
         if explicit {
             self.out.push_str("---");
@@ -560,6 +601,7 @@ impl Render {
         if doc.explicit_end {
             self.out.push_str("...\n");
         }
+        self.closed = doc.explicit_end;
     }
 
     /// A block-shaped node's own lines, at `indent`, with its anchor and tag already written.
@@ -609,7 +651,7 @@ proptest! {
     fn generated_documents_emit_idempotently(docs in prop::collection::vec(document(), 1..3)) {
         let src = render(&docs);
         if let Ok(once) = round_trip(&src) {
-            let twice = round_trip(&once).map_err(|e| TestCaseError::fail(e.to_string()))?;
+            let twice = round_trip(&once).map_err(TestCaseError::fail)?;
             prop_assert_eq!(twice, once);
         }
     }

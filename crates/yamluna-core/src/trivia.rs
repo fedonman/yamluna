@@ -113,6 +113,50 @@ impl Pending {
         }
         self.0.drain(..cut).collect()
     }
+
+    /// Take the trailing part of the run that belongs *inside* a block collection that opens at
+    /// column `col`.
+    ///
+    /// The mirror of [`Pending::take_from_col`]: there the run sits where collections *close* and
+    /// is ordered deepest-first; here it sits in front of a collection that is *opening* and is
+    /// ordered shallowest-first, so the cut goes after the last comment left of `col` and
+    /// everything from there on is indented into the new collection (DESIGN §2.2 rule 2).
+    pub fn take_to_col(&mut self, col: u32) -> Vec<Trivia> {
+        let mut start = 0;
+        for (i, t) in self.0.iter().enumerate() {
+            if t.col().is_some_and(|c| c < col) {
+                start = i + 1;
+            }
+        }
+        // An end-of-line comment sits on the line of the indicator that introduces the collection.
+        // Everything above that line is outside it, so only what follows the comment can be in.
+        if let Some(i) = self.0.iter().rposition(|t| {
+            matches!(
+                t,
+                Trivia::Comment {
+                    own_line: false,
+                    ..
+                }
+            )
+        }) {
+            start = start.max(i + 1);
+        }
+        // By rule 3 the blank lines leading up to whatever stays outside go outside with it.
+        let mut end = self.0.len();
+        while end > start && self.0[end - 1].col().is_none() {
+            end -= 1;
+        }
+        self.0.drain(start..end).collect()
+    }
+
+    /// Take the run of blank lines directly above whatever comes next, if the pending run ends
+    /// in one. Only that one run: a run before it is separated by a line with content on it.
+    pub fn take_trailing_blanks(&mut self) -> Vec<Trivia> {
+        match self.0.last() {
+            Some(t) if t.col().is_none() => self.0.split_off(self.0.len() - 1),
+            _ => Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -137,6 +181,27 @@ mod tests {
         assert_eq!(p.take_from_col(4), vec![comment(4), comment(4)]);
         assert_eq!(p.take_from_col(2), vec![comment(2)]);
         assert_eq!(p.take_all(), vec![comment(0)]);
+    }
+
+    #[test]
+    fn take_to_col_cuts_after_the_last_shallower_comment() {
+        // `# 0` describes the entry; `# 2` and the blank line in front of it are indented
+        // into the nested collection that is about to open at column 2.
+        let mut p = Pending::default();
+        p.push(comment(0));
+        p.push(Trivia::BlankLines(1));
+        p.push(comment(2));
+        assert_eq!(p.take_to_col(2), vec![Trivia::BlankLines(1), comment(2)]);
+        assert_eq!(p.take_all(), vec![comment(0)]);
+    }
+
+    #[test]
+    fn take_to_col_takes_nothing_when_the_run_is_all_shallower() {
+        let mut p = Pending::default();
+        p.push(comment(0));
+        p.push(comment(0));
+        assert_eq!(p.take_to_col(2), vec![]);
+        assert_eq!(p.take_all(), vec![comment(0), comment(0)]);
     }
 
     #[test]

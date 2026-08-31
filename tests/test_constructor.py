@@ -27,7 +27,6 @@ from _records import (
     scalar,
     seq,
 )
-
 from yamluna.comments import (
     C_KEY_EOL,
     C_KEY_PRE,
@@ -40,7 +39,7 @@ from yamluna.comments import (
     CommentedSet,
     TaggedScalar,
 )
-from yamluna.constructor import UNRESOLVED, Constructor, construct, construct_all, resolve
+from yamluna.constructor import UNRESOLVED, construct, construct_all, resolve
 from yamluna.error import (
     ComposerError,
     ConstructorError,

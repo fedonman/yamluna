@@ -15,7 +15,7 @@ import math
 import re
 from typing import Any, Self
 
-from yamluna.scalarstring import _Anchored, _SCALAR_SLOTS
+from yamluna.scalarstring import _SCALAR_SLOTS, _Anchored
 
 __all__ = ['ScalarFloat', 'from_lexeme']
 

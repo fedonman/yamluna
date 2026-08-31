@@ -43,6 +43,13 @@ from collections.abc import Iterable, Iterator, Mapping
 from typing import Any, ClassVar, Final, Self
 
 __all__ = [
+    'C_ELEM_EOL',
+    'C_ELEM_POST',
+    'C_ELEM_PRE',
+    'C_KEY_EOL',
+    'C_KEY_PRE',
+    'C_VALUE_EOL',
+    'C_VALUE_POST',
     'Anchor',
     'Comment',
     'CommentMark',
@@ -53,13 +60,6 @@ __all__ = [
     'CommentedMap',
     'CommentedSeq',
     'CommentedSet',
-    'C_ELEM_EOL',
-    'C_ELEM_POST',
-    'C_ELEM_PRE',
-    'C_KEY_EOL',
-    'C_KEY_PRE',
-    'C_VALUE_EOL',
-    'C_VALUE_POST',
     'Format',
     'LineCol',
     'MergeList',
@@ -365,10 +365,7 @@ class Comment:
 
     def __contains__(self, text: str) -> bool:
         """True if *text* occurs in any comment attached here (ruamel's semantics)."""
-        for tok in self._all_tokens():
-            if text in tok.value:
-                return True
-        return False
+        return any(text in tok.value for tok in self._all_tokens())
 
     def _all_tokens(self) -> Iterator[CommentToken]:
         for group in (self.comment, self._pre, self._post):
@@ -439,7 +436,10 @@ class _SeqCaItems(dict):
 
 
 class CommentedBase:
-    """The per-node YAML attributes: ``.ca``, ``.lc``, ``.fa``, ``.anchor``, ``.tag``, ``.merge``."""
+    """The per-node YAML attributes.
+
+    ``.ca``, ``.lc``, ``.fa``, ``.anchor``, ``.tag`` and ``.merge``.
+    """
 
     #: which slot of a record holds this container's end-of-line comment
     _ca_eol_slot: ClassVar[int] = C_VALUE_EOL
@@ -557,7 +557,9 @@ class CommentedBase:
         return t
 
     # -- comment API ----------------------------------------------------------------------
-    def yaml_end_comment_extend(self, comment: Iterable[CommentToken] | None, clear: bool = False) -> None:
+    def yaml_end_comment_extend(
+        self, comment: Iterable[CommentToken] | None, clear: bool = False
+    ) -> None:
         if comment is None:
             return
         if clear or self.ca.end is None:
@@ -673,9 +675,13 @@ class CommentedBase:
         if after:
             if rec[C_VALUE_POST] is None:
                 rec[C_VALUE_POST] = []
-            rec[C_VALUE_POST].extend(token(line, after_indent) for line in after.split('\n'))
+            rec[C_VALUE_POST].extend(
+                token(line, after_indent) for line in after.split('\n')
+            )
 
-    def yaml_add_eol_comment(self, comment: str, key: Any = NotNone, column: int | None = None) -> None:
+    def yaml_add_eol_comment(
+        self, comment: str, key: Any = NotNone, column: int | None = None
+    ) -> None:
         """Set the end-of-line comment of the entry *key* (of this node if no key)."""
         if column is None:
             column = self._yaml_get_column(key)
@@ -780,7 +786,8 @@ class CommentedSeq(_SeqTrivia, list):
         self._ca_store().reverse()
 
     def sort(self, *, key: Any = None, reverse: bool = False) -> None:
-        keyf = (lambda i: list.__getitem__(self, i)) if key is None else (lambda i: key(list.__getitem__(self, i)))
+        item = lambda i: list.__getitem__(self, i)  # noqa: E731
+        keyf = item if key is None else (lambda i: key(item(i)))
         order = sorted(range(list.__len__(self)), key=keyf, reverse=reverse)
         store = self._ca_store()
         items = [list.__getitem__(self, i) for i in order]
@@ -1066,10 +1073,14 @@ class CommentedKeyMap(CommentedBase, tuple, Mapping):
 class TaggedScalar(CommentedBase, str):
     """A scalar with a tag we do not construct: round-trips verbatim (DESIGN.md 5.4)."""
 
-    def __new__(cls, value: str = '', style: str | None = None, tag: Tag | str | None = None) -> TaggedScalar:
+    def __new__(
+        cls, value: str = '', style: str | None = None, tag: Tag | str | None = None
+    ) -> TaggedScalar:
         return str.__new__(cls, value)
 
-    def __init__(self, value: str = '', style: str | None = None, tag: Tag | str | None = None) -> None:
+    def __init__(
+        self, value: str = '', style: str | None = None, tag: Tag | str | None = None
+    ) -> None:
         self.style = style
         if tag is not None:
             self.tag = tag

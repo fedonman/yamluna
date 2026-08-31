@@ -78,6 +78,14 @@ node with empty trivia.
 - three
 ```
 
+> **Shipped except for the first item.** An own-line comment above a collection's *first*
+> child is filed on the collection's `inner` slot rather than on that child's `before`
+> (`loader.rs::take_before`), so it stays where it is while the child it describes moves —
+> exactly the defect above, for one position out of n. Every byte still round-trips; only the
+> ownership is wrong. Eight xfails in `tests/test_mutation.py` pin it, and DESIGN §2.2 rule 2
+> names `before` as the target. `insert` additionally strands the `-` of the item preceding an
+> own-line comment (`-\n  value`), which four more xfails pin.
+
 ---
 
 ### A3. `del seq[i]` orphans the deleted item's comment and destroys its neighbour's
@@ -107,6 +115,8 @@ del s[0]  ->  # about two\n- two\n# about three\n- three
 Deleting the last item of a collection re-parents its `before` trivia onto the collection's
 `after` slot rather than leaving it dangling as the final line of the document.
 
+
+Same first-item caveat as [A2](#a2-seqinsert-puts-the-following-items-comment-above-the-new-item).
 ---
 
 ### A4. `CommentedMap.__delitem__` never touches `.ca`, so comments drift *and* resurrect
@@ -145,6 +155,8 @@ about.
 **yamluna.** Trivia is owned by the node. Removing an entry removes the node and its
 trivia; there is no side table to go stale, so nothing can resurrect.
 
+
+Same first-item caveat as [A2](#a2-seqinsert-puts-the-following-items-comment-above-the-new-item).
 ---
 
 ### A5. Key rename and `move_to_end` scatter comments across the document
@@ -173,6 +185,8 @@ key must carry its comments to the new key.
 **yamluna.** Reordering moves nodes; trivia rides along because it hangs off the node.
 A rename is a node mutation, not a delete-plus-insert, so all four slots survive.
 
+
+Same first-item caveat as [A2](#a2-seqinsert-puts-the-following-items-comment-above-the-new-item).
 ---
 
 ### A6. `CommentedSeq.reverse()` moves nothing
@@ -193,6 +207,8 @@ no way to tell which from the outside.
 **yamluna.** There is no comment table to maintain, so every mutating list operation is
 correct by construction — including the ones nobody remembered to override.
 
+
+Same first-item caveat as [A2](#a2-seqinsert-puts-the-following-items-comment-above-the-new-item).
 ---
 
 ### A7. Blank lines are smuggled inside comment text
@@ -473,13 +489,17 @@ distinction that decides this is `inner` versus `before`: promoting a flow colle
 `inner` trivia to `before` would push the opening brace onto the next line, so the
 projection keeps them apart (`_leading_is_before` in `python/yamluna/representer.py`).
 
-Every comment survives, in place, in both the Rust and the Python path;
-`corpus/comment-flow.yaml` round-trips byte-for-byte. What is *not* yet reproduced through
-Python is where the collection's own brackets sat: keeping an opening `[` on a line of its
-own needs `Node.flow_end`, which the record classes do not carry, so an isolated
-`'flow_seq: [\n  a,\n  # inside\n  b,\n]\n'` comes back as `'flow_seq: [a,\n  # inside\n
-b,\n]\n'` — the comment kept, the bracket moved. That is the `flow-forms` known gap
-(`tests/README.md`), not a comment defect.
+Every comment survives, in both the Rust and the Python path;
+`corpus/comment-flow.yaml` round-trips byte-for-byte, brackets included. *In place* has two
+known exceptions, both in `yaml-test-suite` and both pinned by `KNOWN_GAPS` in
+`crates/yamluna-core/tests/proptest_roundtrip.rs`: a comment that splits the separation run
+between two lexemes (`6HB6`, `7TMG`) comes back a line away from where it sat, because the run
+is one string per gap with the comments taken out of it and cannot be put back *around* one.
+Nothing is lost; the placement is. Where the collection's
+own punctuation sat is a separate fact from the comments, and it is recorded: `Node.flow_seps`
+holds the separation the source wrote in front of each child and in front of the closing
+bracket, and the record classes carry it across the FFI, so `[ 1 , 2 ]`, `[1, 2, ]`, `[a<TAB>,
+b]` and `{a: 1, b}` all come back as written.
 
 ---
 

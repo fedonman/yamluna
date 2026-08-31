@@ -112,6 +112,7 @@ from yamluna.comments import (
 from yamluna.constructor import (
     DOC_ATTRIB,
     EXPLICIT_ATTRIB,
+    FLOW_SEPS_ATTRIB,
     NULL_ATTRIB,
     SOURCE_ATTRIB,
     UNRESOLVED,
@@ -333,6 +334,11 @@ def _null_lexeme(container: Any, key: Any) -> str | None:
     return lexeme
 
 
+def _flow_seps(obj: Any) -> list[str]:
+    """What the source wrote between a flow collection's lexemes (:data:`FLOW_SEPS_ATTRIB`)."""
+    return list(getattr(obj, FLOW_SEPS_ATTRIB, None) or ())
+
+
 def _source_of(container: Any, key: Any) -> tuple[Any, Node] | None:
     """The ``(value, node)`` `container` recorded for a child (:data:`SOURCE_ATTRIB`)."""
     store = getattr(container, SOURCE_ATTRIB, None)
@@ -381,12 +387,20 @@ def _stream_trivia(carried: Doc | None, root: Node) -> tuple[list[Trivia], list[
     record -- parked on the root by :data:`~yamluna.constructor.DOC_ATTRIB` -- is what says
     how many of them there were.  A prefix or suffix the user has since edited no longer
     matches and simply stays on the root, which is the safe way to be wrong.
+
+    The prefix comes back off ``before`` for a block root and off ``inner`` for a flow one:
+    :func:`_leading_is_before` must leave a flow collection's ``inner`` alone (a comment there
+    sits *after* the bracket), so that is where the fold is still parked.  Either way the
+    document's leading comments are outside the root, never inside it.
     """
     if carried is None:
         return [], []
     leading, trailing = list(carried.leading), list(carried.trailing)
-    if leading and root.before[: len(leading)] == leading:
-        root.before = root.before[len(leading) :]
+    for slot in ('before', 'inner'):
+        run = getattr(root, slot)
+        if leading and run[: len(leading)] == leading:
+            setattr(root, slot, run[len(leading) :])
+            break
     else:
         leading = []
     if trailing and root.after[-len(trailing) :] == trailing:
@@ -633,7 +647,7 @@ class _Representer:
 
     def _mapping(self, obj: Mapping[Any, Any], anchor: str | None) -> int:
         node = Node(KIND_MAPPING, _flow_style(obj, self.default_flow_style),
-                    anchor=anchor, tag=self._tag_of(obj))
+                    anchor=anchor, tag=self._tag_of(obj), flow_seps=_flow_seps(obj))
         index = self._add(node)
         self._own_trivia(obj, node)
         explicit = getattr(obj, EXPLICIT_ATTRIB, None) or frozenset()
@@ -658,7 +672,7 @@ class _Representer:
 
     def _sequence(self, obj: Any, anchor: str | None) -> int:
         node = Node(KIND_SEQUENCE, _flow_style(obj, self.default_flow_style),
-                    anchor=anchor, tag=self._tag_of(obj))
+                    anchor=anchor, tag=self._tag_of(obj), flow_seps=_flow_seps(obj))
         index = self._add(node)
         self._own_trivia(obj, node)
         for position, item in enumerate(obj):
@@ -675,7 +689,7 @@ class _Representer:
     def _set(self, obj: Any, anchor: str | None) -> int:
         """A ``!!set``: a mapping whose values are all null."""
         node = Node(KIND_MAPPING, _flow_style(obj, self.default_flow_style),
-                    anchor=anchor, tag=self._tag_of(obj) or _SET_TAG)
+                    anchor=anchor, tag=self._tag_of(obj) or _SET_TAG, flow_seps=_flow_seps(obj))
         index = self._add(node)
         self._own_trivia(obj, node)
         explicit = getattr(obj, EXPLICIT_ATTRIB, None) or frozenset()

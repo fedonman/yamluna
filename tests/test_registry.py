@@ -6,7 +6,6 @@ Run: PYTHONPATH=python .venv/bin/pytest tests/test_registry.py
 import re
 
 import pytest
-
 from yamluna.registry import ConstructorError, TagDirective, TagRegistry
 
 

@@ -324,7 +324,7 @@ def section_threads(docs: dict[str, str], quick: bool) -> None:
 
     text = docs['nested']
     counts = [1, 2, 4, 8] if not quick else [1, 4]
-    total = 8 * max(counts)
+    total = 4 * max(counts)
 
     workloads = {
         'yamluna `_yamluna.parse`': lambda: _yamluna.parse(text),
@@ -340,7 +340,13 @@ def section_threads(docs: dict[str, str], quick: bool) -> None:
     print(f'| workload | {heads} | speedup at {counts[-1]} |')
     print('| --- |' + ' ---: |' * (len(counts) + 1))
     for label, work in workloads.items():
-        times = [parallel(work, n, total) for n in counts]
+        # Two passes, ascending then descending, and the faster of the two per thread count.
+        # One pass measures whichever count runs first on a cold, un-throttled CPU and the
+        # rest on a hot one, which moves the reported speedup by ~20% on a laptop -- in
+        # whichever direction the ordering happens to favour.
+        up = [parallel(work, n, total) for n in counts]
+        down = [parallel(work, n, total) for n in reversed(counts)]
+        times = [min(a, b) for a, b in zip(up, reversed(down), strict=True)]
         cells = ' | '.join(f'{t:.2f} s' for t in times)
         print(f'| {label} | {cells} | {times[0] / times[-1]:.2f}x |')
     print()

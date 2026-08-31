@@ -20,18 +20,18 @@ import importlib
 from collections.abc import Callable, MutableMapping, MutableSequence
 from typing import Any, ClassVar, Self
 
+# `PreservedScalarString` is ruamel's old name for `LiteralScalarString`.
 __all__ = [
-    'ScalarString',
-    'LiteralScalarString',
-    'FoldedScalarString',
-    'SingleQuotedScalarString',
     'DoubleQuotedScalarString',
+    'FoldedScalarString',
+    'LiteralScalarString',
     'PlainScalarString',
-    # PreservedScalarString is ruamel's old name for LiteralScalarString.
     'PreservedScalarString',
+    'ScalarString',
+    'SingleQuotedScalarString',
+    'from_lexeme',
     'preserve_literal',
     'walk_tree',
-    'from_lexeme',
 ]
 
 
@@ -104,7 +104,7 @@ class _Anchored:
             self._yaml_anchor = a  # type: ignore[attr-defined]
         return a
 
-    def yaml_anchor(self, any: bool = False) -> Any:  # noqa: A002 - ruamel's signature
+    def yaml_anchor(self, any: bool = False) -> Any:
         a = getattr(self, '_yaml_anchor', None)
         if a is None:
             return None
@@ -232,7 +232,7 @@ def preserve_literal(s: str) -> LiteralScalarString:
 
 def walk_tree(
     base: Any,
-    map: dict[str, Callable[[str], Any]] | None = None,  # noqa: A002 - ruamel's signature
+    map: dict[str, Callable[[str], Any]] | None = None,
 ) -> None:
     """Recursively convert strings in a loaded tree, in place.
 

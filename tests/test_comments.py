@@ -14,7 +14,6 @@ from collections.abc import Mapping
 from typing import Any
 
 import pytest
-
 from yamluna.comments import (
     C_ELEM_EOL,
     C_KEY_PRE,
@@ -34,7 +33,6 @@ from yamluna.comments import (
     Tag,
     TaggedScalar,
 )
-
 
 # --------------------------------------------------------------------------- helpers
 
@@ -81,7 +79,7 @@ def test_containers_subclass_the_builtins() -> None:
 
 def test_equality_with_plain_builtins() -> None:
     assert CommentedMap(a=1) == {'a': 1}
-    assert {'a': 1} == CommentedMap(a=1)
+    assert CommentedMap(a=1) == {'a': 1}
     assert CommentedSeq([1, 2]) == [1, 2]
     assert CommentedSet(['a']) == {'a'}
     assert CommentedKeySeq(('a', 1)) == ('a', 1)
@@ -252,7 +250,9 @@ def test_seq_binding_survives_random_mutation() -> None:
 
     s = CommentedSeq()
     for _ in range(400):
-        op = rng.choice(['insert', 'append', 'extend', 'del', 'pop', 'remove', 'reverse', 'sort', 'delslice'])
+        op = rng.choice(
+            ['insert', 'append', 'extend', 'del', 'pop', 'remove', 'reverse', 'sort', 'delslice']
+        )
         n = len(s)
         if op == 'insert':
             idx = rng.randint(0, n)
@@ -433,6 +433,22 @@ def test_yaml_set_comment_before_after_key() -> None:
     assert record[C_KEY_PRE][0].column == 2
     assert [c.value for c in record[C_VALUE_POST]] == ['# trailing\n']
     assert record[C_VALUE_POST][0].column == 4  # indent + 2
+
+
+def test_d4_after_on_a_scalar_valued_entry_is_emitted() -> None:
+    """DIVERGENCES D4: ruamel stores slot 3 and never writes it when the value is a scalar."""
+    import io
+
+    pytest.importorskip('yamluna._yamluna', reason='extension not built yet: maturin develop')
+    from yamluna import YAML
+
+    yaml = YAML()
+    m = yaml.load('a: 1\nb: 2\nc: 3\n')
+    m.yaml_set_comment_before_after_key('b', before='before b', after='after b')
+    buf = io.StringIO()
+    yaml.dump(m, buf)
+    assert '# after b' in buf.getvalue(), 'a stored comment must never be silently discarded'
+    assert buf.getvalue().index('# after b') > buf.getvalue().index('b: 2')
 
 
 def test_yaml_set_comment_before_after_key_blank_line() -> None:

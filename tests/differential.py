@@ -26,19 +26,21 @@ and yamluna is given exactly the same two lines.  Everything else is left at its
 default in both, including ``width = 80`` (so refolded long lines show up as a
 failure -- that is a real default-configuration behaviour, not a rigged one).
 
-The one exception is ``allow_duplicate_keys``.  It defaults to ``False``, and
-``corpus/key-duplicate.yaml`` deliberately holds duplicate keys, so both
-libraries correctly *refuse* it -- refusing is the behaviour that file
-specifies, and a correct refusal is not a round-trip failure.  That file is
-therefore measured with ``allow_duplicate_keys = True``, which is the only
-configuration under which a round trip of it is a meaningful question at all;
-``tests/test_duplicate_keys.py`` covers the refusal itself.
+``corpus/key-duplicate.yaml`` is the one file scored on something else.  It
+deliberately holds ``a: 1 ... a: 3``, and a mapping keeps one of two equal keys,
+so *no* dict-backed API can write those bytes back -- "does it round-trip" is a
+question neither library can answer yes to, and counting it as a round-trip
+failure marked a correct refusal as a defect.  What the file actually specifies
+is behaviour, so :func:`check_duplicate_keys` measures that instead
+(:data:`BEHAVIOUR_ONLY`), it gets its own row, and the byte-identity headline is
+over the other 40 files.
 """
 
 from __future__ import annotations
 
 import difflib
 import io
+import os
 import re
 import sys
 import warnings
@@ -112,6 +114,23 @@ def roundtrip_with_yamluna(text: str, *, allow_duplicate_keys: bool = False) -> 
     return buf.getvalue()
 
 
+def load_with_yamluna(text: str, *, allow_duplicate_keys: bool = False) -> Any:
+    """One document, loaded the way :func:`roundtrip_with_yamluna` loads it."""
+    import yamluna
+
+    yaml = yamluna.YAML()  # typ='rt'
+    yaml.preserve_quotes = True
+    yaml.allow_duplicate_keys = allow_duplicate_keys
+    return yaml.load(text)
+
+
+def load_one_with_ruamel(text: str, *, allow_duplicate_keys: bool = False) -> Any:
+    """The same, through ruamel: one document, the ordinary round-trip recipe."""
+    yaml = ruamel_rt()
+    yaml.allow_duplicate_keys = allow_duplicate_keys
+    return yaml.load(text)
+
+
 def read_corpus_file(path: Path) -> str:
     """Read a corpus file as text without touching newlines or the BOM."""
     return path.read_bytes().decode("utf-8")
@@ -121,13 +140,16 @@ def corpus_files() -> list[Path]:
     return sorted(CORPUS_DIR.glob("*.yaml"))
 
 
-#: Corpus files whose subject matter the default configuration is right to
-#: reject, mapped to the options that make a round trip of them measurable.
-#: Scoring a correct refusal as a round-trip failure would be dishonest in both
-#: columns; the refusal has its own tests.
-CORPUS_OPTIONS: dict[str, dict[str, bool]] = {
-    "key-duplicate": {"allow_duplicate_keys": True},
-}
+#: Corpus files scored on behaviour rather than on bytes, and left out of the
+#: byte-identity headline.
+#:
+#: Only ``key-duplicate``, and only because byte-identity is not a question that
+#: file *has* an answer to: it holds ``a: 1 ... a: 3``, and a mapping keeps one
+#: of two equal keys, so every dict-backed library writes back fewer lines than
+#: it read.  The file's subject is what a library does about that -- refuse by
+#: default, and when told to allow duplicates, say so and let the last one win
+#: (DESIGN 2.3) -- which is what :func:`check_duplicate_keys` measures.
+BEHAVIOUR_ONLY: set[str] = {"key-duplicate"}
 
 
 # --------------------------------------------------------------------------
@@ -167,13 +189,12 @@ def check_file(
         def roundtrip(text: str, **options: bool) -> str:
             return roundtrip_with_ruamel(text, sequence, offset, **options)
 
-    options = CORPUS_OPTIONS.get(path.stem, {})
     source = read_corpus_file(path)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         try:
-            output = roundtrip(source, **options)
-        except Exception as exc:  # noqa: BLE001 - the failure mode *is* the result
+            output = roundtrip(source)
+        except Exception as exc:
             first = str(exc).strip().splitlines()
             error = f"{type(exc).__name__}: {first[0] if first else ''}".strip()
             return Result(path, False, f"raises {error}", "", error)
@@ -185,6 +206,57 @@ def check_file(
     if warned:
         notes = f"{notes}; warns {', '.join(warned)}"
     return Result(path, False, notes, unified(source, output, label))
+
+
+def _last_key_won(data: Any) -> bool:
+    """Did every duplicate in ``corpus/key-duplicate.yaml`` resolve to its *last* value?
+
+    Spelled out rather than derived: "is this key a duplicate" is a parser's job, not a
+    regex's.  ``seq_items_are_not_keys`` holds two ``dup:`` lines in two *different*
+    mappings, which are not duplicates at all, so both items have to survive.
+    """
+    try:
+        return (
+            data["a"] == 3
+            and data["nested"]["x"] == 4
+            and data["flow"]["k"] == 2
+            and data["quoted"] == 2
+            and len(data["seq_items_are_not_keys"]) == 2
+        )
+    except (KeyError, IndexError, TypeError):
+        return False
+
+
+def check_duplicate_keys(load: Callable[..., Any]) -> Result:
+    """Score ``corpus/key-duplicate.yaml`` on behaviour instead of on bytes.
+
+    The three things that file specifies, in order: refuse duplicates by default; when
+    told to allow them, *say so* rather than losing data silently; and keep the last of
+    each duplicated pair, which is the resolution DESIGN 2.3 fixes.  All three, or the
+    row is a ``no`` -- the point of the row is that "cannot round-trip" is not a verdict
+    on any of them.
+    """
+    path = CORPUS_DIR / "key-duplicate.yaml"
+    source = read_corpus_file(path)
+    try:
+        load(source)  # allow_duplicate_keys=False, the default
+        refuses, notes = False, ["accepts duplicates by default"]
+    except Exception as exc:
+        refuses, notes = True, [f"raises {type(exc).__name__} by default"]
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        try:
+            data = load(source, allow_duplicate_keys=True)
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {str(exc).strip().splitlines()[0]}"
+            notes.append(f"still raises {type(exc).__name__} when allowed")
+            return Result(path, False, "; ".join(notes), "", error)
+    warned = sorted({w.category.__name__ for w in caught})
+    kept = "the last key wins" if _last_key_won(data) else "the first key wins"
+    told = f"warns {', '.join(warned)}" if warned else "warns nothing"
+    notes.append(f"when allowed, {told} and {kept}")
+    return Result(path, refuses and bool(warned) and _last_key_won(data), "; ".join(notes), "")
 
 
 def unified(source: str, output: str, label: str = "ruamel") -> str:
@@ -327,12 +399,9 @@ def _seq_indents(text: str) -> set[int]:
 
 def _first_change(src_lines: list[str], out_lines: list[str]) -> str:
     """`-old / +new` for the first line that differs."""
-    for n, (old, new) in enumerate(zip(src_lines, out_lines), start=1):
+    for n, (old, new) in enumerate(zip(src_lines, out_lines, strict=False), start=1):
         if old != new:
-            shared = len(_visible(old)) - len(_visible(old).lstrip())
-            for shared, (a, b) in enumerate(zip(_visible(old), _visible(new))):
-                if a != b:
-                    break
+            shared = len(os.path.commonprefix([_visible(old), _visible(new)]))
             start = max(0, shared - 18)
             return (
                 f"line {n}: `{_clip(_visible(old), start)}`"
@@ -397,6 +466,22 @@ def _table(rows: list[tuple[Result, Result]], notes_from: str = "yamluna") -> st
     return "\n".join(lines)
 
 
+def _behaviour_table(rows: list[tuple[Result, Result]]) -> str:
+    """The behaviour-scored files: what each library does, spelled out per library."""
+    lines = [
+        "| corpus file       | library | as specified | what it does |",
+        "| ----------------- | ------- | ------------ | ------------ |",
+    ]
+    for ruamel, yamluna in rows:
+        for label, result in (("ruamel", ruamel), ("yamluna", yamluna)):
+            cell = result.summary.replace("|", "\\|")
+            lines.append(
+                f"| {'`' + result.name + '`':<17} | {label:<7} "
+                f"| {_mark(result.ok):<12} | {cell} |"
+            )
+    return "\n".join(lines)
+
+
 def _yamluna_version() -> str:
     try:
         import yamluna
@@ -424,12 +509,18 @@ def main(argv: list[str]) -> int:
             print(f"no corpus file matches {sorted(names)}", file=sys.stderr)
             return 2
 
+    behaviour_paths = [p for p in paths if p.stem in BEHAVIOUR_ONLY]
     rows = [
         (
             check_file(p, sequence, offset),
             check_file(p, roundtrip=roundtrip_with_yamluna, label="yamluna"),
         )
         for p in paths
+        if p.stem not in BEHAVIOUR_ONLY
+    ]
+    behaviour_rows = [
+        (check_duplicate_keys(load_one_with_ruamel), check_duplicate_keys(load_with_yamluna))
+        for _ in behaviour_paths
     ]
     total = len(rows)
     ruamel_clean = sum(r.ok for r, _ in rows)
@@ -438,11 +529,19 @@ def main(argv: list[str]) -> int:
     config = f"indent(mapping=2, sequence={sequence}, offset={offset})"
     print(f"ruamel.yaml {RUAMEL_VERSION}, typ='rt', preserve_quotes=True, {config}")
     print(f"yamluna {_yamluna_version()}, typ='rt', preserve_quotes=True, defaults")
-    print()
-    print(f"ruamel : {ruamel_clean:>2}/{total} corpus files round-trip byte-identically")
-    print(f"yamluna: {yamluna_clean:>2}/{total} corpus files round-trip byte-identically")
-    print()
-    print(_table(rows, "ruamel" if show_ruamel else "yamluna"))
+    if rows:
+        print()
+        scored = f"of {total} round-trippable files round-trip byte-identically"
+        print(f"ruamel : {ruamel_clean:>2} {scored}")
+        print(f"yamluna: {yamluna_clean:>2} {scored}")
+        print()
+        print(_table(rows, "ruamel" if show_ruamel else "yamluna"))
+    if behaviour_rows:
+        print()
+        print("Scored on behaviour, not bytes: no dict-backed API can write two equal")
+        print("keys back, so byte-identity is not a verdict on these files.")
+        print()
+        print(_behaviour_table(behaviour_rows))
 
     if show_diffs:
         for ruamel, yamluna in rows:

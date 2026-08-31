@@ -17,7 +17,7 @@ from typing import Any, ClassVar, Self
 
 from yamluna.scalarstring import _Anchored
 
-__all__ = ['ScalarInt', 'BinaryInt', 'OctalInt', 'HexInt', 'from_lexeme']
+__all__ = ['BinaryInt', 'HexInt', 'OctalInt', 'ScalarInt', 'from_lexeme']
 
 _INT_RE = re.compile(
     r"""^(?P<sign>[-+]?)

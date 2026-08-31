@@ -246,6 +246,13 @@ attachment is a merge over one integer axis. Normative rules:
    that node is outside the enclosing collection — then it is the enclosing collection's `after`.
    This is the "trailing comment of this block vs. leading comment of the next sibling"
    distinction, and the enclosing-collection test is what decides it.
+
+   **Not yet true, and pinned.** A comment indented into a nested block collection currently
+   lands on that collection's `inner` slot rather than on its first child's `before`. The three
+   slots are written one after another, so every byte comes back either way; what differs is
+   which subtree the comment dies with, and `inner` is why `seq.insert(0, x)` still labels the
+   new element with the old first element's comment. The eight `test_mutation.py` xfails naming
+   `take_before()` are that gap, and they fail the suite if it closes without being noticed.
 3. A run of ≥1 empty lines becomes `Trivia::BlankLines(n)` in whichever slot the next non-blank
    trivia or node would take.
 4. Comments before the first token of a document go to `Document::leading`; comments after the

@@ -8,7 +8,6 @@ import warnings
 import pytest
 from ruamel.yaml.error import MarkedYAMLError as RuamelMarkedYAMLError
 from ruamel.yaml.error import StringMark as RuamelStringMark
-
 from yamluna.error import (
     ComposerError,
     ConstructorError,
@@ -237,7 +236,7 @@ def test_marked_error_ignores_warn():
 def test_duplicate_key_future_warning_is_warnable():
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
-        warnings.warn(DuplicateKeyFutureWarning(None, None, 'dup key "a"', None))
+        warnings.warn(DuplicateKeyFutureWarning(None, None, 'dup key "a"', None), stacklevel=2)
     assert len(caught) == 1
     assert str(caught[0].message) == 'dup key "a"'
 

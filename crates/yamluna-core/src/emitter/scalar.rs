@@ -1230,7 +1230,11 @@ mod tests {
     fn a_leading_dash_only_ends_a_plain_scalar_before_white_space() {
         let ctx = ScalarContext::default();
         for plain in ["-42", "-not-a-sequence", "?x", ":x", "-"] {
-            assert_eq!(plain_syntax_reason(plain, &ctx).is_none(), plain != "-", "{plain}");
+            assert_eq!(
+                plain_syntax_reason(plain, &ctx).is_none(),
+                plain != "-",
+                "{plain}"
+            );
         }
         for quoted in ["- x", "? x", ": x", "#c", ",x"] {
             assert!(plain_syntax_reason(quoted, &ctx).is_some(), "{quoted}");

@@ -14,15 +14,7 @@ use yamluna_core::{EmitOptions, emit, parse};
 ///
 /// The test fails if an entry starts passing, so a fix to the model never leaves a stale excuse
 /// behind.
-const KNOWN_FAILURES: &[(&str, &str)] = &[(
-    // `[a<TAB>, b]`, `[a,<TAB>b]`, `{a:<TAB>b}`. The file loads and every column comes back
-    // right; only the fill character is wrong. The emitter reaches a recorded column with
-    // `Writer::pad_to`, which writes spaces, because the model records lexemes and positions
-    // but not the white space between two lexemes. Fixing it means recording inter-token
-    // white-space runs, not patching the emitter.
-    "text-tabs.yaml",
-    "the model does not record which white space filled the gap between two lexemes",
-)];
+const KNOWN_FAILURES: &[(&str, &str)] = &[];
 
 fn corpus_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus")

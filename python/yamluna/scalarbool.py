@@ -19,8 +19,8 @@ __all__ = ['ScalarBoolean', 'from_lexeme']
 #: YAML 1.1's boolean spellings.  1.2's core schema is the ``true``/``false`` subset; which
 #: lexemes actually resolve to a boolean is the resolver's decision, not this module's — here
 #: they are only recognised so an existing document survives a round trip.
-_TRUE = frozenset('y Y yes Yes YES true True TRUE on On ON'.split())
-_FALSE = frozenset('n N no No NO false False FALSE off Off OFF'.split())
+_TRUE = frozenset(['y', 'Y', 'yes', 'Yes', 'YES', 'true', 'True', 'TRUE', 'on', 'On', 'ON'])
+_FALSE = frozenset(['n', 'N', 'no', 'No', 'NO', 'false', 'False', 'FALSE', 'off', 'Off', 'OFF'])
 
 
 class ScalarBoolean(_Anchored, int):

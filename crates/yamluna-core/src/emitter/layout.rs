@@ -13,6 +13,8 @@
 //! deleted entry from leaving a blank line behind, and it is why a stale position can never open
 //! a hole in the output.
 
+use std::collections::HashMap;
+
 use crate::node::Position;
 
 /// A position a node actually carries, as opposed to the default one a constructed node has.
@@ -97,6 +99,9 @@ pub(super) struct Writer {
     synced: bool,
     /// Whether a comment has been written on this line, which makes the rest of it unusable.
     commented: bool,
+    /// The source lines whose white space cannot be reproduced from a column alone. See
+    /// `Document::line_space`.
+    space: HashMap<u32, String>,
     brk: &'static str,
 }
 
@@ -111,8 +116,73 @@ impl Writer {
             home: 0,
             synced: true,
             commented: false,
+            space: HashMap::new(),
             brk,
         }
+    }
+
+    /// Give the writer the source's own white space, so the round-trip path can put it back.
+    pub(super) fn keep_line_space(&mut self, space: HashMap<u32, String>) {
+        self.space = space;
+    }
+
+    /// The source's own text for columns `a..b` of the line the cursor is on, when the model
+    /// still matches the page and that text is nothing but white space.
+    ///
+    /// `None` for every line the writer can reproduce itself, which is almost all of them: only
+    /// the lines holding a TAB or a trailing run are recorded at all. The all-white-space test is
+    /// what keeps this honest — a range the emitter has put its own content in never matches.
+    fn source_space(&self, a: u32, b: u32) -> Option<String> {
+        if !self.synced || b <= a {
+            return None;
+        }
+        let want = (b - a) as usize;
+        let text: String = self
+            .space
+            .get(&self.line)?
+            .chars()
+            .skip(a as usize)
+            .take(want)
+            .collect();
+        (text.chars().count() == want && text.chars().all(|c| c == ' ' || c == '\t'))
+            .then_some(text)
+    }
+
+    /// Write the padding owed to `col`: the source's own characters where they are recorded, and
+    /// spaces otherwise.
+    fn flush_pending(&mut self) {
+        match self.source_space(self.col - self.pending, self.col) {
+            Some(text) => self.out.push_str(&text),
+            None => {
+                for _ in 0..self.pending {
+                    self.out.push(' ');
+                }
+            }
+        }
+        self.pending = 0;
+    }
+
+    /// Write back the white space this source line ended with. Padding no content followed is
+    /// dropped, as always — the line's own tail replaces it.
+    ///
+    /// A block scalar's lines carry their tails inside the lexeme, and a line whose content the
+    /// emitter has changed ends somewhere else; neither leaves an all-white-space remainder here,
+    /// so neither collects a tail.
+    fn line_tail(&mut self) {
+        let from = self.col - self.pending;
+        let Some(line) = self.space.get(&self.line) else {
+            return;
+        };
+        if !self.synced {
+            return;
+        }
+        let tail: String = line.chars().skip(from as usize).collect();
+        if tail.is_empty() || !tail.chars().all(|c| c == ' ' || c == '\t') {
+            return;
+        }
+        self.col = from + u32::try_from(tail.chars().count()).unwrap_or(0);
+        self.pending = 0;
+        self.out.push_str(&tail);
     }
 
     pub(super) fn line(&self) -> u32 {
@@ -167,10 +237,7 @@ impl Writer {
         if s.is_empty() {
             return;
         }
-        for _ in 0..self.pending {
-            self.out.push(' ');
-        }
-        self.pending = 0;
+        self.flush_pending();
         if !self.dirty {
             self.home = self.col;
         }
@@ -216,19 +283,21 @@ impl Writer {
 
     /// Start a line, unless this one is still empty.
     pub(super) fn fresh_line(&mut self) {
-        self.pending = 0;
         if self.dirty {
+            self.line_tail();
             self.out.push_str(self.brk);
             self.line += 1;
             self.dirty = false;
             self.commented = false;
         }
+        self.pending = 0;
         self.col = 0;
         self.home = 0;
     }
 
     /// Write a line break whether or not this line has content.
     pub(super) fn hard_break(&mut self) {
+        self.line_tail();
         self.out.push_str(self.brk);
         self.line += 1;
         self.col = 0;
@@ -254,10 +323,25 @@ impl Writer {
         let Place::Same { sep, fallback } = place;
         if self.commented || (echo && self.synced && pos.line > self.line) {
             self.fresh_line();
-        } else if sep {
-            self.space();
+        } else {
+            self.at(Some(pos), sep, echo);
         }
         self.column(pos, fallback, echo);
+    }
+
+    /// Put the cursor where a recorded lexeme was written: the gap before a `:`, before an
+    /// `&anchor`, before a node.
+    ///
+    /// This is "echo the white space instead of reconstructing it". A recorded column is believed
+    /// only while the cursor is still on the recorded line; `sep` is the separation the *syntax*
+    /// needs when it is not, and is `false` only where the source itself wrote none (`"a":b`).
+    pub(super) fn at(&mut self, pos: Option<Position>, sep: bool, echo: bool) {
+        if sep {
+            self.space();
+        }
+        if let Some(p) = pos.filter(|p| echo && self.synced && p.line == self.line) {
+            self.pad_to(p.col);
+        }
     }
 
     /// Put the cursor in the node's column: the recorded one while the model still matches the

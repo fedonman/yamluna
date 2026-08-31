@@ -163,6 +163,7 @@ fn build_node<'py>(py: Python<'py>, n: &Node) -> PyResult<Bound<'py, PyAny>> {
         build_trivia_list(py, &n.trivia.inner)?.into_any(),
         build_trivia_list(py, &n.trivia.after)?.into_any(),
         n.tag_first.into_bound_py_any(py)?,
+        n.flow_seps.clone().into_bound_py_any(py)?,
     ];
     node_class(py)?.call1(PyTuple::new(py, args)?)
 }
@@ -180,19 +181,24 @@ fn build_doc<'py>(py: Python<'py>, d: &Document) -> PyResult<Bound<'py, PyAny>> 
         .iter()
         .map(|t| (t.handle.as_str(), t.prefix.as_str()))
         .collect();
-    doc_class(py)?.call1((
-        d.version,
-        directives,
-        d.explicit_start,
-        d.explicit_end,
-        d.root,
-        nodes,
-        build_trivia_list(py, &d.leading)?,
-        build_trivia_list(py, &d.trailing)?,
-        d.bom,
-        d.final_line_break,
-        d.tags_before_version,
-    ))
+    // Past twelve fields a tuple is no longer a `call1` argument, so it is built by hand — the
+    // same way `build_node` has always had to.
+    let args = [
+        d.version.into_bound_py_any(py)?,
+        directives.into_bound_py_any(py)?,
+        d.explicit_start.into_bound_py_any(py)?,
+        d.explicit_end.into_bound_py_any(py)?,
+        d.root.into_bound_py_any(py)?,
+        nodes.into_any(),
+        build_trivia_list(py, &d.leading)?.into_any(),
+        build_trivia_list(py, &d.trailing)?.into_any(),
+        d.bom.into_bound_py_any(py)?,
+        d.final_line_break.into_bound_py_any(py)?,
+        d.tags_before_version.into_bound_py_any(py)?,
+        d.directives_raw.clone().into_bound_py_any(py)?,
+        d.stream_tail.as_str().into_bound_py_any(py)?,
+    ];
+    doc_class(py)?.call1(PyTuple::new(py, args)?)
 }
 
 // -- record -> core -----------------------------------------------------------------------
@@ -243,6 +249,7 @@ fn read_node(o: &Bound<'_, PyAny>) -> PyResult<Node> {
                         value: kv[1],
                         merge: merge.contains(&(i * 2)),
                         explicit: explicit.contains(&(i * 2)),
+                        colon: None,
                     })
                     .collect(),
             }
@@ -277,12 +284,11 @@ fn read_node(o: &Bound<'_, PyAny>) -> PyResult<Node> {
             line: o.getattr(intern!(py, "line"))?.extract()?,
             col: o.getattr(intern!(py, "col"))?.extract()?,
         },
-        // The flow collection's own punctuation — where its `,`s and its closing bracket went,
-        // and which of its keys were written bare. The record contract does not carry these yet,
-        // so a document that has been through Python gets the emitter's layout for them.
-        flow_comma: None,
-        flow_end: None,
-        flow_bare_key: false,
+        // Where the properties were written. The record contract does not carry it yet, so a
+        // document that has been through Python gets the emitter's layout for them.
+        anchor_at: None,
+        tag_at: None,
+        flow_seps: o.getattr(intern!(py, "flow_seps"))?.extract()?,
         trivia: Trivia4 {
             before: read_trivia_list(&o.getattr(intern!(py, "before"))?)?,
             eol: if eol.is_none() {
@@ -334,6 +340,8 @@ fn read_doc(o: &Bound<'_, PyAny>) -> PyResult<Document> {
             .map(|(handle, prefix)| TagDirective { handle, prefix })
             .collect(),
         tags_before_version: o.getattr(intern!(py, "tags_before_version"))?.extract()?,
+        directives_raw: o.getattr(intern!(py, "directives_raw"))?.extract()?,
+        stream_tail: o.getattr(intern!(py, "stream_tail"))?.extract()?,
         explicit_start: o.getattr(intern!(py, "explicit_start"))?.extract()?,
         explicit_end: o.getattr(intern!(py, "explicit_end"))?.extract()?,
         bom: o.getattr(intern!(py, "bom"))?.extract()?,
@@ -343,6 +351,9 @@ fn read_doc(o: &Bound<'_, PyAny>) -> PyResult<Document> {
         leading: read_trivia_list(&o.getattr(intern!(py, "leading"))?)?,
         trailing: read_trivia_list(&o.getattr(intern!(py, "trailing"))?)?,
         duplicate_keys: Vec::new(),
+        // Like the flow separators, the source's own white space does not cross the boundary: it
+        // is a fact about a source the Python layer never sees.
+        line_space: std::collections::HashMap::new(),
     })
 }
 

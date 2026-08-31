@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 import yamluna
 from yamluna import YAML, ComposerError, YAMLStreamError, default_registry
 from yamluna.main import _decode, _read, _write

@@ -41,6 +41,13 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+# `__slots__` order is load-bearing: `_record.py` is the FFI record layout (DESIGN.md §3)
+# and `Mark`/`Anchor` slots are read positionally.  Sorting them alphabetically is wrong.
+ignore = ["RUF023"]
+
+[tool.ruff.lint.per-file-ignores]
+# The `# --- real output` blocks are the scripts' verbatim stdout; they are not reflowable.
+"examples/*.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.11"

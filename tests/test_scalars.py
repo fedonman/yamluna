@@ -13,8 +13,7 @@ import math
 import pickle
 
 import pytest
-
-from yamluna import scalarbool, scalarfloat, scalarint, scalarstring, timestamp
+from yamluna import scalarbool, scalarfloat, scalarint, scalarstring
 from yamluna.scalarbool import ScalarBoolean
 from yamluna.scalarfloat import ScalarFloat
 from yamluna.scalarint import BinaryInt, HexInt, OctalInt, ScalarInt
@@ -358,7 +357,7 @@ ANCHORED = [
 
 
 @pytest.mark.parametrize('make', ANCHORED, ids=['str', 'int', 'float', 'bool', 'timestamp'])
-def test_every_scalar_carries_anchor_lc_and_comment(make) -> None:  # noqa: ANN001
+def test_every_scalar_carries_anchor_lc_and_comment(make) -> None:
     obj = make()
     assert obj.yaml_anchor() is None
     obj.yaml_set_anchor('base')
@@ -377,7 +376,7 @@ def test_every_scalar_carries_anchor_lc_and_comment(make) -> None:  # noqa: ANN0
 
 
 @pytest.mark.parametrize('make', ANCHORED, ids=['str', 'int', 'float', 'bool', 'timestamp'])
-def test_copy_and_pickle_keep_the_lexeme(make) -> None:  # noqa: ANN001
+def test_copy_and_pickle_keep_the_lexeme(make) -> None:
     obj = make()
     assert copy.deepcopy(obj).lexeme() == obj.lexeme()
     assert pickle.loads(pickle.dumps(obj)).lexeme() == obj.lexeme()

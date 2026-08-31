@@ -1,0 +1,92 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: cargo test / clippy / fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # The 402-case yaml-test-suite lives in `-p yamluna-scanner` and is the fork's
+      # regression net; it runs as part of `--workspace` and must never go red.
+      - run: cargo test --workspace
+
+  python:
+    name: pytest ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - run: uv venv --python ${{ matrix.python }}
+      # `pip install -e .` builds the extension through maturin, the build backend.
+      - run: uv pip install -e . --group dev
+      - run: .venv/bin/pytest tests -q
+      # The examples carry their real output at the bottom; if one stops running, say so.
+      - run: for f in examples/*.py; do echo "== $f"; .venv/bin/python "$f" > /dev/null; done
+
+  wheel:
+    name: maturin build (abi3) + fresh-venv install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - run: uv tool install 'maturin>=1.7,<2'
+      - run: maturin build --release --out dist
+      # `abi3-py311` in crates/yamluna-py/Cargo.toml must show up as a cp311-abi3 tag.
+      - run: ls -l dist && ls dist | grep -q 'cp311-abi3'
+      # A wheel that was never installed clean is not a verified wheel: install the abi3
+      # wheel on a Python other than the one it was built against, and use it.
+      - run: uv venv /tmp/fresh --python 3.13
+      - run: uv pip install --python /tmp/fresh/bin/python dist/*.whl
+      - run: /tmp/fresh/bin/python ci/smoke.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: dist/*.whl
+
+  differential:
+    name: differential vs ruamel (reported, non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - run: uv venv --python 3.13
+      - run: uv pip install -e . --group dev
+      - run: .venv/bin/python tests/differential.py | tee -a "$GITHUB_STEP_SUMMARY"
+
+  lint-python:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uvx ruff check python tests bench examples

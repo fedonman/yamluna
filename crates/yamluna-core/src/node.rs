@@ -3,6 +3,8 @@
 //! Owned and `'static`: the source text is kept *beside* the tree, never borrowed by it, so a node
 //! can cross the FFI boundary and a subtree can migrate between documents.
 
+use std::collections::HashMap;
+
 use crate::trivia::{Trivia, Trivia4};
 pub use yamluna_scanner::ScalarStyle;
 
@@ -67,6 +69,13 @@ pub struct Entry {
     ///
     /// Not in DESIGN §2, but without it `? [a, b]\n: v` cannot be re-emitted as written.
     pub explicit: bool,
+    /// Where the `:` between the key and the value was written, or `None` when the source wrote
+    /// none (`{a: 1, b}`) or the entry was built rather than loaded.
+    ///
+    /// Not in DESIGN §2. The gap between a key and its `:` is white space the model held nowhere,
+    /// so `date   : 2001-01-23` came back as `date:    2001-01-23` — the same columns, the wrong
+    /// spelling. Recorded, the emitter echoes it instead of reconstructing it.
+    pub colon: Option<Position>,
 }
 
 /// What a node is.
@@ -100,6 +109,16 @@ pub struct Node {
     pub anchor: Option<String>,
     /// The tag.
     pub tag: Option<NodeTag>,
+    /// Where the `&anchor` was written, or `None` for a node with none or one the user built.
+    ///
+    /// Not in DESIGN §2. [`Self::pos`] is the node's *content*, so a property sits ahead of it at
+    /// a line and column nothing else records: without these an anchored key lands at the
+    /// cursor's column rather than the mapping's, the gap after `&anchor` becomes padding to the
+    /// content column rather than the space the source wrote, and a property the source put on a
+    /// line of its own is pulled up onto the node's.
+    pub anchor_at: Option<Position>,
+    /// Where the tag was written. See [`Self::anchor_at`].
+    pub tag_at: Option<Position>,
     /// Whether the tag was written *before* the anchor (`!!str &a v`, not `&a !!str v`).
     ///
     /// Not in DESIGN §2. YAML allows either order and neither is canonical, so the emitter has
@@ -122,22 +141,20 @@ pub struct Node {
     pub raw: Option<String>,
     /// 0-based line and column of the node's first character.
     pub pos: Position,
-    /// Where the `,` that follows this node inside a flow collection was written, or `None` if
-    /// the source wrote none — the last item of `[1, 2]` as against the last item of `[1, 2, ]`.
+    /// What the source wrote *between* this flow collection's lexemes: one run before each child
+    /// and one before the closing bracket, so a recorded vector is always `children + 1` long.
     ///
-    /// Not in DESIGN §2. Read only when the enclosing collection has a [`Node::flow_end`]: a
-    /// collection the user built records no punctuation at all, and the emitter lays it out.
-    pub flow_comma: Option<Position>,
-    /// Where a flow collection's closing `]` or `}` was written.
+    /// Each run is the separation verbatim -- white space, `,`, `:`, `?` -- with its comments
+    /// taken out, because those are trivia and are written from there. Anything else (a node's own
+    /// `&anchor` or tag) ends the run: the emitter writes that from the node.
     ///
-    /// Not in DESIGN §2. It is also the flag that says this collection's punctuation came from a
-    /// source and is therefore worth reproducing.
-    pub flow_end: Option<Position>,
-    /// A flow-mapping key the source wrote with no `:` and no value at all (`b` in `{a: 1, b}`).
+    /// It is the one fact that tells `[1, 2]` from `[1, 2, ]` from `[ 1 , 2 ]`, says which key of
+    /// `{a: 1, b}` was written with no `:`, and remembers that the gap in `[a\t, b]` was a TAB.
+    /// Empty for a collection the user built or edited, which the emitter lays out instead -- and
+    /// empty is the only "not recorded", so a stale vector cannot survive an insertion or deletion.
     ///
-    /// Not in DESIGN §2. The parser supplies the missing value, so without this the emitter
-    /// cannot tell `{a: 1, b}` from `{a: 1, b: }`.
-    pub flow_bare_key: bool,
+    /// Not in DESIGN §2.
+    pub flow_seps: Vec<String>,
     /// The node's four trivia slots.
     pub trivia: Trivia4,
 }
@@ -150,14 +167,14 @@ impl Node {
             kind,
             anchor: None,
             tag: None,
+            anchor_at: None,
+            tag_at: None,
             tag_first: false,
             style,
             value: None,
             raw: None,
             pos: Position::default(),
-            flow_comma: None,
-            flow_end: None,
-            flow_bare_key: false,
+            flow_seps: Vec::new(),
             trivia: Trivia4::default(),
         }
     }
@@ -216,6 +233,18 @@ pub struct Document {
     pub version: Option<(u32, u32)>,
     /// The `%TAG` directive lines, in source order.
     pub tag_directives: Vec<TagDirective>,
+    /// The document's directive region, verbatim: every line from the last thing consumed
+    /// through the line before `---`, without the break that ends it, together with how many of
+    /// [`Self::leading`]'s trivia were read from inside it. `None` when the document has no line
+    /// beginning with `%`.
+    ///
+    /// Not in DESIGN §2. [`Self::version`] and [`Self::tag_directives`] are the *semantics* of a
+    /// directive line, never its spelling: `%YAML  1.1` is the same version as `%YAML 1.1`,
+    /// a reserved directive (`%FOO bar`) has no model at all, and a comment may sit on any of
+    /// those lines or between them. The region is kept as written and the emitter echoes it; the
+    /// trivia inside it stay in [`Self::leading`] so the comment API still sees them, and the
+    /// count is what tells the emitter it has already written them.
+    pub directives_raw: Option<(String, usize)>,
     /// How many of [`Self::tag_directives`] were written *above* the `%YAML` line; the rest were
     /// written below it. `0` when the version came first, or when there is no version.
     ///
@@ -233,6 +262,14 @@ pub struct Document {
     /// Whether the source ended with a line break. Only meaningful on the last document of a
     /// stream; without it a dump appends a newline the input did not have.
     pub final_line_break: bool,
+    /// The white space the source ends with that no line break closes: a trailing run on the last
+    /// line, and a last line that holds nothing but padding. Only meaningful on the last document
+    /// of a stream, and always empty when [`Self::final_line_break`] is set — that flag already
+    /// says the stream ends in a break.
+    ///
+    /// Not in DESIGN §2. `line_space` puts a line's tail back when the emitter breaks the line;
+    /// at the end of a stream it never does, so the last line's white space had nowhere to live.
+    pub stream_tail: String,
     /// The root node, or `None` for a stream of nothing but trivia.
     pub root: Option<NodeId>,
     /// The node arena. [`NodeId`] is an index into it.
@@ -248,6 +285,18 @@ pub struct Document {
     pub trailing: Vec<Trivia>,
     /// Every duplicate key found while loading, in source order.
     pub duplicate_keys: Vec<DuplicateKey>,
+    /// The source lines whose white space the emitter cannot reproduce from a column alone: the
+    /// ones holding a TAB, and the ones that end in white space. Keyed by 0-based line, verbatim,
+    /// without the break. Like [`Self::bom`] this is a fact about the *stream*, so only the first
+    /// document of one carries it, and a stream with no such line carries nothing.
+    ///
+    /// Not in DESIGN §2. White space *between* two lexemes belongs to neither, and white space at
+    /// the end of a line belongs to nothing at all, so no node owns either: reaching a recorded
+    /// column with spaces loses the TAB the source reached it with, and dropping padding no
+    /// content follows loses the line's tail. Read only while the model still matches the page,
+    /// and only for a run that is white space on both sides, so an edited document can pick up
+    /// neither.
+    pub line_space: HashMap<u32, String>,
 }
 
 impl Document {

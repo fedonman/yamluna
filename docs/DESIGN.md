@@ -215,11 +215,24 @@ pub struct Trivia4 {
 }
 ```
 
-**Why not ruamel's `ca.items[index]`.** ruamel keys sequence comments by integer index, so
-`seq.insert(0, x)` or `del seq[0]` shifts every comment onto the wrong element. We key by the
-node itself; `.ca.items` is *projected* from that at the Python API surface, so existing code
+**Why not ruamel's `ca.items[index]`.** ruamel keys sequence comments by integer index. The
+renumbering itself is not the bug — `CommentedSeq.insert` and `__delsingleitem__` do renumber
+`ca.items` correctly, and for end-of-line-only comments the result is right. The bug is that an
+**own-line comment is stored glued into the previous sibling's end-of-line `CommentToken.value`**,
+so renumbering faithfully moves a token that contains a comment belonging to a *different*
+element. `insert(0, x)` therefore puts the following item's comment above the new item, and
+`del seq[i]` destroys the neighbour's comment along with the deleted one. (Measured; see
+`docs/RUAMEL-BEHAVIOR.md` §3 and `docs/DIVERGENCES.md` A1–A3.)
+
+We key by the node itself and keep own-line trivia in its own slot rather than glued to a
+sibling's token; `.ca.items` is *projected* from that at the Python API surface, so existing code
 that reads `.ca` still works while mutation stays correct. This is a deliberate, documented
 divergence — it is one of the "current bugs" this library exists to not have.
+
+**`inner` has no ruamel counterpart.** For a nested collection, ruamel duplicates the child's
+leading comments into *both* the parent's slot 3 and the child's `ca.comment[1]`, and emits only
+the child's. The `.ca` projection must reproduce that duplication, or existing code reading
+`ca.items[k][3]` sees `None` where ruamel gave it a token.
 
 ### 2.2 Attachment rules
 
@@ -285,19 +298,40 @@ user constructed or modified.
 
 ## 3. `yamluna-py` — the boundary
 
-```python
-class Node:                 # PyO3 pyclass, plain data, no behaviour
-    kind: int               # 0 scalar, 1 sequence, 2 mapping, 3 alias
-    style: int              # scalar style, or block/flow for collections
-    anchor: str | None
-    tag: tuple[str, str, str] | None      # (handle, suffix, resolved)
-    value: str | None
-    raw: str | None
-    line: int; col: int                   # 0-based
-    children: list[int]                   # NodeIds: seq items, or k,v,k,v for mappings
-    merge: list[int]                      # indices into children marking `<<` entries
-    before: list[Trivia]; eol: Trivia | None; inner: list[Trivia]; after: list[Trivia]
+The record types are defined **once, in Python**, in `python/yamluna/_record.py` as plain
+`__slots__` classes. Rust imports that module once, caches `Py<PyType>` for each, and constructs
+instances through the C API on load; on dump it reads their attributes. One definition, no
+pyclass/dataclass duplication, and the whole Python layer stays testable before the extension is
+ever built.
 
+```python
+# python/yamluna/_record.py  -- the FFI contract, owned by Python
+class Node:
+    __slots__ = ('kind', 'style', 'anchor', 'tag', 'value', 'raw',
+                 'line', 'col', 'children', 'merge',
+                 'before', 'eol', 'inner', 'after')
+    kind: int                             # 0 scalar, 1 sequence, 2 mapping, 3 alias
+    style: int                            # ScalarStyle for scalars, BLOCK/FLOW for collections
+    anchor: str | None                    # `&name`, without the `&`
+    tag: tuple[str, str, str] | None      # (handle, suffix, resolved) as written
+    value: str | None                     # cooked scalar value
+    raw: str | None                       # source lexeme, verbatim; byte-exact round trip
+    line: int; col: int                   # 0-based
+    children: list[int]                   # node indices: seq items, or k,v,k,v for mappings
+    merge: list[int]                      # positions in `children` that are `<<` entries
+    before: list[Trivia]; eol: Trivia | None
+    inner: list[Trivia]; after: list[Trivia]
+
+class Trivia:
+    __slots__ = ('text', 'own_line', 'col', 'blank_lines')
+
+class Doc:
+    __slots__ = ('version', 'tag_directives', 'explicit_start', 'explicit_end',
+                 'root', 'nodes', 'leading', 'trailing')
+```
+
+```python
+# yamluna._yamluna, the Rust extension
 def parse(source: str, *, allow_duplicate_keys: bool) -> list[Doc]: ...
 def emit(docs: list[Doc], opts: EmitOptions) -> str: ...
 ```

@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[dev-dependencies]
+yamluna-scanner.workspace = true
+
 [dependencies]
 yamluna-scanner.workspace = true
 thiserror = { workspace = true, features = ["std"] }

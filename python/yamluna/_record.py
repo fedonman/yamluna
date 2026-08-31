@@ -53,10 +53,12 @@ Field conventions that the type annotations cannot express:
     ``[ 1 , 2 ]``, and which key of ``{a: 1, b}`` was written with no ``:``.  Empty for a
     collection the user built -- and an insertion or a deletion changes ``children``, which
     is what stops a stale list from being believed.
-``Node.anchor_at`` / ``Node.tag_at`` / ``Node.colon`` / ``Doc.line_space``
+``Node.anchor_at`` / ``Node.tag_at`` / ``Node.header_at`` / ``Node.colon`` / ``Doc.line_space``
     where the source put things.  ``anchor_at`` and ``tag_at`` are ``(line, col)`` of the
     ``&anchor`` and of the tag, which sit *ahead* of the node and so have positions of their
-    own; ``colon`` is ``(line, col)`` of each entry's ``:``, one slot per entry in entry order
+    own; ``header_at`` is ``(line, col)`` of a block scalar's ``|``/``>`` header, which sits
+    ahead of the body's own ``line``/``col`` and may be a line below the tag; ``colon`` is
+    ``(line, col)`` of each entry's ``:``, one slot per entry in entry order
     (``None`` where the source wrote none, as in ``{a: 1, b}``), and is empty when nothing was
     recorded; ``line_space`` is ``{0-based line: the line verbatim}`` for the source lines the
     emitter cannot reproduce from a column alone -- the ones holding a TAB and the ones ending
@@ -194,6 +196,7 @@ class Node(_Record):
         'flow_seps',
         'anchor_at',
         'tag_at',
+        'header_at',
         'colon',
     )
 
@@ -216,6 +219,7 @@ class Node(_Record):
     flow_seps: list[str]
     anchor_at: tuple[int, int] | None
     tag_at: tuple[int, int] | None
+    header_at: tuple[int, int] | None
     colon: list[tuple[int, int] | None]
 
     def __init__(
@@ -239,6 +243,7 @@ class Node(_Record):
         flow_seps: list[str] | None = None,
         anchor_at: tuple[int, int] | None = None,
         tag_at: tuple[int, int] | None = None,
+        header_at: tuple[int, int] | None = None,
         colon: list[tuple[int, int] | None] | None = None,
     ) -> None:
         self.kind = kind
@@ -260,6 +265,7 @@ class Node(_Record):
         self.flow_seps = [] if flow_seps is None else flow_seps
         self.anchor_at = anchor_at
         self.tag_at = tag_at
+        self.header_at = header_at
         self.colon = [] if colon is None else colon
 
     def _show(self, name: str, value: Any) -> str:

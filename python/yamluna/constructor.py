@@ -1,4 +1,4 @@
-"""Records -> Python tree (DESIGN.md 3 -> 4.1).
+r"""Records -> Python tree (DESIGN.md 3 -> 4.1).
 
 The one direction: a ``list[Doc]`` of flat FFI records (:mod:`yamluna._record`) becomes the
 ``CommentedMap`` / ``CommentedSeq`` / scalar-type tree the user sees.  Nothing here parses
@@ -39,10 +39,41 @@ A sequence element uses the same three key slots (``C_ELEM_PRE`` / ``C_ELEM_EOL`
 ``C_ELEM_POST``), keyed by index into the element-parallel store.
 
 **Duplicate keys.** DESIGN.md 2.3 leaves the winner open; yamluna takes the **last**
-occurrence, matching both YAML's own convention and ``dict``, and never drops the losing
-entry from the records, so the round trip stays byte-identical (DIVERGENCES D5).  With
+occurrence, matching both YAML's own convention and ``dict`` (DIVERGENCES D5).  With
 ``allow_duplicate_keys=True`` a :class:`DuplicateKeyFutureWarning` naming both positions is
-always emitted -- ruamel keeps the *first* value and says nothing.
+always emitted -- ruamel keeps the *first* value and says nothing.  The *records* keep every
+duplicate, so ``emit(parse(...))`` stays byte-identical; a ``dict`` cannot, so a duplicate
+key is the one shape whose round trip is lost by the object model rather than by the records
+-- with or without ``allow_duplicate_keys``, since the dump is written from the tree.
+
+**An alias as a key of its own mapping** (``{&a [x]: 1, *a : 2}``, `yaml-test-suite` X38W)
+is where rule 2 and duplicate keys meet, and it is the one document shape this module
+answers with an error rather than a tree.  ``*a`` does not merely *equal* the first key, it
+**is** it -- one object, reached twice -- so the two entries carry one key and a ``dict``
+holds one of them.  That is not a gap to route around:
+
+* YAML requires the keys of a mapping node to be unique, and an anchor and its alias are
+  the same node, so this document is ill-formed at the data-model level.  Accepting it
+  would mean inventing a distinction the document does not make.
+* No key wrapper rescues it.  A wrapper keyed on *identity* cannot separate an object from
+  itself; only the entry's position in the source could, and keying a ``Mapping`` on source
+  position would break ``doc[key]`` for every well-formed document to rescue an ill-formed
+  one.
+* Every peer agrees.  ruamel raises ``DuplicateKeyError`` on the same input; PyYAML never
+  reaches the question ("found unhashable key" -- its keys are plain ``list``\ s).
+
+So :class:`~yamluna.error.DuplicateKeyError` is the answer, and the byte-identical round
+trip is lost here by the Python object model rather than by anything the records or the
+emitter forgot -- the Rust core round-trips X38W, and so does ``emit(parse(...))`` across
+the seam.  ``test_an_alias_to_a_key_of_its_own_mapping_is_a_duplicate`` pins it.
+
+**Two empty keys** (``: a`` over ``: b``, `yaml-test-suite` 2JQS) is the same question with
+the alias taken away, and gets the same answer.  An empty key *is* the null key, so both
+entries carry ``None`` -- the suite tags the case ``duplicate-key`` itself -- and the second
+bullet above decides it: telling the two nulls apart needs the entry's source position, and
+a ``Mapping`` keyed on position would break ``doc[None]`` for every well-formed document to
+rescue an ill-formed one.  Nor could it be special-cased to the empty key without accepting
+``a: 1`` over ``a: 2`` too.  ``test_two_empty_keys_are_one_null_key`` pins it.
 """
 
 from __future__ import annotations

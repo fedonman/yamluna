@@ -109,18 +109,18 @@ On this commit, reproduce with the commands given:
 | | |
 | --- | --- |
 | `tests/corpus/`, byte-identical round trip (`python tests/differential.py`) | yamluna 40/40, `ruamel.yaml` 0.19.1 3/40 (7/40 with `--seq-indent`; `key-duplicate` is scored on behaviour, not bytes) |
-| `yaml-test-suite` round trip through the **Rust core** (`cargo test -p yamluna-core --test proptest_roundtrip`) | 302/308 |
-| `yaml-test-suite` round trip through the **Python API** (`python tests/suite_roundtrip.py`) | 299/308 |
+| `yaml-test-suite` round trip through the **Rust core** (`cargo test -p yamluna-core --test proptest_roundtrip`) | 308/308 |
+| `yaml-test-suite` round trip through the **Python API** (`python tests/suite_roundtrip.py`) | 306/308 |
 | `yaml-test-suite` conformance in the scanner fork (`cargo test -p yamluna-scanner --test yaml-test-suite`) | 402/402 |
-| `cargo test --workspace` | 720 passed, 0 failed |
-| `pytest tests` | 1092 passed, 45 skipped, 12 xfailed |
+| `cargo test --workspace` | 722 passed, 0 failed |
+| `pytest tests` | 1097 passed, 45 skipped, 12 xfailed |
 | load / dump throughput vs `ruamel.yaml` (`python bench/bench.py`, release build) | 1.4x–8.9x faster |
 
-The two round-trip scores are separate on purpose. 302 is what the Rust core reproduces; 299 is
-what a user of `YAML().load_all` / `.dump_all` gets, and it is the lower of the two. Quoting only
-the first would be quoting the core rather than the library. The three cases between them are
-the object model, not the boundary: `emit(parse(x))` through the `_record` classes is asserted
-byte-identical to `parse`-then-`emit` inside Rust for all 308
+The two round-trip scores are separate on purpose. 308 is what the Rust core reproduces — every
+case the suite has; 306 is what a user of `YAML().load_all` / `.dump_all` gets, and it is the
+lower of the two. Quoting only the first would be quoting the core rather than the library. The
+two cases between them are the object model, not the boundary: `emit(parse(x))` through the
+`_record` classes is asserted byte-identical to `parse`-then-`emit` inside Rust for all 308
 (`test_the_record_seam_loses_nothing_over_the_suite`).
 
 ### Known gaps
@@ -128,14 +128,19 @@ byte-identical to `parse`-then-`emit` inside Rust for all 308
 Each is pinned by a guard list or an xfail that fails if it starts passing. The full list, with
 causes, is in [tests/README.md](tests/README.md#known-gaps).
 
-- 6 of the 308 `yaml-test-suite` cases do not yet round-trip byte-for-byte through the Rust
-  core (`KNOWN_GAPS` in `crates/yamluna-core/tests/proptest_roundtrip.rs`). Four are one
-  cluster: a comment splitting the separation run a flow collection wrote between two of its
-  lexemes.
-- 9 of the 308 do not round-trip through the Python API (`KNOWN_GAPS` in
-  `tests/test_suite_roundtrip.py`). Six are the six above; the other three — `2JQS`, `X38W`,
-  `6KGN` — are the object model: `CommentedMap` is a `dict`, so two keys that compare equal are
-  one key, and `None` is a singleton with no identity to hang an anchor on.
+- None through the Rust core: all 308 `yaml-test-suite` cases round-trip byte-for-byte and
+  `KNOWN_GAPS` in `crates/yamluna-core/tests/proptest_roundtrip.rs` is empty. The last six
+  closed by recording one more fact each — a `#` mark where a comment stood inside a flow
+  collection's separation run and a run count that says a single pair wrote no brackets
+  (`6HB6`, `7TMG`, `CN3R`, `CT4Q`), `Node::header_at` for a block scalar's header (`M5C3`),
+  and `Document::directives_raw` widened to cover a `...` that ends no document (`M7A3`).
+- 2 of the 308 do not round-trip through the Python API (`KNOWN_GAPS` in
+  `tests/test_suite_roundtrip.py`), and both are permanent object-model limits rather than
+  unfinished work: `2JQS` (`: a` over `: b`) and `X38W` (an alias used as a key of the mapping
+  its anchor is defined in). `CommentedMap` is a `dict`, so two keys that compare equal — or
+  one key reached twice — are one entry; YAML requires a mapping's keys to be unique, so both
+  documents are ill-formed and `DuplicateKeyError` naming both positions is the answer. ruamel
+  raises on both; PyYAML never reaches the question.
 - One corpus file does not round-trip through the Python layer: `key-duplicate`
   (`CommentedMap` is a `dict`, so equal keys collapse). The Rust core and the FFI records both
   reproduce all 41 files, so `KNOWN_FAILURES` and `KNOWN_RECORD_GAPS` are empty.

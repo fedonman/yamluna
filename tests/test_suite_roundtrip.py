@@ -96,32 +96,38 @@ def suite_cases() -> list[SuiteCase]:
 
 #: Suite cases that do not survive ``load_all -> dump_all``, and why.
 #:
-#: ``(core)`` marks a case the *Rust* round trip loses too -- the same entry is in
-#: `KNOWN_GAPS` in `crates/yamluna-core/tests/proptest_roundtrip.rs`, so it is a core defect
-#: and not a Python one.  The three without it are *object model* limits rather than defects:
-#: a `dict` cannot hold one key twice and `None` is not subclassable, so no record field or
-#: emitter change could rescue them.  A future entry with neither shape is a real Python-side
-#: gap, and is the one to work from.
+#: Both are *object model* limits rather than defects, and both are marked ``PERMANENT``:
+#: a ``CommentedMap`` is a ``dict``, so two keys that compare equal -- or one key reached
+#: twice through an alias -- are one entry, and no record field or emitter change reaches
+#: that.  The Rust core round-trips both, and `KNOWN_GAPS` in
+#: `crates/yamluna-core/tests/proptest_roundtrip.rs` is empty, so anything that appears here
+#: without the ``PERMANENT`` shape is a real Python-side gap -- a record slot that stopped
+#: crossing the seam, or a representer that reconstructs what it should echo -- and is the one
+#: to work from.
 KNOWN_GAPS: dict[str, str] = {
-    '6HB6': '(core) an end-of-line comment inside a flow collection is written from a trivia '
-            'slot, so the separation run around it cannot be echoed',
-    '7TMG': '(core) a `,` the source wrote after an own-line comment inside a flow collection '
-            'is re-emitted before it',
-    'CN3R': '(core) an anchored single-pair mapping inside a flow sequence (`&c c: d`) is '
-            're-emitted with braces the source did not write',
-    'CT4Q': '(core) an explicit `? key` inside a flow collection loses its `?`',
-    'M5C3': '(core) a block-scalar header the source put on a line of its own below the '
-            "node's tag is pulled up onto the tag's line",
-    'M7A3': '(core) a `...` that ends a document with no content at all has no document of '
-            'its own to hang on',
-    '2JQS': 'two entries with an empty key are two entries with the *same* key, so the '
-            'constructor raises `DuplicateKeyError` where the core keeps both',
-    'X38W': 'an alias used as a key of the mapping its anchor is defined in (`{&a [x]: 1, '
-            '*a : 2}`) is the same object as that key, so it is a duplicate key and raises. '
-            'The space before the `:` is load-bearing: `:` is a legal anchor character, so '
-            '`*a:` scans as an alias named `a:`',
-    '6KGN': 'an anchor on a null (`a: &anchor`) survives on the parent, but an *alias* to it '
-            'constructs to the one `None` singleton, which carries no identity to alias on',
+    '2JQS': 'PERMANENT: an empty key is the null key, so `: a` over `: b` is two entries '
+            'carrying the one key `None` -- the suite tags the case `duplicate-key` itself '
+            '-- and a `dict` holds one of them.  Same shape as X38W with the alias taken '
+            'away, so the same answer: `DuplicateKeyError` naming both positions.  Telling '
+            'the two nulls apart needs the entry source position, and keying a `Mapping` on '
+            'position would break `doc[None]` for every well-formed document to rescue an '
+            'ill-formed one; special-casing the *empty* key alone would accept `a: 1` over '
+            '`a: 2` next.  `allow_duplicate_keys=True` does not help either: the dump is '
+            'written from the tree, which by then holds one entry.  ruamel raises the same '
+            'error.  Decided in the `constructor` module docstring, pinned by '
+            'test_constructor.py::test_two_empty_keys_are_one_null_key',
+    'X38W': 'PERMANENT: an alias used as a key of the mapping its anchor is defined in '
+            '(`{&a [x]: 1, *a : 2}`) *is* that key -- one object, reached twice -- so the '
+            'two entries carry one key and a `dict` holds one of them.  YAML requires a '
+            "mapping's keys to be unique and an alias is the node it names, so the document "
+            'is ill-formed; `DuplicateKeyError` is the answer, not a workaround to find.  '
+            'No wrapper helps: identity cannot separate an object from itself, and keying '
+            'on source position instead would break `doc[key]` everywhere.  ruamel raises '
+            'the same error; PyYAML never gets that far (`found unhashable key`).  Decided '
+            'in the `constructor` module docstring, pinned by test_constructor.py::'
+            'test_an_alias_to_a_key_of_its_own_mapping_is_a_duplicate.  The space before '
+            'the `:` is load-bearing: `:` is a legal anchor character, so `*a:` scans as an '
+            "alias named `a:`",
 }
 
 

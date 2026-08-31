@@ -149,6 +149,7 @@ pub fn emit(docs: &[Document], opts: &EmitOptions) -> Result<String, EmitError> 
         offset: step(opts.seq_offset, 0),
         o: opts,
         headed: None,
+        ahead: None,
     };
     if let Some(first) = docs.first() {
         if first.bom {
@@ -256,6 +257,9 @@ struct Emitter<'a> {
     /// The node whose `&anchor` and tag [`Emitter::document`] has written already, because the
     /// source put them on the `---` line, ahead of the comment that ends it.
     headed: Option<NodeId>,
+    /// The node whose own run of trivia [`Emitter::flow_items`] has written already, because the
+    /// flow separation in front of it went back verbatim and that run was inside it.
+    ahead: Option<NodeId>,
 }
 
 impl Emitter<'_> {
@@ -291,11 +295,12 @@ impl Emitter<'_> {
             }
         }
         // A directive line, or a second document that the one before it did not close, has to be
-        // introduced: `---` is not decoration there, it is what keeps the stream parseable.
+        // introduced: `---` is not decoration there, it is what keeps the stream parseable. A
+        // region that holds nothing but `...` markers introduces nothing, so it forces no `---`.
         let start = self.o.explicit_start.unwrap_or(d.explicit_start)
             || force_start
             || d.version.is_some()
-            || d.directives_raw.is_some()
+            || region.is_some_and(|(raw, _)| raw.lines().any(|l| l.starts_with('%')))
             || !d.tag_directives.is_empty();
         if start {
             self.w.fresh_line();
@@ -356,6 +361,8 @@ impl Emitter<'_> {
     /// caller that passed `defer_eol` needs to know.
     fn node(&mut self, d: &Document, id: NodeId, site: Site) -> Result<bool, EmitError> {
         let n = d.node(id);
+        // The flow separation in front of this node held its trivia and has written them.
+        let pre_written = self.ahead.take() == Some(id);
         let flow = self.flow_style(n);
         // Forcing a loaded collection into the other style invalidates every position under it.
         let echo = site.echo && !(n.is_collection() && flow != (n.style == Style::Flow));
@@ -408,7 +415,7 @@ impl Emitter<'_> {
         // Trivia on the indicator's own line, held back until the node's properties are down.
         let mut after_head: &[Trivia] = &[];
         let inside = follows && block_scalar;
-        if !inside {
+        if !inside && !pre_written {
             trivia::run(&mut self.w, if follows { &n.trivia.before } else { above });
         }
         if let Lead::Line { col, mark, share } = site.lead {
@@ -454,7 +461,7 @@ impl Emitter<'_> {
             NodeKind::Sequence { items } => {
                 if flow || items.is_empty() {
                     self.w.place(n.pos, place, echo);
-                    self.flow(d, n, &n.children(), site.ind, echo)?;
+                    eol_written |= self.flow(d, n, &n.children(), site.ind, echo)?;
                 } else {
                     self.sequence(d, n, items, site.ind, echo, compact)?;
                 }
@@ -462,7 +469,7 @@ impl Emitter<'_> {
             NodeKind::Mapping { entries } => {
                 if flow || entries.is_empty() {
                     self.w.place(n.pos, place, echo);
-                    self.flow(d, n, &n.children(), site.ind, echo)?;
+                    eol_written |= self.flow(d, n, &n.children(), site.ind, echo)?;
                 } else {
                     self.mapping(d, n, entries, site.ind, echo, compact)?;
                 }
@@ -550,7 +557,7 @@ impl Emitter<'_> {
         ) {
             // `raw` is the header, the break that followed it and the body from column zero: the
             // header goes where the cursor is, the body carries its own indentation.
-            self.block_scalar(n, raw, leading_blanks);
+            self.block_scalar(n, raw, leading_blanks, echo);
             return Ok(true);
         }
         // An implicit empty node writes nothing, so it must also *move* nothing: its recorded
@@ -566,14 +573,17 @@ impl Emitter<'_> {
 
     /// A block scalar, from its own lexeme or from freshly rendered text. Its end-of-line comment
     /// belongs on the header line, which is why this is not just a `push`.
-    fn block_scalar(&mut self, n: &Node, text: &str, leading_blanks: &[Trivia]) {
+    fn block_scalar(&mut self, n: &Node, text: &str, leading_blanks: &[Trivia], echo: bool) {
         let (header, body) = split_first_break(text);
+        // The header sits where the source put it, which need not be where the node's properties
+        // ended: `!foo` on one line and `>1` on the next is two lexemes, not one run.
+        let at = n.header_at.filter(|_| echo && self.w.synced());
         // A comment owns the rest of its line: a header written onto it would be swallowed, and
         // the body below would then be read as a document of its own.
-        if self.w.commented() {
+        if self.w.commented() || at.is_some_and(|p| p.line > self.w.line()) {
             self.w.fresh_line();
         }
-        self.w.space();
+        self.w.at(at, true, echo);
         self.w.push(header);
         trivia::eol(&mut self.w, n.trivia.eol.as_ref());
         // Empty lines between the header and the first content line are the scalar's own leading
@@ -632,7 +642,8 @@ impl Emitter<'_> {
         let mut text = String::new();
         scalar::write(value, style, &ctx, &mut text)?;
         if matches!(style, ScalarStyle::Literal | ScalarStyle::Folded) {
-            self.block_scalar(n, &text, &[]);
+            // Freshly rendered text, so the source's header position does not describe it.
+            self.block_scalar(n, &text, &[], false);
             return Ok(true);
         }
         self.w.place(n.pos, place, echo);
@@ -798,27 +809,68 @@ impl Emitter<'_> {
         self.w.push_char(',');
     }
 
-    /// Echo verbatim what the source put between two of a flow collection's lexemes.
+    /// Echo verbatim what the source put between two of a flow collection's lexemes, with the
+    /// comments it held written back into the places it marked for them.
     ///
     /// A run goes back as written -- punctuation, white space and all -- which is what tells
     /// `[1, 2]` from `[1, 2, ]` from `[ 1 , 2 ]` and remembers that the gap in `[a\t, b]` was a
-    /// TAB. A run that crosses a line goes back only when it is `clean`: the comments and blank
-    /// lines taken out of one are written from the trivia slots, and those move the cursor
-    /// themselves, so a run that lost any of them would write its breaks twice. The caller
-    /// writes only the punctuation the run holds and lets the layout place what follows.
-    fn echo_gap(&mut self, run: Option<&str>, spread: bool, clean: bool) -> bool {
-        let Some(r) = run.filter(|r| !spread && (clean || !r.contains(['\n', '\r']))) else {
-            return false;
-        };
+    /// TAB. Its comments are not in it: their text lives in the trivia slots, where the Python
+    /// side can edit it, and the run carries a bare `#` where each one stood. Writing the run in
+    /// the pieces between those marks puts a comment back at the exact column the source gave it
+    /// and leaves the `,` on whichever side of it the source wrote it.
+    ///
+    /// `head` is a comment that may or may not belong to this gap -- a flow collection's
+    /// end-of-line comment sits either after its `[` or after its `]`, one slot for two places --
+    /// and `rest` are the ones that certainly do, in source order. The marks settle it: a run
+    /// records one per comment it really held, so a count that does not add up either way means
+    /// the run no longer describes this gap and nothing is echoed. Returns `None` then, and
+    /// otherwise whether `head` was used.
+    ///
+    /// Every trivium listed is written from here or not at all: blank lines are already in the
+    /// run as the breaks they are, so a caller that gets `Some` must write none of them again.
+    fn echo_gap(
+        &mut self,
+        run: Option<&str>,
+        spread: bool,
+        head: Option<&Trivia>,
+        rest: &[&Trivia],
+    ) -> Option<bool> {
+        let r = run.filter(|_| !spread)?;
         // A run is the source's own text, and the source stops describing this page the moment
         // something does not land where the model said it would: a document rebuilt from nodes
         // the user made still carries the runs it was loaded with, and echoing them there writes
         // punctuation for lexemes that are no longer being written.
         if self.w.commented() || !self.w.synced() {
-            return false;
+            return None;
         }
-        self.w.push(r);
-        true
+        let marks = r.matches('#').count();
+        // A comment owns the rest of its line, so the source's own break follows every mark. One
+        // that does not is a run some edit has been through, and echoing it would put a lexeme
+        // inside a comment.
+        if !r.split('#').skip(1).all(|p| p.starts_with(['\n', '\r'])) {
+            return None;
+        }
+        let comments = || rest.iter().copied().filter(|t| t.text().is_some());
+        let used = match marks.checked_sub(comments().count()) {
+            Some(0) => false,
+            Some(1) if head.is_some_and(|t| t.text().is_some()) => true,
+            _ => return None,
+        };
+        let mut texts = used
+            .then_some(head)
+            .flatten()
+            .into_iter()
+            .chain(comments())
+            .filter_map(Trivia::text);
+        let mut pieces = r.split('#');
+        self.w.push_separation(pieces.next().unwrap_or_default());
+        for piece in pieces {
+            // The run already wrote the white space in front of the comment, so its text goes
+            // down exactly where the cursor stands: no `space()`, no padding to a column.
+            self.w.comment(texts.next().expect("one comment per mark"));
+            self.w.push_separation(piece);
+        }
+        Some(used)
     }
 
     // ------------------------------------------------------------------ flow collections
@@ -830,11 +882,11 @@ impl Emitter<'_> {
         children: &[NodeId],
         ind: u32,
         echo: bool,
-    ) -> Result<(), EmitError> {
+    ) -> Result<bool, EmitError> {
         // One line first. If the source was steering after all, that *is* the source's layout
         // and there is nothing to reconsider; otherwise `width` gets a say.
         let mark = self.w.mark();
-        self.flow_items(d, n, children, ind, echo, false)?;
+        let mut opened = self.flow_items(d, n, children, ind, echo, false)?;
         let over = !(echo && self.w.synced()) && {
             let text = self.w.since(&mark);
             !text.contains(['\n', '\r'])
@@ -842,9 +894,9 @@ impl Emitter<'_> {
         };
         if over {
             self.w.rewind(&mark);
-            self.flow_items(d, n, children, ind, echo, true)?;
+            opened = self.flow_items(d, n, children, ind, echo, true)?;
         }
-        Ok(())
+        Ok(opened)
     }
 
     /// The run the source wrote in the `i`-th gap of a flow collection, while the source is
@@ -855,7 +907,9 @@ impl Emitter<'_> {
     /// with, and the lexemes those runs punctuate are no longer the ones being written. From the
     /// first thing that does not land, the layout answers for every gap.
     fn recorded<'s>(&self, seps: Option<&'s [String]>, i: usize) -> Option<&'s str> {
-        seps.filter(|_| self.w.synced()).map(|s| s[i].as_str())
+        seps.filter(|_| self.w.synced())
+            .and_then(|s| s.get(i))
+            .map(String::as_str)
     }
 
     // One pass over one flow collection: a gap, an item, a gap, an item. Splitting it would
@@ -869,25 +923,30 @@ impl Emitter<'_> {
         ind: u32,
         echo: bool,
         spread: bool,
-    ) -> Result<(), EmitError> {
+    ) -> Result<bool, EmitError> {
         let map = matches!(n.kind, NodeKind::Mapping { .. });
         // What the source wrote between the lexemes, while the source is still steering. A
         // collection the user built recorded nothing, and one an insertion or a deletion has been
         // through no longer has one run per gap; the layout answers for both.
-        let seps = (echo && n.flow_seps.len() == children.len() + 1).then_some(&n.flow_seps[..]);
-        // `[a: 1]`: a single pair written without braces. The parser synthesises the mapping with
-        // the span of its key, which is how it is told apart from a real `{a: 1}`.
-        let braces = !map
-            || !echo
-            || !placed(n.pos)
-            || children.first().is_none_or(|k| n.pos != d.node(*k).pos);
+        // `[a: 1]`, `[? a : b]`, `[&c c: d]`: a single pair written with no brackets of its own.
+        // The loader records one run per child for it and one *more* than that for everything
+        // else, because a bracket-less pair has no closing bracket to separate from -- the `,`
+        // after it belongs to the collection that holds it. A mapping's children always come in
+        // pairs, so a braced collection whose runs went stale cannot pass for one.
+        let unbraced = map && !children.is_empty() && n.flow_seps.len() == children.len();
+        let seps = (echo && (unbraced || n.flow_seps.len() == children.len() + 1))
+            .then_some(&n.flow_seps[..]);
+        let braces = !echo || !unbraced;
         if braces {
             self.w.push_char(if map { '{' } else { '[' });
         }
         let home = self.w.home();
         let open = self.w.line();
         let content = ind.max(home + self.map_ind);
-        trivia::run(&mut self.w, &n.trivia.inner);
+        // Whether the collection's own end-of-line comment turned out to be the one the source
+        // wrote after its `[`, and has gone down there. The other thing that slot can hold is the
+        // comment after the `]`, which is not this collection's business but its caller's.
+        let mut opened = false;
 
         // `chunks(2)` walks the same pairs `entries` holds, in the same order, so the `:` of the
         // n-th chunk is the `:` of the n-th entry.
@@ -909,21 +968,38 @@ impl Emitter<'_> {
             // The gap in front of the item, and with it the `,` that separates it from the one
             // before.
             let mut spaced = false;
-            // An end-of-line comment still waiting for its `,` belongs on the line the run
-            // starts from, so a run that leaves that line cannot go back ahead of it either.
-            let clean = pending.is_none_or(|p| d.node(p).trivia.eol.is_none())
-                && pair
-                    .first()
-                    .is_some_and(|&k| d.node(k).trivia.before.is_empty())
-                && (i > 0 || n.trivia.inner.is_empty());
-            if !self.echo_gap(self.recorded(seps, i), spread, clean)
-                && self.recorded(seps, i).map_or(i > 0, |r| r.contains(','))
-            {
-                self.comma();
-                spaced = true;
-            }
-            if let Some(p) = pending.take() {
-                trivia::eol(&mut self.w, d.node(p).trivia.eol.as_ref());
+            // Everything the source wrote in this gap: the end-of-line comment of the lexeme
+            // before it, then -- for the first gap -- what stands between the `[` and the first
+            // child, then the run of own-line trivia the child itself carries.
+            let first = *pair.first().expect("chunks are never empty");
+            let gap: Vec<&Trivia> = pending
+                .and_then(|p| d.node(p).trivia.eol.as_ref())
+                .into_iter()
+                .chain(if i == 0 { &n.trivia.inner[..] } else { &[] })
+                .chain(&d.node(first).trivia.before)
+                .collect();
+            // The run wrote the gap, comments and blank lines and all: nothing here may write
+            // any of it a second time.
+            if let Some(head) = self.echo_gap(
+                self.recorded(seps, i),
+                spread,
+                (i == 0).then_some(n.trivia.eol.as_ref()).flatten(),
+                &gap,
+            ) {
+                opened |= head;
+                pending = None;
+                self.ahead = Some(first);
+            } else {
+                if i == 0 {
+                    trivia::run(&mut self.w, &n.trivia.inner);
+                }
+                if self.recorded(seps, i).map_or(i > 0, |r| r.contains(',')) {
+                    self.comma();
+                    spaced = true;
+                }
+                if let Some(p) = pending.take() {
+                    trivia::eol(&mut self.w, d.node(p).trivia.eol.as_ref());
+                }
             }
             let lead = if spread {
                 Lead::Line {
@@ -974,34 +1050,42 @@ impl Emitter<'_> {
             // place, which is where the `,` of the next entry lives.
             let colon = entries.get(chunk).and_then(|e| e.colon);
             let mut value_sep = false;
-            // The value's own end-of-line comment can be one the source wrote on the *key's*
-            // line (`k: # c` / `  v`), which is inside this run: echoing the run would then
-            // write the break before the comment instead of after it.
-            let clean = pending.is_none_or(|p| d.node(p).trivia.eol.is_none())
-                && d.node(last).trivia.before.is_empty()
-                && d.node(last).trivia.eol.is_none();
-            if !self.echo_gap(self.recorded(seps, i + 1), spread, clean) {
-                if bare {
-                    if self.recorded(seps, i + 1).is_some_and(|r| r.contains(',')) {
-                        self.comma();
-                    }
-                    // A run that crossed a line still owes its break, and a bare key's value was
-                    // supplied by the parser: it writes nothing and places nothing, so nothing
-                    // after it pays. The closing bracket does, via `close_flow`.
-                    stale = self
-                        .recorded(seps, i + 1)
-                        .is_some_and(|r| r.contains(['\n', '\r']));
-                } else {
-                    self.colon(d.node(key), colon, echo);
-                    value_sep = !adjacent(colon, d.node(last).pos, echo);
-                    // `{omitted value:,\n}`: the `,` that ends the entry is in the same run as the
-                    // `:`, because the value between them was supplied by the parser.
-                    if self.recorded(seps, i + 1).is_some_and(|r| r.contains(',')) {
-                        self.comma();
-                        value_sep = true;
-                    }
-                    stale = is_absent(d.node(last));
+            // The key's end-of-line comment, then the value's own run. The value's *own*
+            // end-of-line comment can also be in here -- `{k: # c` over `  v}` puts it on the
+            // key's line -- but the caller writes that one from `pending` in the gap after the
+            // value, so a run that holds it will not add up here and is left alone.
+            let gap: Vec<&Trivia> = pending
+                .and_then(|p| d.node(p).trivia.eol.as_ref())
+                .into_iter()
+                .chain(&d.node(last).trivia.before)
+                .collect();
+            if self
+                .echo_gap(self.recorded(seps, i + 1), spread, None, &gap)
+                .is_some()
+            {
+                pending = None;
+                // A bare key's value is never written, so nothing would ever take the mark.
+                self.ahead = (!bare).then_some(last);
+            } else if bare {
+                if self.recorded(seps, i + 1).is_some_and(|r| r.contains(',')) {
+                    self.comma();
                 }
+                // A run that crossed a line still owes its break, and a bare key's value was
+                // supplied by the parser: it writes nothing and places nothing, so nothing
+                // after it pays. The closing bracket does, via `close_flow`.
+                stale = self
+                    .recorded(seps, i + 1)
+                    .is_some_and(|r| r.contains(['\n', '\r']));
+            } else {
+                self.colon(d.node(key), colon, echo);
+                value_sep = !adjacent(colon, d.node(last).pos, echo);
+                // `{omitted value:,\n}`: the `,` that ends the entry is in the same run as the
+                // `:`, because the value between them was supplied by the parser.
+                if self.recorded(seps, i + 1).is_some_and(|r| r.contains(',')) {
+                    self.comma();
+                    value_sep = true;
+                }
+                stale = is_absent(d.node(last));
             }
             if let Some(p) = pending.take() {
                 trivia::eol(&mut self.w, d.node(p).trivia.eol.as_ref());
@@ -1031,28 +1115,35 @@ impl Emitter<'_> {
         // recorded separation falls back to the spelling most files use — a comma when the closing
         // bracket takes a line of its own.
         let tail = children.len();
-        let clean =
-            pending.is_none_or(|p| d.node(p).trivia.eol.is_none()) && n.trivia.after.is_empty();
-        let echoed = self.echo_gap(self.recorded(seps, tail), spread || stale, clean);
-        if !echoed
-            && !children.is_empty()
-            && self
-                .recorded(seps, tail)
-                .map_or(self.w.line() > open, |r| r.contains(','))
-        {
-            self.comma();
+        let gap: Vec<&Trivia> = pending
+            .and_then(|p| d.node(p).trivia.eol.as_ref())
+            .into_iter()
+            .chain(&n.trivia.after)
+            .collect();
+        let echoed = self
+            .echo_gap(self.recorded(seps, tail), spread || stale, None, &gap)
+            .is_some();
+        if !echoed {
+            if braces
+                && !children.is_empty()
+                && self
+                    .recorded(seps, tail)
+                    .map_or(self.w.line() > open, |r| r.contains(','))
+            {
+                self.comma();
+            }
+            if let Some(p) = pending.take() {
+                trivia::eol(&mut self.w, d.node(p).trivia.eol.as_ref());
+            }
+            trivia::run(&mut self.w, &n.trivia.after);
         }
-        if let Some(p) = pending.take() {
-            trivia::eol(&mut self.w, d.node(p).trivia.eol.as_ref());
-        }
-        trivia::run(&mut self.w, &n.trivia.after);
         if braces {
             if !echoed || self.w.commented() {
                 self.close_flow(self.recorded(seps, tail).filter(|_| !spread), home, open);
             }
             self.w.push_char(if map { '}' } else { ']' });
         }
-        Ok(())
+        Ok(opened)
     }
 
     /// Move the cursor to where a flow collection's closing bracket goes, when the separation in
@@ -1185,6 +1276,30 @@ mod tests {
         exact("simple: 1\n? explicit: 2\n");
     }
 
+    /// A single pair inside a flow sequence writes no brackets of its own, and whatever
+    /// introduces it -- a `?`, its own anchor or tag, a bracketed key -- must not be mistaken
+    /// for one. The pair records one separation run per child where everything else records one
+    /// more, and that length is what the emitter reads it back from.
+    #[test]
+    fn a_flow_pair_that_wrote_no_brackets_gets_none_back() {
+        exact("[\n? foo\n bar : baz\n]\n");
+        exact("[a: 1]\n");
+        exact("[? a : b]\n");
+        exact("[&c c: d]\n");
+        exact("[!!str c: d]\n");
+        exact("[[a]: b]\n");
+        exact("[{a: b}:c]\n");
+        exact("[:a: b]\n");
+        exact("[ : empty ]\n");
+        exact("[a: ]\n");
+        // ...and everything that *did* write brackets keeps them.
+        exact("[{? a : b}]\n");
+        exact("[{a: 1}]\n");
+        exact("&g { g: h }\n");
+        exact("!!map [a: 1]\n");
+        exact("{: empty}\n");
+    }
+
     #[test]
     fn flow_collections() {
         exact("a: [1, 2, 3]\n");
@@ -1251,6 +1366,22 @@ mod tests {
         exact("%TAG ! tag:x/\n---\na: !Thing {}\n");
         exact("--- # after the marker\na: 1\n... # after the end marker\n");
         exact("---\n---\n---\n");
+    }
+
+    /// A `...` that closes no document is not a parser event, so the only record of it is the
+    /// line: above the document below it, or on a rootless one when nothing follows.
+    #[test]
+    fn a_document_end_marker_that_closes_nothing_comes_back() {
+        exact("...\n");
+        exact("# comment\n...\n");
+        exact("...\n...\n");
+        exact("...\na: 1\n");
+        exact("a: 1\n...\n...\n");
+        exact("a: 1\n...\n...\nb: 2\n");
+        exact("a: 1\n...\n... # after the marker\n---\nb: 2\n");
+        exact("a: 1\n...\n\n# between\n...\n\nb: 2\n");
+        // The spec's own bare-document example (yaml-test-suite M7A3).
+        exact("Bare\ndocument\n...\n# No document\n...\n|\n%!PS-Adobe-2.0 # Not the first line\n");
     }
 
     /// `%YAML` sits where the source put it among the `%TAG` lines, on either side or between.

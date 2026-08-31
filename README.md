@@ -124,18 +124,18 @@ interchangeable and this table is the honest way to read them:
 | harness | what it round-trips | score |
 |---|---|---|
 | `cargo test -p yamluna-scanner --test yaml-test-suite` | the fork parses what upstream parses | **402 / 402** conformance cases |
-| `cargo test -p yamluna-core --test proptest_roundtrip` | the **Rust core**, `parse` → `emit` | **302 / 308** byte-identical |
-| `python tests/suite_roundtrip.py` | the **Python API**, `YAML().load_all` → `.dump_all` | **299 / 308** byte-identical |
+| `cargo test -p yamluna-core --test proptest_roundtrip` | the **Rust core**, `parse` → `emit` | **308 / 308** byte-identical |
+| `python tests/suite_roundtrip.py` | the **Python API**, `YAML().load_all` → `.dump_all` | **306 / 308** byte-identical |
 
-The last row is the one a user actually gets, and it is the lower of the two round-trip
-numbers, so both are quoted. Both harnesses read the same 308 cases, extracted the same way,
-so they subtract: the **three** cases the Rust core round-trips and the Python API does not
-are `2JQS`, `X38W` and `6KGN`, and all three are the object model rather than the seam.
-`CommentedMap` is a `dict`, so two entries with an empty key (`2JQS`) or an alias that *is*
-its own mapping's key (`X38W`) collapse to one and raise; `None` is a singleton with no
-identity, so an alias to an anchored null (`6KGN`) has nothing to alias. Not subclassing
-`dict` and `list` buys them back, and costs `isinstance(x, dict)`, `json.dumps`, `deepcopy`,
-`pickle` and `==` — the trade [DESIGN §4.1](docs/DESIGN.md) makes on purpose.
+The middle row is every case the suite has: the Rust core reproduces all 308 byte for byte.
+The last row is the one a user actually gets, and it is the lower of the two, so both are
+quoted. Both harnesses read the same 308 cases, extracted the same way, so they subtract: the
+**two** cases the Rust core round-trips and the Python API does not are `2JQS` and `X38W`, and
+both are the object model rather than the seam. `CommentedMap` is a `dict`, so two entries with
+an empty key (`2JQS`) or an alias that *is* its own mapping's key (`X38W`) are one entry, and
+loading raises `DuplicateKeyError`. Not subclassing `dict` and `list` buys them back, and costs
+`isinstance(x, dict)`, `json.dumps`, `deepcopy`, `pickle` and `==` — the trade
+[DESIGN §4.1](docs/DESIGN.md) makes on purpose.
 
 That the difference is *only* the object model is a gate, not a measurement:
 `test_the_record_seam_loses_nothing_over_the_suite` asserts that all 308 cases come out of
@@ -147,13 +147,16 @@ the same 308 cases scored 302 in Rust against 202 here. `tests/test_suite_roundt
 the gate that fails when either number regresses, and `suite_roundtrip.py --rust` prints them
 side by side.
 
-Every remaining failure in both rows is named in
-[tests/README.md](tests/README.md#known-gaps) with its cause, and pinned by a `KNOWN_GAPS`
-list that fails the suite if one starts passing. Of the six the Rust core still loses, four are
-one cluster: a comment splitting the separation run a flow collection wrote between two of its
-lexemes. Both harnesses print every failing case with its input and its output, so the gap is a
-worklist rather than an estimate. Alongside them, a proptest generates documents and asserts
-the same property, and a second-pass check asserts that emitting twice is a fixed point.
+The Rust core's `KNOWN_GAPS` list is now **empty**, and the Python one holds exactly the two
+cases above, each marked permanent with the reason. Both are documents YAML's own uniqueness
+rule rejects — two entries with the null key, and an alias used as a key of the mapping its
+anchor is defined in — so `DuplicateKeyError` naming both source positions is the answer rather
+than a workaround to find; ruamel raises on both, and PyYAML never reaches the question. They
+are named with their causes in [tests/README.md](tests/README.md#known-gaps) and pinned by a
+list that fails the suite if one starts passing, so an excuse cannot go stale. Both harnesses
+print every failing case with its input and its output, so a new gap is a worklist rather than
+an estimate. Alongside them, a proptest generates documents and asserts the same property, and
+a second-pass check asserts that emitting twice is a fixed point.
 
 ## Speed
 

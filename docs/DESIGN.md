@@ -142,8 +142,8 @@ migrate between documents without a use-after-free.
 
 The model carries two kinds of field. Most say what the document **means** — a version, a tag,
 a scalar's value, an entry's key. A second kind says only how the source **spelled** it: `raw`,
-`colon`, `anchor_at`, `tag_at`, `tag_first`, `flow_seps`, `directives_raw`, `stream_tail`,
-`line_space`. Those exist for one reason, stated in §2.5, and they are what the byte-identity
+`colon`, `anchor_at`, `tag_at`, `header_at`, `tag_first`, `flow_seps`, `directives_raw`,
+`stream_tail`, `line_space`. Those exist for one reason, stated in §2.5, and they are what the byte-identity
 invariant of §2.4 is actually built out of. They are marked below.
 
 ```rust
@@ -160,13 +160,17 @@ pub struct Document {
     pub duplicate_keys: Vec<DuplicateKey>,    // every repeat, in source order (§2.3)
 
     // -- spelling (§2.5) ------------------------------------------------------------------
-    /// The directive region verbatim: every line from the last thing consumed through the
-    /// line before `---`, plus how many of `leading`'s trivia were read from inside it.
-    /// `None` when the document has no line beginning with `%`.
+    /// The raw region above the document verbatim: every whole line from the last thing
+    /// consumed through the line before the document's first token, plus how many of
+    /// `leading`'s trivia were read from inside it. `None` unless the region holds a line
+    /// the model cannot spell out again.
     ///
-    /// `version` and `tag_directives` are a directive line's *meaning*, never its spelling:
-    /// `%YAML  1.1` is the same version as `%YAML 1.1`, a reserved directive (`%FOO bar`)
-    /// has no model at all, and a comment may sit on any of those lines or between them.
+    /// Two shapes qualify. `version` and `tag_directives` are a directive line's *meaning*,
+    /// never its spelling: `%YAML  1.1` is the same version as `%YAML 1.1`, a reserved
+    /// directive (`%FOO bar`) has no model at all, and a comment may sit on any of those
+    /// lines or between them. A bare `...` is the same problem with nothing behind it: the
+    /// parser gives no event for a document-end marker that closes no document
+    /// (`explicit_end` is the marker that *does* close one), so the line is its only record.
     pub directives_raw: Option<(String, usize)>,
     /// How many of `tag_directives` were written *above* the `%YAML` line; the rest below.
     /// The two kinds interleave freely on the page and the model keeps them in separate
@@ -235,14 +239,24 @@ pub struct Node {
     /// put on a line of its own is pulled up onto the node's.
     pub anchor_at: Option<Position>,
     pub tag_at: Option<Position>,
+    /// Where a block scalar's header (`|`, `>-`, `|2`, ...) was written, or `None` for any
+    /// other node and one the user built. Same reason as `anchor_at`: `pos` is the scalar's
+    /// *body*, so the header is a lexeme on a line and column of its own, and the source may
+    /// put it a line below the node's properties (`!foo`, then `>1` on the next line).
+    pub header_at: Option<Position>,
     /// The tag was written *before* the anchor (`!!str &a v`, not `&a !!str v`). YAML allows
     /// either order and neither is canonical, so the emitter has to be told which was used.
     pub tag_first: bool,
     /// What a flow collection's source wrote *between* its lexemes: one run in front of each
-    /// child and one in front of the closing bracket, so a recorded vector is always
-    /// `children + 1` long. Each run is the separation verbatim — white space, `,`, `:`, `?`
-    /// — with its comments taken out, because those are trivia and are written from there;
-    /// anything else (a node's own `&anchor` or tag) ends the run.
+    /// child and one in front of the closing bracket, so a recorded vector is
+    /// `children + 1` long — except for a single pair written with no brackets of its own
+    /// (`[a: 1]`, `[? a : b]`, `[&c c: d]`), which has no closing bracket to separate from
+    /// and records exactly `children` runs. That length is the one fact that says the pair
+    /// wrote no brackets. Each run is the separation verbatim — white space, `,`, `:`, `?` —
+    /// with a bare `#` where a comment stood, because a comment's *text* is trivia and is
+    /// written from the slot it was filed in; keeping the mark is what lets the run go back
+    /// around the comment rather than being cut in half by it. Anything else (a node's own
+    /// `&anchor` or tag) ends the run.
     ///
     /// It is the one fact that tells `[1, 2]` from `[1, 2, ]` from `[ 1 , 2 ]`, says which
     /// key of `{a: 1, b}` was written with no `:`, and remembers that the gap in `[a<TAB>,
@@ -404,7 +418,8 @@ So a gap gets a field of its own, sized to the gap and not to a node:
 | between a key and its `:` | `Entry::colon` |
 | between a `&anchor` or a tag and the node it decorates | `Node::anchor_at`, `Node::tag_at`, `Node::tag_first` |
 | between a flow collection's own lexemes — brackets, commas, colons | `Node::flow_seps` |
-| between the `%` lines and the `---` | `Document::directives_raw`, `Document::tags_before_version` |
+| between a block scalar's `\|`/`>` header and the properties above it | `Node::header_at` |
+| between the `%` lines (or a `...` that ends no document) and the `---` | `Document::directives_raw`, `Document::tags_before_version` |
 | after the last lexeme of a line, and inside any line holding a TAB | `Document::line_space` |
 | after the last lexeme of the stream | `Document::stream_tail` |
 | inside a scalar's own lexeme | `Node::raw` |
@@ -414,10 +429,12 @@ Three consequences the rest of the model has to respect:
 1. **A recorded gap is verbatim, not normalised.** `flow_seps` keeps the TAB in `[a<TAB>, b]`,
    `directives_raw` keeps the two spaces in `%YAML  1.1`. The moment a recorder "tidies" its
    input it has become a reconstructor with extra steps.
-2. **Comments come out of the run, and only comments.** A comment is trivia (§2.1) and is
-   written from its slot, so `flow_seps` holds the separation with its comments removed.
-   That is the boundary of the rule, and the four `KNOWN_GAPS` cases in the flow cluster are
-   exactly where a comment *splits* a run that then cannot be put back around it.
+2. **A comment's text comes out of the run; its position does not.** A comment is trivia
+   (§2.1) and is written from its slot, so `flow_seps` holds the separation with the comment
+   *text* removed — but with a bare `#` left where it stood. Without the mark, a comment that
+   *splits* a run takes the rest of it along: the `,` in `[ word1\n# c\n, word2]` was written
+   below the comment and would come back above it. The mark is what lets the run go back
+   around the comment, and it is why `6HB6` and `7TMG` round-trip.
 3. **Empty means "not recorded", and nothing else.** A user edit invalidates the spelling of
    the region it touched, so an edited collection clears `flow_seps` and the emitter lays it
    out from the options instead. There is no third state — no stale vector that outlived the
@@ -449,7 +466,7 @@ class Node:
     __slots__ = ('kind', 'style', 'anchor', 'tag', 'value', 'raw',
                  'line', 'col', 'children', 'merge', 'explicit',
                  'before', 'eol', 'inner', 'after',
-                 'tag_first', 'flow_seps', 'anchor_at', 'tag_at', 'colon')
+                 'tag_first', 'flow_seps', 'anchor_at', 'tag_at', 'header_at', 'colon')
     # -- meaning --
     kind: int                             # 0 scalar, 1 sequence, 2 mapping, 3 alias
     style: int                            # ScalarStyle for scalars, BLOCK/FLOW for collections
@@ -468,6 +485,7 @@ class Node:
     flow_seps: list[str]                  # a flow collection's runs; len(children) + 1, or []
     anchor_at: tuple[int, int] | None     # where the `&anchor` was written
     tag_at: tuple[int, int] | None        # where the tag was written
+    header_at: tuple[int, int] | None     # where a block scalar's `|`/`>` header was written
     colon: list[tuple[int, int] | None]   # where each entry's `:` was written; [] if unrecorded
 
 class Trivia:
@@ -489,7 +507,7 @@ class Doc:
     bom: bool                             # first document of the stream only
     final_line_break: bool                # last document of the stream only
     tags_before_version: int              # `%TAG` lines written above the `%YAML` line
-    directives_raw: tuple[str, int] | None  # the `%` region verbatim, + how many `leading` it ate
+    directives_raw: tuple[str, int] | None  # the raw region above the doc, + how many `leading` it ate
     stream_tail: str                      # trailing white space no line break closes
     line_space: dict[int, str]            # {0-based line: verbatim} for TAB / trailing-space lines
 ```
@@ -500,11 +518,12 @@ class Doc:
 entry in entry order. The flat shape is what keeps the boundary one allocation per node.
 
 **The spelling fields are opaque to the Python layer.** It never reads `raw`, `flow_seps`,
-`colon`, `anchor_at`, `tag_at`, `directives_raw`, `stream_tail` or `line_space`; it carries them
+`colon`, `anchor_at`, `tag_at`, `header_at`, `directives_raw`, `stream_tail` or `line_space`; it
+carries them
 back unchanged for a node it did not change, and drops them for one it did. That is the §2.5
 rule at the seam, and it is the whole reason the record list is this long: **every recorded fact
 needs a slot, or the Python API loses what the core kept.** Measured — the suite round trip
-scores 302/308 through `yamluna_core::{parse, emit}` and 299/308 through
+scores 308/308 through `yamluna_core::{parse, emit}` and 306/308 through
 `YAML().load_all`/`.dump_all`, and `tests/test_suite_roundtrip.py` is the gate that keeps the
 difference visible instead of letting it grow again. The seam's own half of that is asserted
 directly: `emit(parse(x))` through these classes is byte-identical to `parse`-then-`emit`
@@ -705,12 +724,13 @@ unchanged.
    extracted the same way. Both scores are published, separately, and every case either passes
    or is on that harness's `KNOWN_GAPS` with a cause. **The second number is the library's**;
    the first is only the core's, and the difference between them is what the boundary and the
-   object model lose (§2.5). Measured on this commit: 302/308 and 299/308. Quoting one of them
+   object model lose (§2.5). Measured on this commit: 308/308 and 306/308 — the core's
+   `KNOWN_GAPS` is empty and the Python one holds two permanent entries. Quoting one of them
    alone is quoting the wrong layer.
 6. **The boundary loses nothing, and it is asserted rather than believed.** The same 308 cases
    go through `emit(parse(x))` via the `_record` classes and through `parse`/`emit` inside
    Rust, and the two must be byte-identical
    (`test_the_record_seam_loses_nothing_over_the_suite`). While it holds, rule 5's difference
-   is the object model (§4.1) alone — currently `2JQS`, `X38W` and `6KGN`, all three a `dict`
-   that cannot hold one key twice or a `None` that has no identity — and any new Python-side
-   gap that is *not* one of those shapes is a record slot that went missing.
+   is the object model (§4.1) alone — currently `2JQS` and `X38W`, both a `dict` that cannot
+   hold one key twice — and any new Python-side gap that is *not* that shape is a record slot
+   that went missing.

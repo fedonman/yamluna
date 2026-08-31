@@ -482,6 +482,38 @@ def test_keys_that_resolve_alike_are_duplicates() -> None:
         construct(d)
 
 
+def test_an_alias_to_a_key_of_its_own_mapping_is_a_duplicate() -> None:
+    """`yaml-test-suite` X38W: ``{&a [x]: 1, *a : 2}``.
+
+    An alias *is* the node its anchor named (rule 2), so both entries carry the one key
+    object -- not merely two equal ones.  YAML requires a mapping's keys to be unique, so
+    this document is ill-formed and the error is the honest answer; ruamel raises
+    `DuplicateKeyError` here too and PyYAML never gets that far ("found unhashable key").
+    """
+    d = doc(mapping([(seq(['x'], anchor='a'), '1'), (alias('a'), '2')]))
+    with pytest.raises(DuplicateKeyError):
+        construct(d)
+
+    with pytest.warns(DuplicateKeyFutureWarning):
+        m = construct(d, allow_duplicate_keys=True)
+    assert len(m) == 1, 'one key object, so one `dict` entry -- the document is unrepresentable'
+
+
+def test_two_empty_keys_are_one_null_key() -> None:
+    """`yaml-test-suite` 2JQS: ``: a`` over ``: b``.
+
+    An empty key is the null key, so the two entries carry the one key and the suite tags
+    the case ``duplicate-key`` itself -- X38W without the alias, and the same answer.
+    """
+    d = doc(mapping([('', 'a'), ('', 'b')]))
+    with pytest.raises(DuplicateKeyError, match='duplicate key None'):
+        construct(d)
+
+    with pytest.warns(DuplicateKeyFutureWarning):
+        m = construct(d, allow_duplicate_keys=True)
+    assert m == {None: 'b'}, 'one `dict` entry, so the first is unwritable on the way back'
+
+
 # -------------------------------------------------------------------------------- tags
 
 

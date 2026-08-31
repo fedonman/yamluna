@@ -21,12 +21,13 @@ stack, so quoting one of them as "the" score is quoting the wrong thing:
 | what round-trips | over | score | command |
 |---|---|---|---|
 | the Python API — `YAML().load` → `.dump` | `tests/corpus/` | **40 / 40** (of 41 files; `key-duplicate` is scored on behaviour, below) | `python tests/differential.py` |
-| the Rust core — `parse` → `emit` | `yaml-test-suite` | **302 / 308** | `cargo test -p yamluna-core --test proptest_roundtrip` |
-| the Python API — `YAML().load_all` → `.dump_all` | `yaml-test-suite` | **299 / 308** | `python tests/suite_roundtrip.py` |
+| the Rust core — `parse` → `emit` | `yaml-test-suite` | **308 / 308** | `cargo test -p yamluna-core --test proptest_roundtrip` |
+| the Python API — `YAML().load_all` → `.dump_all` | `yaml-test-suite` | **306 / 308** | `python tests/suite_roundtrip.py` |
 
-The corpus is what the library is *for*; the suite is what YAML *is*. The gap between the
-second and third rows is **three cases**, and as of this commit all three are the Python
-object model (`2JQS`, `X38W`, `6KGN` below) rather than the FFI seam: the seam carries every
+The corpus is what the library is *for*; the suite is what YAML *is*. The second row is
+**every case the suite has**: the Rust core lost six of them until this commit and loses none
+now. The gap between the second and third rows is **two cases**, and both are the Python
+object model (`2JQS`, `X38W` below) rather than the FFI seam: the seam carries every
 recorded fact, and `test_the_record_seam_loses_nothing_over_the_suite` is the gate that keeps
 it that way over all 308. When a recorded fact stops crossing, that gate fails first and names
 the case — which is the failure DESIGN §2.5 is about, and the one that cost 100 cases at
@@ -226,45 +227,44 @@ across the FFI by the record slot of the same name (DESIGN §2.5). `KNOWN_FAILUR
 (`crates/yamluna-core/tests/roundtrip.rs`) and `KNOWN_RECORD_GAPS` (`tests/test_bindings.py`)
 are both empty as a result.
 
-#### `yaml-test-suite` through the Rust core — 6 of 308
+#### `yaml-test-suite` through the Rust core — 0 of 308
 
 `cargo test -p yamluna-core --test proptest_roundtrip` runs `parse → emit` over every suite
-case; these six do not come back byte-identical. Each is a real defect with a minimal repro,
-pinned by `KNOWN_GAPS` in that file, which fails if one starts passing.
+case, and every one of the 308 comes back byte-identical. `KNOWN_GAPS` in that file is
+**empty**, and the test fails on any case that stops round-tripping, so the list is a gate
+rather than a record.
 
-| case | cause |
+The six that were open until this commit were closed the way DESIGN §2.5 says to close them —
+one recorded fact each, echoed on the round-trip path only:
+
+| case | what it needed |
 |---|---|
-| `6HB6` | an end-of-line comment inside a flow collection is written from a trivia slot, so the separation run around it cannot be echoed and the comment lands a line low |
-| `7TMG` | a `,` the source wrote *after* an own-line comment inside a flow collection is re-emitted before it: the run holding the comma is split by trivia written from a slot |
-| `CN3R` | an anchored single-pair mapping inside a flow sequence (`&c c: d`) is re-emitted with braces the source did not write |
-| `CT4Q` | an explicit `? key` inside a flow collection loses its `?`: `Entry::explicit` is recorded but the flow emitter never writes the indicator |
-| `M5C3` | a block-scalar header the source put on a line of its own below the node's tag is pulled up onto the tag's line; the header has no recorded position of its own |
-| `M7A3` | a `...` that ends a document with no content at all is not a parser event and has no document of its own to hang on, so it is dropped |
+| `6HB6`, `7TMG` | a comment inside a flow collection leaves a bare `#` mark in `Node.flow_seps`, so the separation run can be written back *around* the comment instead of being cut in half by it |
+| `CN3R` | a single pair written with no brackets of its own (`[&c c: d]`) records exactly `children` separation runs where a bracketed collection records `children + 1`; that length is what says the braces were never written |
+| `CT4Q` | the `?` of an explicit key inside a flow collection is part of the separation run, so the flow emitter writes it from there |
+| `M5C3` | `Node.header_at` — a block scalar's `\|`/`>` header is a lexeme on a line and column of its own, which the body's `pos` cannot spell |
+| `M7A3` | `Document::directives_raw` now covers any raw region the model cannot spell out again, not only `%` lines, so a `...` that ends no document survives as the line it is |
 
-The first four are one cluster: everything a flow collection wrote between its lexemes is one
-`String` per gap with the comments taken out of it, so a run that a comment splits cannot be put
-back around that comment (DESIGN §2.5, consequence 2). The other two each need one recorded
-position the model does not carry.
-
-#### `yaml-test-suite` through the Python API — 9 of 308
+#### `yaml-test-suite` through the Python API — 2 of 308
 
 `python tests/suite_roundtrip.py` runs `YAML().load_all → .dump_all` over the same 308 cases;
-`tests/test_suite_roundtrip.py` is the gate over the same list, with the same excuses in its own
-`KNOWN_GAPS`. **Six of the nine are the six above** — the core loses them first, so the API
-cannot get them back. The other three are the Python side's own, and all three are the same
-trade: `CommentedMap` is a `dict` and `CommentedSeq` is a `list` (DESIGN §4.1), so two objects
-that compare equal are one key, and `None` is a singleton with no identity to hang an anchor on.
+`tests/test_suite_roundtrip.py` is the gate over the same list, with the same causes in its own
+`KNOWN_GAPS`. The core loses none of them, so both remaining cases are the Python side's own,
+and both are the same trade: `CommentedMap` is a `dict` (DESIGN §4.1), so two keys that compare
+equal — or one key reached twice — are one entry.
 
 | case | cause |
 |---|---|
-| `6HB6`, `7TMG`, `CN3R`, `CT4Q`, `M5C3`, `M7A3` | the six core gaps above, unchanged — each is marked `(core)` in `KNOWN_GAPS` |
-| `2JQS` — `': a\n: b\n'` | two entries with an empty key are two entries with the *same* key, so the constructor raises `DuplicateKeyError` where the core keeps both. The `key-duplicate` wall, reached through `null` |
-| `X38W` — `'{ &a [a, &b b]: *b, *a : [c, *b, d]}'` | an alias used as a key of the mapping its own anchor is defined in is the *same object* as that key, so the mapping has a duplicate key and raises. The same wall, reached through an alias |
-| `6KGN` — `'a: &anchor\nb: *anchor\n'` | an anchor on a null survives on the parent, but an alias to it constructs to the one `None` singleton, which carries no identity to alias on, so `b: *anchor` comes back `b:` |
+| `2JQS` — `': a\n: b\n'` | **permanent.** An empty key *is* the null key, so both entries carry `None` and a `dict` holds one of them; the suite tags the case `duplicate-key` itself. Telling the two apart needs the entry's source position, and keying a `Mapping` on position would break `doc[None]` for every well-formed document to rescue an ill-formed one. `DuplicateKeyError` naming both positions is the answer. ruamel raises the same error |
+| `X38W` — `'{ &a [a, &b b]: *b, *a : [c, *b, d]}'` | **permanent.** An alias *is* the node its anchor named, so an alias used as a key of its own mapping is that key — one object, reached twice — and the document is ill-formed at the data-model level. No wrapper helps: identity cannot separate an object from itself. ruamel raises the same error; PyYAML never gets that far (`found unhashable key`) |
 
-Buying these three back means not subclassing `dict` and `list`, which costs `isinstance(x,
-dict)`, `json.dumps`, `deepcopy`, `pickle` and `==` — the trade DESIGN §4.1 makes on purpose.
-The core keeps all three; only the object model cannot represent them.
+Neither is an unfinished task: both are ill-formed documents that YAML's own uniqueness rule
+rejects, and every peer implementation refuses them too. Both are decided in the `constructor`
+module docstring and pinned by `test_constructor.py::test_two_empty_keys_are_one_null_key` and
+`::test_an_alias_to_a_key_of_its_own_mapping_is_a_duplicate`. The Rust core round-trips both,
+and so does `emit(parse(...))` across the record seam — what cannot represent them is the
+`dict`, and buying that back costs `isinstance(x, dict)`, `json.dumps`, `deepcopy`, `pickle`
+and `==`, the trade DESIGN §4.1 makes on purpose.
 
 #### Mutation — 12 xfails, all in `tests/test_mutation.py`
 

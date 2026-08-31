@@ -297,14 +297,38 @@ impl Writer {
 
     /// Write a line break whether or not this line has content.
     pub(super) fn hard_break(&mut self) {
+        self.break_with(self.brk);
+    }
+
+    fn break_with(&mut self, brk: &str) {
         self.line_tail();
-        self.out.push_str(self.brk);
+        self.out.push_str(brk);
         self.line += 1;
         self.col = 0;
         self.pending = 0;
         self.dirty = false;
         self.home = 0;
         self.commented = false;
+    }
+
+    /// Append recorded separation — the white space and punctuation the source wrote between two
+    /// lexemes — following the cursor through it the way writing it a piece at a time would.
+    ///
+    /// [`Writer::push`] treats its argument as one lexeme, so a `|+` block scalar that ends in a
+    /// break still owns the line below it. Separation is the opposite: a break in it ends the
+    /// line for good, leaving the one below empty, free, and no longer spoken for by a comment.
+    pub(super) fn push_separation(&mut self, s: &str) {
+        let mut rest = s;
+        while let Some(i) = rest.find(['\n', '\r']) {
+            self.push(&rest[..i]);
+            let brk = match &rest[i..] {
+                r if r.starts_with("\r\n") => "\r\n",
+                r => &r[..1],
+            };
+            self.break_with(brk);
+            rest = &rest[i + brk.len()..];
+        }
+        self.push(rest);
     }
 
     /// Write `n` empty lines.

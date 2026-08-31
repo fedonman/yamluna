@@ -10,9 +10,10 @@
 //!    streams, unicode, CRLF. Random bytes almost never parse; random documents almost always do,
 //!    and only a document that parses can test the invariant.
 //!
-//! Every known counterexample is in `KNOWN_GAPS` with a minimal repro, and
-//! `known_gaps_are_still_gaps` fails when one starts passing, so a fix cannot leave a stale
-//! excuse behind. `tests/README.md` carries the same list in prose.
+//! `KNOWN_GAPS` is **empty**: every suite case the loader accepts re-emits byte for byte. Any
+//! counterexample goes there with a minimal repro, and `known_gaps_are_still_gaps` fails when a
+//! listed one starts passing, so a fix cannot leave a stale excuse behind. `tests/README.md`
+//! carries the same list in prose.
 
 use std::{fmt::Write as _, path::PathBuf};
 
@@ -110,40 +111,13 @@ fn suite_cases() -> Vec<SuiteCase> {
 
 /// Suite cases that do not round-trip byte-for-byte, and why.
 ///
-/// Each entry is a real defect, minimised in `tests/README.md` under "Known gaps". The test below
-/// fails if one starts passing, so fixing a gap forces the entry out.
-const KNOWN_GAPS: &[(&str, &str)] = &[
-    (
-        "6HB6",
-        "an end-of-line comment inside a flow collection is written from a trivia slot, so the \
-         separation run around it cannot be echoed and the comment lands a line low",
-    ),
-    (
-        "7TMG",
-        "a `,` the source wrote *after* an own-line comment inside a flow collection is \
-         re-emitted before it: the run holding the comma is split by trivia written from a slot",
-    ),
-    (
-        "CN3R",
-        "an anchored single-pair mapping inside a flow sequence (`&c c: d`) is re-emitted with \
-         braces the source did not write",
-    ),
-    (
-        "CT4Q",
-        "an explicit `? key` inside a flow collection loses its `?`: `Entry::explicit` is \
-         recorded but the flow emitter never writes the indicator",
-    ),
-    (
-        "M5C3",
-        "a block-scalar header the source put on a line of its own below the node's tag is \
-         pulled up onto the tag's line; the header has no recorded position of its own",
-    ),
-    (
-        "M7A3",
-        "a `...` that ends a document with no content at all is not a parser event and has no \
-         document of its own to hang on, so it is dropped",
-    ),
-];
+/// **Empty, and the point is that it stays that way.** Each entry would be a real defect,
+/// minimised in `tests/README.md` under "Known gaps"; the test below fails both on an unlisted
+/// failure and on a listed case that starts passing, so neither a regression nor a stale excuse
+/// can survive here. The last six went at `HEAD`: `6HB6`, `7TMG`, `CN3R`, `CT4Q` (flow separation
+/// runs, now recording a `#` where a comment stood and a pair's missing brackets in their length),
+/// `M5C3` (`Node::header_at`) and `M7A3` (`Document::directives_raw` covering a bare `...`).
+const KNOWN_GAPS: &[(&str, &str)] = &[];
 
 /// **The headline number.** Every suite case that the loader accepts must re-emit byte-identically.
 #[test]

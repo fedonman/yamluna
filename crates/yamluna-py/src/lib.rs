@@ -190,6 +190,7 @@ fn build_node<'py>(py: Python<'py>, n: &Node) -> PyResult<Bound<'py, PyAny>> {
         n.flow_seps.clone().into_bound_py_any(py)?,
         place(n.anchor_at).into_bound_py_any(py)?,
         place(n.tag_at).into_bound_py_any(py)?,
+        place(n.header_at).into_bound_py_any(py)?,
         colon.into_bound_py_any(py)?,
     ];
     node_class(py)?.call1(PyTuple::new(py, args)?)
@@ -319,6 +320,7 @@ fn read_node(o: &Bound<'_, PyAny>) -> PyResult<Node> {
         },
         anchor_at: read_place(o, "anchor_at")?,
         tag_at: read_place(o, "tag_at")?,
+        header_at: read_place(o, "header_at")?,
         flow_seps: o.getattr(intern!(py, "flow_seps"))?.extract()?,
         trivia: Trivia4 {
             before: read_trivia_list(&o.getattr(intern!(py, "before"))?)?,

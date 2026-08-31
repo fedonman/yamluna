@@ -437,10 +437,10 @@ four-line input.
 across the FFI as `Node.explicit`, and re-emitted. All three inputs above come back byte-for-byte,
 the third included, so the load→dump cycle no longer produces YAML that cannot be re-read.
 
-One exception, pinned: an explicit key **inside a flow collection** loses its `?` —
-`'[\n? foo\n bar : baz\n]\n'` comes back as `'[\n{ foo\n bar : baz,\n}\n]\n'`. The indicator is
-recorded; the flow emitter does not write it. That is `CT4Q` in `KNOWN_GAPS`
-(`crates/yamluna-core/tests/proptest_roundtrip.rs`).
+That includes an explicit key **inside a flow collection**, which was the last one to close:
+`'[\n? foo\n bar : baz\n]\n'` used to come back as `'[\n{ foo\n bar : baz,\n}\n]\n'` and now comes
+back as written. The `?` is part of the separation run the collection wrote between its lexemes
+(`Node::flow_seps`), so the flow emitter writes it from there rather than deciding to.
 
 ---
 
@@ -547,13 +547,13 @@ distinction that decides this is `inner` versus `before`: promoting a flow colle
 `inner` trivia to `before` would push the opening brace onto the next line, so the
 projection keeps them apart (`_leading_is_before` in `python/yamluna/representer.py`).
 
-Every comment survives, in both the Rust and the Python path;
-`corpus/comment-flow.yaml` round-trips byte-for-byte, brackets included. *In place* has two
-known exceptions, both in `yaml-test-suite` and both pinned by `KNOWN_GAPS` in
-`crates/yamluna-core/tests/proptest_roundtrip.rs`: a comment that splits the separation run
-between two lexemes (`6HB6`, `7TMG`) comes back a line away from where it sat, because the run
-is one string per gap with the comments taken out of it and cannot be put back *around* one.
-Nothing is lost; the placement is. Where the collection's
+Every comment survives, in both the Rust and the Python path, and in place;
+`corpus/comment-flow.yaml` round-trips byte-for-byte, brackets included, as do all 308
+`yaml-test-suite` cases. A comment that *splits* the separation run between two lexemes
+(`6HB6`, `7TMG`) used to come back a line away from where it sat, because the run was one
+string per gap with the comments taken out of it and could not be put back *around* one; the
+run now keeps a bare `#` where the comment stood, so it goes back around it. Where the
+collection's
 own punctuation sat is a separate fact from the comments, and it is recorded: `Node.flow_seps`
 holds the separation the source wrote in front of each child and in front of the closing
 bracket, and the record classes carry it across the FFI, so `[ 1 , 2 ]`, `[1, 2, ]`, `[a<TAB>,

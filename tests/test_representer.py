@@ -280,6 +280,17 @@ class TestStructure:
 # -- anchors ------------------------------------------------------------------------------
 
 
+def assert_no_dangling_alias(written: Doc) -> None:
+    """No `*name` without a `&name` ahead of it -- arena order is document order."""
+    seen: set[str] = set()
+    for node in written.nodes:
+        if node.kind == KIND_ALIAS:
+            assert node.anchor in seen, f'*{node.anchor} has no anchor before it'
+            assert node.tag is None, f'*{node.anchor} carries a tag, which is not YAML'
+        elif node.anchor is not None:
+            seen.add(node.anchor)
+
+
 class TestAnchors:
     def test_shared_subtree_becomes_an_alias(self) -> None:
         shared = CommentedMap({'x': 1})
@@ -318,6 +329,34 @@ class TestAnchors:
         d = represent(CommentedMap({'a': shared, 'b': shared}))
         assert d.nodes[2].anchor == 's' and d.nodes[2].value == 'v'
         assert d.nodes[4] == Node(KIND_ALIAS, anchor='s')
+
+    def test_an_alias_to_a_null_comes_back_from_the_parent(self, construct: Any) -> None:
+        """`a: &n` / `b: *n`: both keys hold the one `None`, so identity cannot say `b` is
+        an alias.  The record the parent parked for `b` is an alias node, and that is what
+        says it -- but only while `&n` is still somewhere ahead of it in the document.
+        """
+        source = doc(mapping([('a', scalar('', raw='', anchor='n')), ('b', alias('n'))]))
+        tree = construct(source)
+        assert tree == {'a': None, 'b': None}
+        written = represent(tree)
+        assert written.nodes[2].anchor == 'n' and written.nodes[4] == alias('n')
+        assert_no_dangling_alias(written)
+
+    @pytest.mark.parametrize('edit', [
+        pytest.param(lambda t: t.pop('a'), id='anchor-deleted'),
+        pytest.param(lambda t: t.__setitem__('a', 'x'), id='anchor-replaced'),
+    ])
+    def test_an_alias_is_dropped_when_its_anchor_goes(
+        self, construct: Any, edit: Any
+    ) -> None:
+        """An alias whose anchor is not in the output is not YAML at all, so the site falls
+        back to the plain `None` it holds.  Losing an alias beats emitting a dangling one.
+        """
+        tree = construct(doc(mapping([('a', scalar('', raw='', anchor='n')), ('b', alias('n'))])))
+        edit(tree)
+        written = represent(tree)
+        assert all(n.kind != KIND_ALIAS for n in written.nodes)
+        assert_no_dangling_alias(written)
 
     def test_equal_but_distinct_scalars_are_not_aliased(self) -> None:
         """Interned ints and strings must not turn into aliases of each other."""

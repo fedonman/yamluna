@@ -119,6 +119,14 @@ pub struct Node {
     pub anchor_at: Option<Position>,
     /// Where the tag was written. See [`Self::anchor_at`].
     pub tag_at: Option<Position>,
+    /// Where a block scalar's header (`|`, `>-`, `|2`, ...) was written, or `None` for any other
+    /// node and for one the user built.
+    ///
+    /// Not in DESIGN §2, and for the same reason as [`Self::anchor_at`]: [`Self::pos`] is the
+    /// scalar's *body*, so the header is a lexeme on a line and column of its own. The source may
+    /// put it below the node's properties (`!foo` on one line, `>1` on the next), which nothing
+    /// else records.
+    pub header_at: Option<Position>,
     /// Whether the tag was written *before* the anchor (`!!str &a v`, not `&a !!str v`).
     ///
     /// Not in DESIGN §2. YAML allows either order and neither is canonical, so the emitter has
@@ -142,10 +150,16 @@ pub struct Node {
     /// 0-based line and column of the node's first character.
     pub pos: Position,
     /// What the source wrote *between* this flow collection's lexemes: one run before each child
-    /// and one before the closing bracket, so a recorded vector is always `children + 1` long.
+    /// and one before the closing bracket, so a recorded vector is `children + 1` long -- except
+    /// for a single pair written with no brackets of its own (`[a: 1]`, `[? a : b]`, `[&c c: d]`),
+    /// which has no closing bracket to separate from and records exactly `children` runs. That
+    /// length is the one fact that says the pair wrote no brackets, and a mapping's children
+    /// always come in pairs, so a stale vector cannot be mistaken for it.
     ///
-    /// Each run is the separation verbatim -- white space, `,`, `:`, `?` -- with its comments
-    /// taken out, because those are trivia and are written from there. Anything else (a node's own
+    /// Each run is the separation verbatim -- white space, `,`, `:`, `?` -- with a bare `#` where
+    /// a comment stood, because a comment's text is trivia and is written from the slot it was
+    /// filed in. Keeping the mark means the run can go back *around* the comment: `[ word1\n#
+    /// c\n, word2]` wrote its `,` below the comment, not above it. Anything else (a node's own
     /// `&anchor` or tag) ends the run: the emitter writes that from the node.
     ///
     /// It is the one fact that tells `[1, 2]` from `[1, 2, ]` from `[ 1 , 2 ]`, says which key of
@@ -169,6 +183,7 @@ impl Node {
             tag: None,
             anchor_at: None,
             tag_at: None,
+            header_at: None,
             tag_first: false,
             style,
             value: None,
@@ -233,17 +248,21 @@ pub struct Document {
     pub version: Option<(u32, u32)>,
     /// The `%TAG` directive lines, in source order.
     pub tag_directives: Vec<TagDirective>,
-    /// The document's directive region, verbatim: every line from the last thing consumed
-    /// through the line before `---`, without the break that ends it, together with how many of
-    /// [`Self::leading`]'s trivia were read from inside it. `None` when the document has no line
-    /// beginning with `%`.
+    /// The raw region above the document: every whole line from the last thing consumed through
+    /// the line before the document's first token, without the break that ends it, together with
+    /// how many of [`Self::leading`]'s trivia were read from inside it. `None` unless the region
+    /// holds a line the model cannot spell out again — a `%` directive, or a `...` that ends no
+    /// document of its own.
     ///
     /// Not in DESIGN §2. [`Self::version`] and [`Self::tag_directives`] are the *semantics* of a
     /// directive line, never its spelling: `%YAML  1.1` is the same version as `%YAML 1.1`,
     /// a reserved directive (`%FOO bar`) has no model at all, and a comment may sit on any of
-    /// those lines or between them. The region is kept as written and the emitter echoes it; the
-    /// trivia inside it stay in [`Self::leading`] so the comment API still sees them, and the
-    /// count is what tells the emitter it has already written them.
+    /// those lines or between them. A bare `...` is the same problem with nothing at all behind
+    /// it: the parser gives no event for a document-end marker that closes no document
+    /// ([`Self::explicit_end`] is the marker that *does* close one), so the only record of it is
+    /// the line. The region is kept as written and the emitter echoes it; the trivia inside it
+    /// stay in [`Self::leading`] so the comment API still sees them, and the count is what tells
+    /// the emitter it has already written them.
     pub directives_raw: Option<(String, usize)>,
     /// How many of [`Self::tag_directives`] were written *above* the `%YAML` line; the rest were
     /// written below it. `0` when the version came first, or when there is no version.

@@ -402,6 +402,9 @@ def _carry(node: Node, src: Node | None) -> None:
         # emitter's one signal for "the user built this", so a bare `str` that cannot keep
         # its own lexeme has to get it back from here or the document is laid out afresh.
         node.style, node.value, node.raw = src.style, src.value, src.raw
+        # A block scalar's header is a lexeme of its own, ahead of the body `line`/`col`, so
+        # it travels with the lexeme rather than being reconstructed from it.
+        node.header_at = src.header_at
 
 
 def _unmerge_value_pre(node: Node, src: Node | None) -> None:
@@ -557,8 +560,8 @@ def _entries(obj: Mapping[Any, Any]) -> list[tuple[Any, Any, bool]]:
 class _Representer:
     """One document's worth of state: the arena, the anchor bookkeeping, the wire plan."""
 
-    __slots__ = ('_counter', 'default_flow_style', 'names', 'nodes', 'plan', 'registry',
-                 'shared', 'taken', 'used', 'version')
+    __slots__ = ('_aliases', '_counter', 'default_flow_style', 'names', 'nodes', 'plan',
+                 'registry', 'shared', 'taken', 'used', 'version')
 
     def __init__(self, registry: TagRegistry | None, default_flow_style: bool) -> None:
         self.registry = registry
@@ -570,6 +573,7 @@ class _Representer:
         self.used: list[type] = []
         self.plan: WirePlan = WirePlan((), {})
         self.version: tuple[int, int] | None = None
+        self._aliases: list[tuple[int, str]] = []  # alias sites the walk could not place yet
         self._counter = 0
 
     # -- entry point ----------------------------------------------------------------------
@@ -621,6 +625,7 @@ class _Representer:
         if self.registry is not None and self.used:
             self.plan = self.registry.plan(self.used)
         root = self._add(Node(value='null')) if data is None else self._emit(data)
+        self._realias()
         # No parent holds the root's leading comments, nor its end-of-line one: an entry's come
         # off the parent's `.ca`, and a root has no parent, so the record is all there is.
         _leading_is_before(self.nodes[root], getattr(data, NODE_ATTRIB, None))
@@ -873,11 +878,53 @@ class _Representer:
         if type(was) is not type(value) or was != value:
             return
         _carry(self.nodes[index], src)
+        self._note_alias(index, src)
 
     def _respell_key(self, index: int, found: tuple[Any, Node, Node | None] | None) -> None:
         """The same, for the key the record was looked up by -- which cannot have changed."""
         if found is not None and found[2] is not None:
             _carry(self.nodes[index], found[2])
+            self._note_alias(index, found[2])
+
+    def _note_alias(self, index: int, src: Node) -> None:
+        """Note an entry whose parent recorded it as an ``*name`` site.
+
+        ``None`` and ``bytes`` are the two values that cannot hold an anchor, so an alias to
+        one of them constructs to a value with no identity to alias on -- ``a: &anchor`` /
+        ``b: *anchor`` gives both keys the one ``None`` singleton, and the record the parent
+        kept (:data:`~yamluna.constructor.SOURCE_ATTRIB`) is the only trace left of the
+        ``*name``.  Every other alias comes back from object identity in :meth:`_emit_node`.
+
+        Writing it back unconditionally would be wrong: an alias whose anchor has since left
+        the document is invalid YAML, which is worse than losing the alias.  So the site is
+        only noted here and settled in :meth:`_realias`, once the whole arena is there to say
+        whether the anchor was written.
+        """
+        if src.kind == KIND_ALIAS and src.anchor:
+            self._aliases.append((index, src.anchor))
+
+    def _realias(self) -> None:
+        """Turn the noted sites into aliases, but only where their anchor is really there.
+
+        Arena order is document order, so an anchor at a lower index is one the reader will
+        have seen by the time it reaches the alias.  A name defined nowhere earlier -- the
+        anchored entry deleted, or its value replaced -- leaves the site as the plain null it
+        already is: an alias lost, never a dangling one emitted.
+        """
+        if not self._aliases:
+            return
+        first: dict[str, int] = {}
+        for index, node in enumerate(self.nodes):
+            if node.anchor is not None:
+                first.setdefault(node.anchor, index)
+        for index, name in self._aliases:
+            if first.get(name, index) < index:
+                node = self.nodes[index]
+                node.kind, node.anchor = KIND_ALIAS, name
+                # An alias is just the name: a `*x` standing in for a `bytes` must shed the
+                # `!!binary` its value would otherwise be written with, since a tag on an
+                # alias is not YAML at all.
+                node.value = node.raw = node.tag = None
 
     # -- trivia ---------------------------------------------------------------------------
 

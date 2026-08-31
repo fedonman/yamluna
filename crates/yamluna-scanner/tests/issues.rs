@@ -1,6 +1,6 @@
 use yamluna_scanner::Marker;
-use yamluna_scanner::{AnchorRef, Event, Parser, ScalarStyle, ScanError, Span, StructureStyle};
 use yamluna_scanner::StructureStyle::{Block, Flow};
+use yamluna_scanner::{AnchorRef, Event, Parser, ScalarStyle, ScanError, Span, StructureStyle};
 
 /// Run the parser through the string.
 ///
@@ -225,7 +225,12 @@ fn test_issue1() {
             Event::DocumentStart(false),
             Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Flow),
             Event::MappingStart(AnchorRef::default(), None, StructureStyle::Flow),
-            Event::Scalar("a".into(), ScalarStyle::DoubleQuoted, AnchorRef::default(), None),
+            Event::Scalar(
+                "a".into(),
+                ScalarStyle::DoubleQuoted,
+                AnchorRef::default(),
+                None
+            ),
             Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Flow),
             Event::SequenceEnd,
             Event::MappingEnd,
@@ -244,7 +249,12 @@ fn test_pr12() {
             Event::StreamStart,
             Event::DocumentStart(true),
             Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Block),
-            Event::Scalar("a\n".into(), ScalarStyle::Literal, AnchorRef::default(), None),
+            Event::Scalar(
+                "a\n".into(),
+                ScalarStyle::Literal,
+                AnchorRef::default(),
+                None
+            ),
             Event::SequenceEnd,
             Event::DocumentEnd,
             Event::StreamEnd,
@@ -300,21 +310,56 @@ array:
             Event::StreamStart,
             Event::DocumentStart(true),
             Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
-            Event::Scalar("array".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar(
+                "array".into(),
+                ScalarStyle::Plain,
+                AnchorRef::default(),
+                None
+            ),
             Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Block),
             Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
-            Event::Scalar("object".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar(
+                "object".into(),
+                ScalarStyle::Plain,
+                AnchorRef::default(),
+                None
+            ),
             Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
-            Event::Scalar("array".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar(
+                "array".into(),
+                ScalarStyle::Plain,
+                AnchorRef::default(),
+                None
+            ),
             Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Block),
             Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
-            Event::Scalar("object".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar(
+                "object".into(),
+                ScalarStyle::Plain,
+                AnchorRef::default(),
+                None
+            ),
             Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
-            Event::Scalar("array".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar(
+                "array".into(),
+                ScalarStyle::Plain,
+                AnchorRef::default(),
+                None
+            ),
             Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Block),
             Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
-            Event::Scalar("text".into(), ScalarStyle::Plain, AnchorRef::default(), None),
-            Event::Scalar("Line 1 Line 2".into(), ScalarStyle::Folded, AnchorRef::default(), None),
+            Event::Scalar(
+                "text".into(),
+                ScalarStyle::Plain,
+                AnchorRef::default(),
+                None
+            ),
+            Event::Scalar(
+                "Line 1 Line 2".into(),
+                ScalarStyle::Folded,
+                AnchorRef::default(),
+                None
+            ),
             Event::MappingEnd,
             Event::SequenceEnd,
             Event::MappingEnd,
@@ -341,8 +386,18 @@ fn test_issue22() {
             Event::StreamStart,
             Event::DocumentStart(false),
             Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
-            Event::Scalar("comment".into(), ScalarStyle::Plain, AnchorRef::default(), None),
-            Event::Scalar("hello ... world".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar(
+                "comment".into(),
+                ScalarStyle::Plain,
+                AnchorRef::default(),
+                None
+            ),
+            Event::Scalar(
+                "hello ... world".into(),
+                ScalarStyle::Plain,
+                AnchorRef::default(),
+                None
+            ),
             Event::MappingEnd,
             Event::DocumentEnd,
             Event::StreamEnd
@@ -425,9 +480,19 @@ fn test_issue84() {
             Event::StreamStart,
             Event::DocumentStart(false),
             Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
-            Event::Scalar("hello".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar(
+                "hello".into(),
+                ScalarStyle::Plain,
+                AnchorRef::default(),
+                None
+            ),
             Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
-            Event::Scalar("world".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar(
+                "world".into(),
+                ScalarStyle::Plain,
+                AnchorRef::default(),
+                None
+            ),
             Event::Scalar(
                 "this is a string --- still a string".into(),
                 ScalarStyle::Plain,

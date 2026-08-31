@@ -965,6 +965,7 @@ impl<'input, T: Input> Parser<'input, T> {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn parse_node<'a>(&mut self, block: bool, indentless_sequence: bool) -> ParseResult<'a>
     where
         'input: 'a,
@@ -1050,10 +1051,7 @@ impl<'input, T: Input> Parser<'input, T> {
             }
             Token(mark, TokenType::FlowMappingStart) => {
                 self.state = State::FlowMappingFirstKey;
-                Ok((
-                    Event::MappingStart(anchor, tag, StructureStyle::Flow),
-                    mark,
-                ))
+                Ok((Event::MappingStart(anchor, tag, StructureStyle::Flow), mark))
             }
             Token(mark, TokenType::BlockSequenceStart) if block => {
                 self.state = State::BlockSequenceFirstEntry;
@@ -1470,11 +1468,11 @@ mod test {
         let mut out = Vec::new();
         for x in Parser::new_from_str(text) {
             let (ev, _) = x?;
-            let tag = match ev {
-                Event::Scalar(_, _, _, tag)
-                | Event::SequenceStart(_, tag, _)
-                | Event::MappingStart(_, tag, _) => tag,
-                _ => continue,
+            let (Event::Scalar(_, _, _, tag)
+            | Event::SequenceStart(_, tag, _)
+            | Event::MappingStart(_, tag, _)) = ev
+            else {
+                continue;
             };
             if let Some(tag) = tag {
                 out.push(tag.to_string());

@@ -240,6 +240,49 @@ def test_seq_setitem_keeps_the_slot_comment() -> None:
     assert eols(s) == {0: '# slot 0'}
 
 
+def test_seq_binding_survives_random_mutation() -> None:
+    """Every element carries a comment naming it; no sequence of edits may separate them."""
+    import random
+
+    rng = random.Random(20240501)
+    counter = iter(range(10_000))
+
+    def fresh() -> str:
+        return f'v{next(counter)}'
+
+    s = CommentedSeq()
+    for _ in range(400):
+        op = rng.choice(['insert', 'append', 'extend', 'del', 'pop', 'remove', 'reverse', 'sort', 'delslice'])
+        n = len(s)
+        if op == 'insert':
+            idx = rng.randint(0, n)
+            s.insert(idx, fresh())
+            s.yaml_add_eol_comment(s[idx], idx, column=0)
+        elif op == 'append':
+            s.append(fresh())
+            s.yaml_add_eol_comment(s[-1], len(s) - 1, column=0)
+        elif op == 'extend':
+            start = len(s)
+            s.extend([fresh(), fresh()])
+            for i in range(start, len(s)):
+                s.yaml_add_eol_comment(s[i], i, column=0)
+        elif n and op == 'del':
+            del s[rng.randrange(n)]
+        elif n and op == 'pop':
+            s.pop(rng.randrange(n))
+        elif n and op == 'remove':
+            s.remove(s[rng.randrange(n)])
+        elif op == 'reverse':
+            s.reverse()
+        elif op == 'sort':
+            s.sort(reverse=rng.random() < 0.5)
+        elif n and op == 'delslice':
+            start = rng.randrange(n)
+            del s[start : start + rng.randint(1, 3)]
+        assert eols(s) == {i: f'# {v}' for i, v in enumerate(s)}
+        assert len(s._ca_store()) == len(s)
+
+
 def test_seq_store_stays_the_same_length_as_the_list() -> None:
     s = seq('a', 'b', 'c')
     for op in (lambda: s.insert(1, 'x'), lambda: s.append('y'), lambda: s.pop(0), s.reverse):

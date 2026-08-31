@@ -98,7 +98,12 @@ fn test_utf() {
             Event::DocumentStart(false),
             Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
             Event::Scalar("a".into(), ScalarStyle::Plain, AnchorRef::default(), None),
-            Event::Scalar("你好".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar(
+                "你好".into(),
+                ScalarStyle::Plain,
+                AnchorRef::default(),
+                None
+            ),
             Event::MappingEnd,
             Event::DocumentEnd,
             Event::StreamEnd,
@@ -144,9 +149,24 @@ fn test_quoting() {
             Event::StreamStart,
             Event::DocumentStart(false),
             Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Block),
-            Event::Scalar("plain".into(), ScalarStyle::Plain, AnchorRef::default(), None),
-            Event::Scalar("squote".into(), ScalarStyle::SingleQuoted, AnchorRef::default(), None),
-            Event::Scalar("dquote".into(), ScalarStyle::DoubleQuoted, AnchorRef::default(), None),
+            Event::Scalar(
+                "plain".into(),
+                ScalarStyle::Plain,
+                AnchorRef::default(),
+                None
+            ),
+            Event::Scalar(
+                "squote".into(),
+                ScalarStyle::SingleQuoted,
+                AnchorRef::default(),
+                None
+            ),
+            Event::Scalar(
+                "dquote".into(),
+                ScalarStyle::DoubleQuoted,
+                AnchorRef::default(),
+                None
+            ),
             Event::SequenceEnd,
             Event::DocumentEnd,
             Event::StreamEnd,
@@ -168,13 +188,28 @@ a scalar
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::Scalar("a scalar".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar(
+                "a scalar".into(),
+                ScalarStyle::Plain,
+                AnchorRef::default(),
+                None
+            ),
             Event::DocumentEnd,
             Event::DocumentStart(true),
-            Event::Scalar("a scalar".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar(
+                "a scalar".into(),
+                ScalarStyle::Plain,
+                AnchorRef::default(),
+                None
+            ),
             Event::DocumentEnd,
             Event::DocumentStart(true),
-            Event::Scalar("a scalar".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar(
+                "a scalar".into(),
+                ScalarStyle::Plain,
+                AnchorRef::default(),
+                None
+            ),
             Event::DocumentEnd,
             Event::StreamEnd,
         ]
@@ -239,7 +274,12 @@ foobar";
         [
             Event::StreamStart,
             Event::DocumentStart(true),
-            Event::Scalar("foobar".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar(
+                "foobar".into(),
+                ScalarStyle::Plain,
+                AnchorRef::default(),
+                None
+            ),
             Event::DocumentEnd,
             Event::StreamEnd,
         ]
@@ -265,7 +305,12 @@ a: |-
             Event::DocumentStart(false),
             Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
             Event::Scalar("a".into(), ScalarStyle::Plain, AnchorRef::default(), None),
-            Event::Scalar("a\n    b".into(), ScalarStyle::Literal, AnchorRef::default(), None),
+            Event::Scalar(
+                "a\n    b".into(),
+                ScalarStyle::Literal,
+                AnchorRef::default(),
+                None
+            ),
             Event::MappingEnd,
             Event::DocumentEnd,
             Event::StreamEnd,
@@ -281,7 +326,12 @@ fn test_bad_docstart() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::Scalar("----".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar(
+                "----".into(),
+                ScalarStyle::Plain,
+                AnchorRef::default(),
+                None
+            ),
             Event::DocumentEnd,
             Event::StreamEnd,
         ]
@@ -303,7 +353,12 @@ fn test_bad_docstart() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::Scalar("----".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar(
+                "----".into(),
+                ScalarStyle::Plain,
+                AnchorRef::default(),
+                None
+            ),
             Event::DocumentEnd,
             Event::StreamEnd,
         ]

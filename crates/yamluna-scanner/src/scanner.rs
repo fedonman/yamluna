@@ -1723,6 +1723,10 @@ impl<'input, T: Input> Scanner<'input, T> {
         self.allow_simple_key();
         let tok = self.scan_block_scalar(literal)?;
 
+        // A comment on the header line (`|- # here`) sits *before* the scalar's content, so it is
+        // flushed before the token rather than after it. This is the only fetch function whose
+        // token starts after the comment it may scan.
+        self.flush_comments();
         self.tokens.push_back(tok);
         Ok(())
     }
@@ -2168,6 +2172,10 @@ impl<'input, T: Input> Scanner<'input, T> {
 
         // Eat the right quote.
         self.skip_non_blank();
+        // yamluna: the scalar ends at the closing quote. Upstream builds the span *after* the
+        // `skip_ws_to_eol` below, so the span swallowed the trailing whitespace and any
+        // end-of-line comment, and slicing the source by it did not give back the lexeme.
+        let end_mark = self.mark;
         // Ensure there is no invalid trailing content.
         self.skip_ws_to_eol(SkipTabs::Yes)?;
         match self.input.peek() {
@@ -2194,7 +2202,7 @@ impl<'input, T: Input> Scanner<'input, T> {
             ScalarStyle::DoubleQuoted
         };
         Ok(Token(
-            Span::new(start_mark, self.mark),
+            Span::new(start_mark, end_mark),
             TokenType::Scalar(style, string.into()),
         ))
     }

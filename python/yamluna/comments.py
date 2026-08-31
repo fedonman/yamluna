@@ -53,6 +53,13 @@ __all__ = [
     'CommentedMap',
     'CommentedSeq',
     'CommentedSet',
+    'C_ELEM_EOL',
+    'C_ELEM_POST',
+    'C_ELEM_PRE',
+    'C_KEY_EOL',
+    'C_KEY_PRE',
+    'C_VALUE_EOL',
+    'C_VALUE_POST',
     'Format',
     'LineCol',
     'MergeList',
@@ -111,7 +118,7 @@ def _copy_store(store: Any) -> Any:
 def _keep_scalar_type(old: Any, new: Any) -> Any:
     """Assigning a plain ``str`` over a scalar string keeps the scalar string's subclass.
 
-    Avoids importing ``yamluna.scalars``: any ``str`` subclass qualifies.
+    Avoids importing ``yamluna.scalarstring``: any ``str`` subclass qualifies.
     """
     if type(new) is str and isinstance(old, str) and type(old) is not str:
         try:
@@ -1073,18 +1080,3 @@ class TaggedScalar(CommentedBase, str):
 
     def __repr__(self) -> str:
         return f'TaggedScalar(value={self.value!r}, style={self.style!r}, tag={self.tag!r})'
-
-
-def dump_comments(node: Any, name: str = '', sep: str = '.', out: Any = None) -> None:
-    """Recursively print the comments of a tree; debugging aid."""
-    import sys
-
-    out = sys.stdout if out is None else out
-    if isinstance(node, dict) and hasattr(node, 'ca'):
-        out.write(f'{name} {type(node)}\n{node.ca!r}\n')
-        for k in node:
-            dump_comments(node[k], name=f'{name}{sep}{k}' if name else str(k), sep=sep, out=out)
-    elif isinstance(node, list) and hasattr(node, 'ca'):
-        out.write(f'{name} {type(node)}\n{node.ca!r}\n')
-        for idx, v in enumerate(node):
-            dump_comments(v, name=f'{name}{sep}{idx}' if name else str(idx), sep=sep, out=out)

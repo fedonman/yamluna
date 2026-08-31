@@ -25,7 +25,7 @@ fn run_parser_and_deref_seq_spans(input: &str) -> Result<Vec<String>, ScanError>
     for x in Parser::new_from_str(input) {
         let x = x?;
         match x.0 {
-            Event::SequenceStart(_, _) => start_stack.push(x.1.start.index()),
+            Event::SequenceStart(..) => start_stack.push(x.1.start.index()),
             Event::SequenceEnd => {
                 let start = start_stack.pop().unwrap();
                 let end = x.1.end.index();

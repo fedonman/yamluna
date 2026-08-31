@@ -179,6 +179,11 @@ pub trait Input {
 
     /// Skip yaml whitespace at most up to eol. Also skips comments. Advances the input.
     ///
+    /// If `comment` is `Some`, the text of the comment that was skipped (if any), `#` included and
+    /// line break excluded, is appended to it. This is the third site in the scanner that eats a
+    /// `#`; it is how end-of-line comments after quoted scalars, directives, block scalar headers
+    /// and flow indicators are consumed.
+    ///
     /// # Return
     /// Return a tuple with the number of characters that were consumed and the result of skipping
     /// whitespace. The number of characters returned can be used to advance the index and column,
@@ -189,7 +194,11 @@ pub trait Input {
     /// Errors if a comment is encountered but it was not preceded by a whitespace. In that event,
     /// the first tuple element will contain the number of characters consumed prior to reaching
     /// the `#`.
-    fn skip_ws_to_eol(&mut self, skip_tabs: SkipTabs) -> (usize, Result<SkipTabs, &'static str>) {
+    fn skip_ws_to_eol(
+        &mut self,
+        skip_tabs: SkipTabs,
+        mut comment: Option<&mut String>,
+    ) -> (usize, Result<SkipTabs, &'static str>) {
         let mut encountered_tab = false;
         let mut has_yaml_ws = false;
         let mut chars_consumed = 0;
@@ -211,8 +220,14 @@ pub trait Input {
                     );
                 }
                 '#' => {
+                    if let Some(out) = comment.as_deref_mut() {
+                        out.push('#');
+                    }
                     self.skip(); // Skip over '#'
                     while !is_breakz(self.look_ch()) {
+                        if let Some(out) = comment.as_deref_mut() {
+                            out.push(self.peek());
+                        }
                         self.skip();
                         chars_consumed += 1;
                     }
@@ -369,6 +384,24 @@ pub trait Input {
     #[inline]
     fn next_is_alpha(&self) -> bool {
         is_alpha(self.peek())
+    }
+
+    /// Fetch characters from the input until a [breakz] is found, appending them to `out`.
+    ///
+    /// This is [`Input::skip_while_non_breakz`], but keeping what was skipped over.
+    ///
+    /// # Return
+    /// Return the number of characters that were consumed.
+    ///
+    /// [breakz]: is_breakz
+    fn fetch_while_non_breakz(&mut self, out: &mut String) -> usize {
+        let mut count = 0;
+        while !is_breakz(self.look_ch()) {
+            out.push(self.peek());
+            self.skip();
+            count += 1;
+        }
+        count
     }
 
     /// Skip characters from the input until a [breakz] is found.

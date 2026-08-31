@@ -1,0 +1,22 @@
+# covers: DESIGN 2.2 rule 2 - is an own-line comment the trailing comment of
+# the block that just ended, or the leading comment of the next sibling?
+# Column is the only hint and every alignment appears below.
+outer:
+  inner:
+    - a
+    - b
+    # aligned with the sequence items: after-trivia of the sequence
+  # aligned with `inner`: after-trivia of the `inner` mapping value
+# aligned with `outer`: before-trivia of the next top-level key
+next: 1
+deeper:
+  level2:
+    level3: v
+      # indented past level3
+    # aligned with level3
+  # aligned with level2
+sibling: 2
+list:
+  - x
+  # trailing comment of the sequence
+after: 3

@@ -1,0 +1,28 @@
+# covers: flow collections nested inside block collections at several depths,
+# and a document whose root node is itself a flow collection. The reverse
+# (a block collection inside a flow one) is not legal YAML, so it cannot
+# appear here.
+block_map:
+  flow_value: [1, 2]
+  block_seq:
+    - [a, b]
+    - {c: d}
+    - nested: {deep: [e, {f: g}]}
+  deeper:
+    - - [x]
+      - {y: [z]}
+block_seq_of_flow:
+  - {a: 1}
+  - [b, c]
+key_is_flow:
+  ? [a, b]
+  : flow sequence used as a key
+  ? {c: d}
+  : flow mapping used as a key
+---
+[
+  a root-level flow sequence,
+  {with: a nested flow mapping},
+]
+---
+{root: mapping, in: flow style}

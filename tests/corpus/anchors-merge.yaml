@@ -1,0 +1,29 @@
+# covers: merge keys - a single merge, a sequence of merges, merge combined
+# with local overrides in both orders, and a merge inside a nested mapping.
+# DESIGN 2.3 keeps these as Entry { merge: true } so a dump re-emits
+# `<<: *base` instead of the expanded mapping.
+base: &base
+  a: 1
+  b: 2
+extra: &extra
+  b: 20
+  c: 3
+merged_single:
+  <<: *base
+  b: overridden
+merged_multiple:
+  <<: [*base, *extra]
+  d: 4
+merge_last:
+  x: 0
+  <<: *base
+merged_nested:
+  inner:
+    <<: *extra
+    e: 5
+merge_only:
+  <<: *base
+merge_in_flow: {<<: *base, z: 9}
+merge_with_comment:
+  <<: *base   # a comment on the merge entry itself
+  y: 8

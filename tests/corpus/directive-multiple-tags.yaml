@@ -1,0 +1,14 @@
+# covers: several %TAG directives in one document. Upstream saphyr-parser
+# declares its tag table inside the directive loop, so only the last %TAG
+# line survives and the duplicate-handle check is dead code (DESIGN 1.4.1).
+# This file is the regression test for that fix, and for the DESIGN 5.3 wire
+# format, which writes one directive per registered source.
+%YAML 1.2
+%TAG ! tag:libx/
+%TAG !g! tag:libx.gates/
+%TAG !e! tag:example.com,2000:
+---
+a: !Circuit {qubits: 2}
+b: !g!Hadamard {target: 0}
+c: !e!custom plain
+d: !<tag:libx/Circuit> {qubits: 3}

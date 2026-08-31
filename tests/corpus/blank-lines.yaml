@@ -1,0 +1,31 @@
+# covers: blank-line runs of every length and in every slot - after the
+# leading comment, between entries, inside a sequence, inside a nested
+# mapping, and at end of file. DESIGN 2.1 makes these first class
+# (Trivia::BlankLines(n)) instead of newlines smuggled into comment text, so
+# "how many blank lines were there" has an answer.
+
+
+first: 1
+
+
+second: 2
+
+
+
+third: 3
+
+items:
+
+  - a
+
+
+  - b
+  # comment after a blank run
+
+  - c
+nested:
+  x: 1
+
+  y: 2
+
+

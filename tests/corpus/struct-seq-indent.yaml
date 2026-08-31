@@ -1,0 +1,36 @@
+# covers: block sequence indentation variants - items at the same column as
+# their key (offset 0, what ruamel emits by default), items indented under
+# the key, compact nested sequences, and compact block mappings as items.
+# These are the layouts an emitter with a single hardcoded indent destroys.
+zero_offset:
+- one
+- two
+indented:
+  - one
+  - two
+wide_indent:
+      - one
+      - two
+compact_seq:
+  - - a
+    - b
+  - - c
+compact_map:
+  - key: value
+    other: 2
+  - single: 1
+compact_map_in_seq_in_map:
+  outer:
+  - inner: 1
+    also: 2
+  - inner: 3
+mixed:
+- key:
+  - nested
+  - items
+- other: 1
+seq_of_null:
+  -
+  -
+top_level_seq_last:
+  - last

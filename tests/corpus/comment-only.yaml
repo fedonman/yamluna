@@ -1,0 +1,7 @@
+# covers: a file that is nothing but comments and blank lines. There is no
+# document node at all, only stream-level trivia, and the round trip must not
+# invent one.
+
+# a second comment paragraph after a blank line
+#
+# an empty comment line above this one

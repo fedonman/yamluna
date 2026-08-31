@@ -1,0 +1,9 @@
+# covers: a single %TAG directive rebinding the primary `!` handle, and the
+# verbatim form of the same tag alongside it.
+%TAG ! tag:example.com,2000:app/
+---
+config: !Config
+  name: demo
+  count: 2
+item: !<tag:example.com,2000:app/Item> {}
+plain: no tag at all

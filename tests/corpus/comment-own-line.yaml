@@ -1,0 +1,21 @@
+# covers: own-line comments between the entries of a mapping and between the
+# items of a sequence, at several columns.
+first: 1
+# an own-line comment between two mapping entries
+second: 2
+
+# an own-line comment after a blank line
+third: 3
+items:
+  # an own-line comment before the first item
+  - a
+  # between two items, aligned with the items
+  - b
+      # between two items, indented past the items
+  - c
+  # after the last item, still aligned with the items
+nested:
+  inner: 1
+  # between two entries of a nested mapping
+  other: 2
+last: 4

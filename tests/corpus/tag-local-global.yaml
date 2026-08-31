@@ -1,0 +1,32 @@
+# covers: tag forms - the secondary `!!` handle for the standard types, local
+# `!name` tags, the verbatim `!<uri>` form, and the non-specific `!` tag, on
+# scalar, sequence and mapping nodes.
+std_str: !!str 123
+std_int: !!int "42"
+std_float: !!float "1.5"
+std_bool: !!bool "true"
+std_null: !!null ""
+std_seq: !!seq [a, b]
+std_map: !!map {a: 1}
+std_omap: !!omap
+  - a: 1
+  - b: 2
+std_set: !!set
+  ? a
+  ? b
+local_scalar: !mytag value
+local_seq: !myseq
+  - 1
+  - 2
+local_map: !mymap
+  k: v
+local_flow: !myflow {k: v}
+verbatim: !<tag:example.com,2000:thing> value
+verbatim_local: !<!local> value
+non_specific: ! plain
+tag_on_seq_item:
+  - !item one
+  - !item two
+tag_on_key:
+  ? !key k
+  : !value v

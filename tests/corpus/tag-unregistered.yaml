@@ -1,0 +1,17 @@
+# covers: a document using tags no class is registered for. DESIGN 5.4.3 says
+# these round-trip untouched as a tagged CommentedMap/CommentedSeq/
+# TaggedScalar with the tag preserved exactly as written - loading must not
+# fail and dumping must not drop the tag or expand the %TAG handle.
+%TAG ! tag:libx/
+---
+main: !Circuit
+  qubits: 2
+  gates:
+    - !Hadamard {target: 0}
+    - !CNOT {control: 0, target: 1}
+label: !Name "an unregistered scalar tag"
+list: !Registry
+  - one
+  - two
+bare_local: !NotDeclaredAnywhere
+  field: 1

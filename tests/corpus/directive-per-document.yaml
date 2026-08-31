@@ -1,0 +1,14 @@
+# covers: directives are per-document and do not carry over. Each document
+# below declares its own, and the last one declares none, so its `!Thing` is
+# an unresolved local tag rather than `tag:second/Thing`.
+%TAG ! tag:first/
+---
+a: !Thing {}
+...
+%TAG ! tag:second/
+%YAML 1.2
+---
+b: !Thing {}
+...
+---
+c: !Thing {}

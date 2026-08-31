@@ -1,0 +1,8 @@
+# covers: the %YAML directive, which upstream parses and discards
+# (DESIGN 1.4.3). It must be surfaced so the document can re-emit it.
+%YAML 1.2
+---
+key: value
+seq:
+  - 1
+  - 2

@@ -1,0 +1,22 @@
+# covers: tabs in the positions that parsers actually accept - inside
+# quoted scalar content, inside a block scalar body, and as separation
+# inside flow collections.
+#
+# Measured, not assumed: the spec's s-white includes TAB, so `k:<TAB>v`,
+# `-<TAB>item`, `a<TAB>b` in a plain scalar and a tab before an
+# end-of-line comment are all legal per YAML 1.2 - and every libyaml
+# derived parser rejects them in block context, ruamel 0.19.1 included
+# ("found character '\t' that cannot start any token"). They are described
+# here rather than written, so the corpus stays loadable; yamluna matching
+# libyaml here is a compatibility decision, not an accident.
+in_double: "a tab escape \t and a literal tab 	 here"
+in_single: 'a	b'
+literal: |
+  a line with a 	 tab inside
+  	and a line whose content starts with a tab
+folded: >
+  folded text with a 	 tab
+flow_before_comma: [a	, b]
+flow_after_comma: [a,	b]
+flow_map: {a:	b, c:	d}
+last: end

@@ -1,0 +1,21 @@
+# covers: explicit indentation indicators, which are required when the first
+# content line starts with a space, and both orders of indicator + chomping.
+# The indicator counts from the parent node's indentation, not from column 0.
+explicit_2: |2
+    two of these four spaces are content
+    second line
+explicit_then_chomp: |2-
+    indicator first, chomping second
+chomp_then_explicit: |-2
+    chomping first, indicator second - also legal
+folded_explicit: >3
+     two spaces of content after the three of indent
+keep_and_indent: |+2
+
+    blank first line is content too
+nested:
+  inner: |3
+      one space of content: the indicator counts from `nested`
+tabs_are_content: |
+  	a leading tab is content, not indentation
+last: end

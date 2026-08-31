@@ -1,0 +1,20 @@
+# covers: end-of-line comments in every position they can legally appear.
+# An eol comment has a non-space character before the `#` on the same line,
+# so own_line is false and `col` records the alignment the emitter must keep.
+scalar: value            # after a plain scalar value
+quoted: "text"           # after a double quoted scalar
+single: 'text'           # after a single quoted scalar
+number: 42               # after a scalar that resolves to int
+mapping:                 # after a key whose value is a block mapping
+  nested: 1              # after a nested entry
+  deeper:                # after a key whose value is another block mapping
+    leaf: true           # after the innermost entry
+sequence:                # after a key whose value is a block sequence
+  - one                  # after a sequence item
+  - two                  # after another sequence item
+  - key: v               # after the first entry of a mapping inside an item
+flow: [a, b]             # after a flow collection
+empty:                   # after a key with an empty (null) value
+literal: |               # after a block scalar header
+  body
+last: end                # after the final entry

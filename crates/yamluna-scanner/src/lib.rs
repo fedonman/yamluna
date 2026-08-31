@@ -48,5 +48,7 @@ mod parser;
 mod scanner;
 
 pub use crate::input::{BufferedInput, Input, str::StrInput};
-pub use crate::parser::{Event, EventReceiver, Parser, SpannedEventReceiver, Tag};
+pub use crate::parser::{
+    AnchorRef, Event, EventReceiver, Parser, SpannedEventReceiver, StructureStyle, Tag,
+};
 pub use crate::scanner::{Marker, ScalarStyle, ScanError, Span};

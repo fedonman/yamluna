@@ -1,4 +1,4 @@
-use yamluna_scanner::{Event, Parser, ScalarStyle, ScanError};
+use yamluna_scanner::{AnchorRef, Event, Parser, ScalarStyle, ScanError, StructureStyle};
 
 // Regression guards for StrInput::next_can_be_plain_scalar simplification.
 // YAML 1.2 7.3.3: indicator characters can end a plain scalar in certain positions.
@@ -34,9 +34,9 @@ fn colon_without_space_is_part_of_scalar_value() {
         vec![
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::MappingStart(0, None),
-            Event::Scalar("k".into(), ScalarStyle::Plain, 0, None),
-            Event::Scalar("a:b".into(), ScalarStyle::Plain, 0, None),
+            Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
+            Event::Scalar("k".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar("a:b".into(), ScalarStyle::Plain, AnchorRef::default(), None),
             Event::MappingEnd,
             Event::DocumentEnd,
             Event::StreamEnd,

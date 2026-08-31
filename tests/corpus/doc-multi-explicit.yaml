@@ -1,0 +1,18 @@
+# covers: a multi-document stream where every document has both an explicit
+# `---` start and an explicit `...` end, including a document whose root is a
+# scalar and one whose root is a sequence.
+---
+doc: 1
+...
+---
+doc: 2
+nested:
+  a: b
+...
+---
+- 3
+- 4
+...
+---
+a plain scalar document
+...

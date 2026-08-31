@@ -1,0 +1,15 @@
+# covers: a multi-document stream where the first document is bare - no `---`
+# at all - and the rest are separated by `---` with no `...` end markers.
+# explicit_start is therefore false for the first document and true for the
+# others, and the emitter must not normalise them to one setting.
+first: 1
+---
+second: 2
+---
+- 3
+---
+a plain scalar document
+--- 4
+--- "a quoted scalar on the marker line"
+---
+last: 5

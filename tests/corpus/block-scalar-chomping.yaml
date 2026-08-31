@@ -1,0 +1,38 @@
+# covers: every chomping indicator on both literal and folded block scalars.
+# The blank lines below are load bearing: with `+` they are part of the
+# scalar, with `-` and the default they are not, and telling the two apart is
+# the whole difficulty.
+literal_clip: |
+  text
+
+literal_strip: |-
+  text
+
+literal_keep: |+
+  text
+
+
+folded_clip: >
+  text
+
+folded_strip: >-
+  text
+
+folded_keep: >+
+  text
+
+literal_multiline: |
+  one
+  two
+
+  four after a blank line
+folded_paragraphs: >
+  first paragraph
+  still first
+
+  second paragraph
+folded_more_indented: >
+  normal folded line
+    this line is more indented so it is not folded
+  back to normal
+last: end

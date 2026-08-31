@@ -62,34 +62,40 @@ pub enum ScalarStyle {
 /// A location in a yaml document.
 #[derive(Clone, Copy, PartialEq, Debug, Eq, Default)]
 pub struct Marker {
-    /// The index (in chars) in the input string.
+    /// The index (in **chars**, not bytes) in the input string.
     index: usize,
     /// The line (1-indexed).
     line: usize,
-    /// The column (1-indexed).
+    /// The column (**0-based**).
     col: usize,
 }
 
 impl Marker {
     /// Create a new [`Marker`] at the given position.
+    ///
+    /// `index` is a character offset, `line` is 1-indexed and `col` is 0-based.
     #[must_use]
     pub fn new(index: usize, line: usize, col: usize) -> Marker {
         Marker { index, line, col }
     }
 
-    /// Return the index (in bytes) of the marker in the source.
+    /// Return the index of the marker in the source, **in characters**.
+    ///
+    /// This is a `char` offset, not a byte offset: for a source containing multi-byte characters
+    /// it does not index into the underlying `str`. Build a char-to-byte table if you need to
+    /// slice the source.
     #[must_use]
     pub fn index(&self) -> usize {
         self.index
     }
 
-    /// Return the line of the marker in the source.
+    /// Return the line of the marker in the source. Lines are 1-indexed.
     #[must_use]
     pub fn line(&self) -> usize {
         self.line
     }
 
-    /// Return the column of the marker in the source.
+    /// Return the column of the marker in the source, **0-based** and in characters.
     #[must_use]
     pub fn col(&self) -> usize {
         self.col
@@ -141,7 +147,7 @@ impl Span {
 
 /// An error that occurred while scanning.
 #[derive(Clone, PartialEq, Debug, Eq, Error)]
-#[error("{} at byte {} line {} column {}", .info, .mark.index, .mark.line, .mark.col + 1,)]
+#[error("{} at char {} line {} column {}", .info, .mark.index, .mark.line, .mark.col + 1,)]
 pub struct ScanError {
     /// The position at which the error happened in the source.
     mark: Marker,
@@ -242,6 +248,11 @@ pub enum TokenType<'input> {
     ),
     /// A regular YAML scalar.
     Scalar(ScalarStyle, Cow<'input, str>),
+    /// A `#` comment, from the `#` through the last character before the line break.
+    ///
+    /// Only produced when the scanner is set to keep comments; see
+    /// [`Parser::keep_comments`](crate::Parser::keep_comments).
+    Comment(Cow<'input, str>),
     /// A reserved YAML directive.
     ReservedDirective(
         /// Name
@@ -474,6 +485,15 @@ pub struct Scanner<'input, T> {
     /// If a plain scalar was terminated by a `#` comment on its line, we set this
     /// to detect an illegal multiline continuation on the following line.
     interrupted_plain_by_comment: Option<Marker>,
+    /// Whether to emit [`TokenType::Comment`] tokens for the comments we skip over.
+    keep_comments: bool,
+    /// Comments scanned while fetching the current token.
+    ///
+    /// Comments are captured in the middle of scanning a token (an end-of-line comment is only
+    /// reached once the token before it has been read), so they are parked here and pushed into
+    /// [`Self::tokens`] at a point where their position relative to the other tokens is right.
+    /// See [`Self::flush_comments`].
+    pending_comments: Vec<Token<'input>>,
     buf_leading_break: String,
     buf_trailing_breaks: String,
     buf_whitespaces: String,
@@ -500,6 +520,8 @@ impl<T: Input + Clone> Clone for Scanner<'_, T> {
             flow_mapping_started: self.flow_mapping_started,
             implicit_flow_mapping_states: self.implicit_flow_mapping_states.clone(),
             interrupted_plain_by_comment: self.interrupted_plain_by_comment,
+            keep_comments: self.keep_comments,
+            pending_comments: self.pending_comments.clone(),
             buf_leading_break: self.buf_leading_break.clone(),
             buf_trailing_breaks: self.buf_trailing_breaks.clone(),
             buf_whitespaces: self.buf_whitespaces.clone(),
@@ -558,11 +580,50 @@ impl<'input, T: Input> Scanner<'input, T> {
             flow_mapping_started: false,
             implicit_flow_mapping_states: vec![],
             interrupted_plain_by_comment: None,
+            keep_comments: false,
+            pending_comments: Vec::new(),
 
             buf_leading_break: String::new(),
             buf_trailing_breaks: String::new(),
             buf_whitespaces: String::new(),
         }
+    }
+
+    /// Emit a [`TokenType::Comment`] token for every `#` comment in the input.
+    ///
+    /// With this off (the default), comments are skipped over exactly as upstream does and the
+    /// token stream is unchanged.
+    pub fn set_keep_comments(&mut self, value: bool) {
+        self.keep_comments = value;
+    }
+
+    /// Consume a `#` comment, up to but excluding the line break that ends it.
+    ///
+    /// The cursor must be on the `#`. If [`Self::keep_comments`] is set, the comment is parked in
+    /// [`Self::pending_comments`]; otherwise it is simply skipped.
+    fn scan_comment(&mut self) {
+        let start_mark = self.mark;
+        let mut text = String::new();
+        let comment_length = if self.keep_comments {
+            self.input.fetch_while_non_breakz(&mut text)
+        } else {
+            self.input.skip_while_non_breakz()
+        };
+        self.mark.index += comment_length;
+        self.mark.col += comment_length;
+
+        if self.keep_comments {
+            self.pending_comments.push(Token(
+                Span::new(start_mark, self.mark),
+                TokenType::Comment(text.into()),
+            ));
+        }
+    }
+
+    /// Move the comments parked by [`Self::scan_comment`] and [`Self::skip_ws_to_eol`] into the
+    /// token stream.
+    fn flush_comments(&mut self) {
+        self.tokens.extend(self.pending_comments.drain(..));
     }
 
     /// Get a copy of the last error that was encountered, if any.
@@ -692,6 +753,16 @@ impl<'input, T: Input> Scanner<'input, T> {
     /// # Errors
     /// Returns `ScanError` when the scanner does not find the next expected token.
     pub fn fetch_next_token(&mut self) -> ScanResult {
+        let result = self.fetch_next_token_impl();
+        // A comment captured while scanning a token comes after it in the source (an end-of-line
+        // comment is only reached once the token before it has been read), so it is only pushed
+        // now that the token itself is in the stream.
+        self.flush_comments();
+        result
+    }
+
+    /// Implementation of [`Self::fetch_next_token`], without the comment flushing.
+    fn fetch_next_token_impl(&mut self) -> ScanResult {
         self.input.lookahead(1);
 
         if !self.stream_start_produced {
@@ -699,6 +770,8 @@ impl<'input, T: Input> Scanner<'input, T> {
             return Ok(());
         }
         self.skip_to_next_token()?;
+        // Comments skipped over before the token we are about to fetch precede it in the source.
+        self.flush_comments();
 
         debug_print!(
             "  \x1B[38;5;244m\u{2192} fetch_next_token after whitespace {:?} {:?}\x1B[m",
@@ -896,11 +969,7 @@ impl<'input, T: Input> Scanner<'input, T> {
                         self.allow_simple_key();
                     }
                 }
-                '#' => {
-                    let comment_length = self.input.skip_while_non_breakz();
-                    self.mark.index += comment_length;
-                    self.mark.col += comment_length;
-                }
+                '#' => self.scan_comment(),
                 _ => break,
             }
         }
@@ -951,11 +1020,7 @@ impl<'input, T: Input> Scanner<'input, T> {
                     }
                     need_whitespace = false;
                 }
-                '#' => {
-                    let comment_length = self.input.skip_while_non_breakz();
-                    self.mark.index += comment_length;
-                    self.mark.col += comment_length;
-                }
+                '#' => self.scan_comment(),
                 _ => break,
             }
         }
@@ -967,10 +1032,36 @@ impl<'input, T: Input> Scanner<'input, T> {
         }
     }
 
+    /// Skip whitespace and an optional trailing comment, up to but excluding the line break.
+    ///
+    /// This is the third site that consumes a `#` (the other two are [`Self::skip_to_next_token`]
+    /// and [`Self::skip_yaml_whitespace`]); it is the one that eats end-of-line comments after
+    /// quoted scalars, directives, block scalar headers and flow indicators.
     fn skip_ws_to_eol(&mut self, skip_tabs: SkipTabs) -> Result<SkipTabs, ScanError> {
-        let (n_bytes, result) = self.input.skip_ws_to_eol(skip_tabs);
-        self.mark.col += n_bytes;
-        self.mark.index += n_bytes;
+        let start_mark = self.mark;
+        let mut comment = if self.keep_comments {
+            Some(String::new())
+        } else {
+            None
+        };
+        let (n_chars, result) = self.input.skip_ws_to_eol(skip_tabs, comment.as_mut());
+        self.mark.col += n_chars;
+        self.mark.index += n_chars;
+
+        // The comment, if any, runs to where we now are, so its start is that many chars back.
+        if let Some(text) = comment.filter(|text| !text.is_empty()) {
+            let len = text.chars().count();
+            let hash = Marker::new(
+                start_mark.index + n_chars - len,
+                start_mark.line,
+                start_mark.col + n_chars - len,
+            );
+            self.pending_comments.push(Token(
+                Span::new(hash, self.mark),
+                TokenType::Comment(text.into()),
+            ));
+        }
+
         result.map_err(|msg| ScanError::new_str(self.mark, msg))
     }
 

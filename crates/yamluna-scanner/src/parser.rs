@@ -12,7 +12,7 @@ use crate::{
 
 use alloc::{
     borrow::Cow,
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     string::{String, ToString},
     vec::Vec,
 };
@@ -68,34 +68,71 @@ pub enum Event<'input> {
     DocumentEnd,
     /// A YAML Alias.
     Alias(
-        /// The anchor ID the alias refers to.
-        usize,
+        /// The anchor the alias refers to.
+        AnchorRef<'input>,
     ),
-    /// Value, style, `anchor_id`, tag
+    /// Value, style, anchor, tag
     Scalar(
         Cow<'input, str>,
         ScalarStyle,
-        usize,
+        AnchorRef<'input>,
         Option<Cow<'input, Tag>>,
     ),
     /// The start of a YAML sequence (array).
     SequenceStart(
-        /// The anchor ID of the start of the sequence.
-        usize,
+        /// The anchor of the start of the sequence.
+        AnchorRef<'input>,
         /// An optional tag
         Option<Cow<'input, Tag>>,
+        /// Whether the sequence is written in block or flow style.
+        StructureStyle,
     ),
     /// The end of a YAML sequence (array).
     SequenceEnd,
     /// The start of a YAML mapping (object, hash).
     MappingStart(
-        /// The anchor ID of the start of the mapping.
-        usize,
+        /// The anchor of the start of the mapping.
+        AnchorRef<'input>,
         /// An optional tag
         Option<Cow<'input, Tag>>,
+        /// Whether the mapping is written in block or flow style.
+        StructureStyle,
     ),
     /// The end of a YAML mapping (object, hash).
     MappingEnd,
+    /// A `#` comment, from the `#` through the last character before the line break.
+    ///
+    /// Only produced when [`Parser::keep_comments`] is set. Comments take no part in the document
+    /// structure: they are interleaved in the event stream at the position they appear in the
+    /// source and are otherwise inert.
+    Comment(Cow<'input, str>),
+}
+
+/// An anchor as written in the source, plus the parser's interned id.
+///
+/// The id is what the parser uses to link an [`Event::Alias`] to the node it refers to; `0` means
+/// "no anchor". The name is what a round-trip needs to write `&name` / `*name` back out, and is
+/// `Some` whenever `id != 0`.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct AnchorRef<'input> {
+    /// The interned anchor id. `0` means the node has no anchor.
+    pub id: usize,
+    /// The anchor name, without the leading `&` or `*`.
+    pub name: Option<Cow<'input, str>>,
+}
+
+/// The style as which a collection was written in the YAML document.
+///
+/// The scanner distinguishes `BlockSequenceStart`/`FlowSequenceStart` (and the mapping
+/// equivalents); this carries the distinction into the event stream so a round-trip does not have
+/// to guess it back from spans. Guessing does not work: an implicit flow mapping (`[a: 1]`) is
+/// introduced by a synthetic, empty-span `FlowMappingStart` token.
+#[derive(Clone, Copy, PartialEq, Debug, Eq, Hash, PartialOrd, Ord)]
+pub enum StructureStyle {
+    /// An indentation-delimited collection (`- a` / `a: b`).
+    Block,
+    /// A bracket-delimited collection (`[a]` / `{a: b}`).
+    Flow,
 }
 
 /// A YAML tag.
@@ -123,11 +160,22 @@ impl Tag {
 }
 
 impl Display for Tag {
+    /// Write the tag as valid YAML.
+    ///
+    /// A [`Tag`] holds the *resolved* prefix in [`Self::handle`], so the only shorthand we can
+    /// always write back is the local one (`!suffix`). Anything else is written in the verbatim
+    /// form `!<uri>`, which needs no `%TAG` directive to be in scope.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if self.handle == "!" {
-            write!(f, "!{}", self.suffix)
-        } else {
-            write!(f, "{}!{}", self.handle, self.suffix)
+        match self.handle.as_str() {
+            // A local tag: `!foo`.
+            "!" => write!(f, "!{}", self.suffix),
+            // The non-specific tag `!`, with no `%TAG !` directive in scope.
+            "" if self.suffix == "!" => write!(f, "!"),
+            // A verbatim tag (`!<uri>`); the whole URI is in the suffix.
+            "" => write!(f, "!<{}>", self.suffix),
+            // A resolved tag. `handle` is the prefix, not a shorthand, so the only form that
+            // re-parses to the same tag without a directive is the verbatim one.
+            handle => write!(f, "!<{handle}{}>", self.suffix),
         }
     }
 }
@@ -136,11 +184,11 @@ impl<'input> Event<'input> {
     /// Create an empty scalar.
     fn empty_scalar() -> Self {
         // a null scalar
-        Event::Scalar("~".into(), ScalarStyle::Plain, 0, None)
+        Event::Scalar("~".into(), ScalarStyle::Plain, AnchorRef::default(), None)
     }
 
     /// Create an empty scalar with the given anchor.
-    fn empty_scalar_with_anchor(anchor: usize, tag: Option<Cow<'input, Tag>>) -> Self {
+    fn empty_scalar_with_anchor(anchor: AnchorRef<'input>, tag: Option<Cow<'input, Tag>>) -> Self {
         Event::Scalar(Cow::default(), ScalarStyle::Plain, anchor, tag)
     }
 }
@@ -161,6 +209,12 @@ pub struct Parser<'input, T: Input> {
     token: Option<Token<'input>>,
     /// The next YAML event to emit.
     current: Option<(Event<'input>, Span)>,
+    /// Events that were produced out of order and are queued to be emitted.
+    ///
+    /// The scanner hands us comment tokens while we are looking ahead for the token that ends the
+    /// *previous* event, so a comment can be known before the event it precedes is. Comments land
+    /// here, and the event they precede is queued behind them.
+    pending: VecDeque<(Event<'input>, Span)>,
     /// Anchors that have been encountered in the YAML document.
     anchors: BTreeMap<Cow<'input, str>, usize>,
     /// Next ID available for an anchor.
@@ -172,6 +226,8 @@ pub struct Parser<'input, T: Input> {
     ///
     /// Key is the handle, and value is the prefix.
     tags: BTreeMap<String, String>,
+    /// The `%YAML` version directive of the document being parsed, if any.
+    version: Option<(u32, u32)>,
     /// Whether we have emitted [`Event::StreamEnd`].
     ///
     /// Emitted means that it has been returned from [`Self::next`]. If it is stored in
@@ -189,9 +245,11 @@ impl<T: Input + Clone> Clone for Parser<'_, T> {
             state: self.state,
             token: self.token.clone(),
             current: self.current.clone(),
+            pending: self.pending.clone(),
             anchors: self.anchors.clone(),
             anchor_id_count: self.anchor_id_count,
             tags: self.tags.clone(),
+            version: self.version,
             stream_end_emitted: self.stream_end_emitted,
             keep_tags: self.keep_tags,
         }
@@ -319,11 +377,13 @@ impl<'input, T: Input> Parser<'input, T> {
             state: State::StreamStart,
             token: None,
             current: None,
+            pending: VecDeque::new(),
 
             anchors: BTreeMap::new(),
             // valid anchor_id starts from 1
             anchor_id_count: 1,
             tags: BTreeMap::new(),
+            version: None,
             stream_end_emitted: false,
             keep_tags: false,
         }
@@ -355,6 +415,31 @@ impl<'input, T: Input> Parser<'input, T> {
     pub fn keep_tags(mut self, value: bool) -> Self {
         self.keep_tags = value;
         self
+    }
+
+    /// Emit an [`Event::Comment`] for every `#` comment in the source. Off by default.
+    ///
+    /// The comment text starts at the `#` and ends at the last character before the line break;
+    /// trailing whitespace before the break is kept verbatim, and the event's [`Span`] covers
+    /// exactly that text.
+    ///
+    /// Comments are interleaved in the event stream in source order and take no part in the
+    /// document structure, so a receiver that ignores [`Event::Comment`] sees exactly the stream
+    /// it would have seen with this off.
+    #[must_use]
+    pub fn keep_comments(mut self, value: bool) -> Self {
+        self.scanner.set_keep_comments(value);
+        self
+    }
+
+    /// The `%YAML` version directive of the document currently being parsed.
+    ///
+    /// The value is set while the directives of a document are consumed, i.e. *before* that
+    /// document's [`Event::DocumentStart`] is emitted, and stays valid until the directives of the
+    /// next document are read. A document without a `%YAML` directive reports `None`.
+    #[must_use]
+    pub fn version(&self) -> Option<(u32, u32)> {
+        self.version
     }
 
     /// Try to load the next event and return it, but do not consuming it from `self`.
@@ -404,21 +489,55 @@ impl<'input, T: Input> Parser<'input, T> {
     where
         'input: 'a,
     {
-        match self.current.take() {
-            None => self.parse(),
-            Some(v) => Ok(v),
+        if let Some(v) = self.current.take() {
+            return Ok(v);
+        }
+        if let Some(v) = self.pending.pop_front() {
+            return Ok(v);
+        }
+        let ev: (Event<'input>, Span) = self.parse()?;
+        if self.pending.is_empty() {
+            Ok(ev)
+        } else {
+            // `parse` pulled comments off the scanner while looking for the token that produced
+            // `ev`. They come before it in the source, so `ev` goes to the back of the queue.
+            self.pending.push_back(ev);
+            Ok(self.pending.pop_front().unwrap())
+        }
+    }
+
+    /// Get the next event, forwarding any [`Event::Comment`] to `recv`.
+    ///
+    /// Comments never enter the parser state machine; the `load_*` functions use this so they only
+    /// ever see structural events.
+    fn next_event_no_comments<R: SpannedEventReceiver<'input>>(
+        &mut self,
+        recv: &mut R,
+    ) -> Result<(Event<'input>, Span), ScanError> {
+        loop {
+            let (ev, span) = self.next_event_impl()?;
+            if matches!(ev, Event::Comment(_)) {
+                recv.on_event(ev, span);
+            } else {
+                return Ok((ev, span));
+            }
         }
     }
 
     /// Peek at the next token from the scanner.
+    ///
+    /// Comment tokens are queued as [`Event::Comment`]s and skipped over, so the state machine
+    /// never sees one.
     fn peek_token(&mut self) -> Result<&Token<'_>, ScanError> {
-        match self.token {
-            None => {
-                self.token = Some(self.scan_next_token()?);
-                Ok(self.token.as_ref().unwrap())
+        while self.token.is_none() {
+            match self.scan_next_token()? {
+                Token(span, TokenType::Comment(text)) => {
+                    self.pending.push_back((Event::Comment(text), span));
+                }
+                tok => self.token = Some(tok),
             }
-            Some(ref tok) => Ok(tok),
         }
+        Ok(self.token.as_ref().unwrap())
     }
 
     /// Extract and return the next token from the scanner.
@@ -486,7 +605,7 @@ impl<'input, T: Input> Parser<'input, T> {
         multi: bool,
     ) -> Result<(), ScanError> {
         if !self.scanner.stream_started() {
-            let (ev, span) = self.next_event_impl()?;
+            let (ev, span) = self.next_event_no_comments(recv)?;
             if ev != Event::StreamStart {
                 return Err(ScanError::new_str(
                     span.start,
@@ -502,7 +621,7 @@ impl<'input, T: Input> Parser<'input, T> {
             return Ok(());
         }
         loop {
-            let (ev, span) = self.next_event_impl()?;
+            let (ev, span) = self.next_event_no_comments(recv)?;
             if ev == Event::StreamEnd {
                 recv.on_event(ev, span);
                 return Ok(());
@@ -531,11 +650,11 @@ impl<'input, T: Input> Parser<'input, T> {
         }
         recv.on_event(first_ev, span);
 
-        let (ev, span) = self.next_event_impl()?;
+        let (ev, span) = self.next_event_no_comments(recv)?;
         self.load_node(ev, span, recv)?;
 
         // DOCUMENT-END is expected.
-        let (ev, mark) = self.next_event_impl()?;
+        let (ev, mark) = self.next_event_no_comments(recv)?;
         assert_eq!(ev, Event::DocumentEnd);
         recv.on_event(ev, mark);
 
@@ -573,17 +692,17 @@ impl<'input, T: Input> Parser<'input, T> {
         &mut self,
         recv: &mut R,
     ) -> Result<(), ScanError> {
-        let (mut key_ev, mut key_mark) = self.next_event_impl()?;
+        let (mut key_ev, mut key_mark) = self.next_event_no_comments(recv)?;
         while key_ev != Event::MappingEnd {
             // key
             self.load_node(key_ev, key_mark, recv)?;
 
             // value
-            let (ev, mark) = self.next_event_impl()?;
+            let (ev, mark) = self.next_event_no_comments(recv)?;
             self.load_node(ev, mark, recv)?;
 
             // next event
-            let (ev, mark) = self.next_event_impl()?;
+            let (ev, mark) = self.next_event_no_comments(recv)?;
             key_ev = ev;
             key_mark = mark;
         }
@@ -595,12 +714,12 @@ impl<'input, T: Input> Parser<'input, T> {
         &mut self,
         recv: &mut R,
     ) -> Result<(), ScanError> {
-        let (mut ev, mut mark) = self.next_event_impl()?;
+        let (mut ev, mut mark) = self.next_event_no_comments(recv)?;
         while ev != Event::SequenceEnd {
             self.load_node(ev, mark, recv)?;
 
             // next event
-            let (next_ev, next_mark) = self.next_event_impl()?;
+            let (next_ev, next_mark) = self.next_event_no_comments(recv)?;
             ev = next_ev;
             mark = next_mark;
         }
@@ -709,10 +828,13 @@ impl<'input, T: Input> Parser<'input, T> {
 
     fn parser_process_directives(&mut self) -> Result<(), ScanError> {
         let mut version_directive_received = false;
+        // yamluna: this used to be declared *inside* the loop, so only the last `%TAG` line of a
+        // document survived and the duplicate-handle check below could never fire.
+        let mut tags = BTreeMap::new();
+        self.version = None;
         loop {
-            let mut tags = BTreeMap::new();
             match self.peek_token()? {
-                Token(span, TokenType::VersionDirective(_, _)) => {
+                Token(span, TokenType::VersionDirective(major, minor)) => {
                     // XXX parsing with warning according to spec
                     //if major != 1 || minor > 2 {
                     //    return Err(ScanError::new_str(tok.0,
@@ -725,6 +847,7 @@ impl<'input, T: Input> Parser<'input, T> {
                         ));
                     }
                     version_directive_received = true;
+                    self.version = Some((*major, *minor));
                 }
                 Token(mark, TokenType::TagDirective(handle, prefix)) => {
                     if tags.contains_key(&**handle) {
@@ -740,9 +863,11 @@ impl<'input, T: Input> Parser<'input, T> {
                 }
                 _ => break,
             }
-            self.tags = tags;
             self.skip();
         }
+        // `self.tags` is cleared at the end of each document unless `keep_tags` is set, in which
+        // case merging is what the extension is for.
+        self.tags.append(&mut tags);
         Ok(())
     }
 
@@ -825,7 +950,7 @@ impl<'input, T: Input> Parser<'input, T> {
         Ok((Event::DocumentEnd, span))
     }
 
-    fn register_anchor(&mut self, name: Cow<'input, str>, _: &Span) -> usize {
+    fn register_anchor(&mut self, name: Cow<'input, str>, _: &Span) -> AnchorRef<'input> {
         // anchors can be overridden/reused
         // if self.anchors.contains_key(name) {
         //     return Err(ScanError::new_str(*mark,
@@ -833,15 +958,18 @@ impl<'input, T: Input> Parser<'input, T> {
         // }
         let new_id = self.anchor_id_count;
         self.anchor_id_count += 1;
-        self.anchors.insert(name, new_id);
-        new_id
+        self.anchors.insert(name.clone(), new_id);
+        AnchorRef {
+            id: new_id,
+            name: Some(name),
+        }
     }
 
     fn parse_node<'a>(&mut self, block: bool, indentless_sequence: bool) -> ParseResult<'a>
     where
         'input: 'a,
     {
-        let mut anchor_id = 0;
+        let mut anchor = AnchorRef::default();
         let mut tag = None;
         match *self.peek_token()? {
             Token(_, TokenType::Alias(_)) => {
@@ -854,14 +982,22 @@ impl<'input, T: Input> Parser<'input, T> {
                                 "while parsing node, found unknown anchor",
                             ));
                         }
-                        Some(id) => return Ok((Event::Alias(*id), span)),
+                        Some(&id) => {
+                            return Ok((
+                                Event::Alias(AnchorRef {
+                                    id,
+                                    name: Some(name),
+                                }),
+                                span,
+                            ));
+                        }
                     }
                 }
                 unreachable!()
             }
             Token(_, TokenType::Anchor(_)) => {
                 if let Token(span, TokenType::Anchor(name)) = self.fetch_token() {
-                    anchor_id = self.register_anchor(name, &span);
+                    anchor = self.register_anchor(name, &span);
                     if let TokenType::Tag(..) = self.peek_token()?.1 {
                         if let TokenType::Tag(handle, suffix) = self.fetch_token().1 {
                             tag = Some(self.resolve_tag(span, &handle, suffix)?);
@@ -878,7 +1014,7 @@ impl<'input, T: Input> Parser<'input, T> {
                     tag = Some(self.resolve_tag(mark, &handle, suffix)?);
                     if let TokenType::Anchor(_) = &self.peek_token()?.1 {
                         if let Token(mark, TokenType::Anchor(name)) = self.fetch_token() {
-                            anchor_id = self.register_anchor(name, &mark);
+                            anchor = self.register_anchor(name, &mark);
                         } else {
                             unreachable!()
                         }
@@ -892,36 +1028,51 @@ impl<'input, T: Input> Parser<'input, T> {
         match *self.peek_token()? {
             Token(mark, TokenType::BlockEntry) if indentless_sequence => {
                 self.state = State::IndentlessSequenceEntry;
-                Ok((Event::SequenceStart(anchor_id, tag), mark))
+                Ok((
+                    Event::SequenceStart(anchor, tag, StructureStyle::Block),
+                    mark,
+                ))
             }
             Token(_, TokenType::Scalar(..)) => {
                 self.pop_state();
                 if let Token(mark, TokenType::Scalar(style, v)) = self.fetch_token() {
-                    Ok((Event::Scalar(v, style, anchor_id, tag), mark))
+                    Ok((Event::Scalar(v, style, anchor, tag), mark))
                 } else {
                     unreachable!()
                 }
             }
             Token(mark, TokenType::FlowSequenceStart) => {
                 self.state = State::FlowSequenceFirstEntry;
-                Ok((Event::SequenceStart(anchor_id, tag), mark))
+                Ok((
+                    Event::SequenceStart(anchor, tag, StructureStyle::Flow),
+                    mark,
+                ))
             }
             Token(mark, TokenType::FlowMappingStart) => {
                 self.state = State::FlowMappingFirstKey;
-                Ok((Event::MappingStart(anchor_id, tag), mark))
+                Ok((
+                    Event::MappingStart(anchor, tag, StructureStyle::Flow),
+                    mark,
+                ))
             }
             Token(mark, TokenType::BlockSequenceStart) if block => {
                 self.state = State::BlockSequenceFirstEntry;
-                Ok((Event::SequenceStart(anchor_id, tag), mark))
+                Ok((
+                    Event::SequenceStart(anchor, tag, StructureStyle::Block),
+                    mark,
+                ))
             }
             Token(mark, TokenType::BlockMappingStart) if block => {
                 self.state = State::BlockMappingFirstKey;
-                Ok((Event::MappingStart(anchor_id, tag), mark))
+                Ok((
+                    Event::MappingStart(anchor, tag, StructureStyle::Block),
+                    mark,
+                ))
             }
             // ex 7.2, an empty scalar can follow a secondary tag
-            Token(mark, _) if tag.is_some() || anchor_id > 0 => {
+            Token(mark, _) if tag.is_some() || anchor.id > 0 => {
                 self.pop_state();
-                Ok((Event::empty_scalar_with_anchor(anchor_id, tag), mark))
+                Ok((Event::empty_scalar_with_anchor(anchor, tag), mark))
             }
             Token(span, _) => Err(ScanError::new_str(
                 span.start,
@@ -1122,7 +1273,10 @@ impl<'input, T: Input> Parser<'input, T> {
             Token(mark, TokenType::Key) => {
                 self.state = State::FlowSequenceEntryMappingKey;
                 self.skip();
-                Ok((Event::MappingStart(0, None), mark))
+                Ok((
+                    Event::MappingStart(AnchorRef::default(), None, StructureStyle::Flow),
+                    mark,
+                ))
             }
             _ => {
                 self.push_state(State::FlowSequenceEntry);
@@ -1304,7 +1458,30 @@ impl<'input, T: Input> Iterator for Parser<'input, T> {
 
 #[cfg(test)]
 mod test {
-    use super::{Event, Parser};
+    use super::{Event, Parser, Tag};
+    use alloc::{
+        format,
+        string::{String, ToString},
+        vec::Vec,
+    };
+
+    /// Collect the tags of every `MappingStart`/`SequenceStart`/`Scalar` in `text`.
+    fn tags_of(text: &str) -> Result<Vec<String>, super::ScanError> {
+        let mut out = Vec::new();
+        for x in Parser::new_from_str(text) {
+            let (ev, _) = x?;
+            let tag = match ev {
+                Event::Scalar(_, _, _, tag)
+                | Event::SequenceStart(_, tag, _)
+                | Event::MappingStart(_, tag, _) => tag,
+                _ => continue,
+            };
+            if let Some(tag) = tag {
+                out.push(tag.to_string());
+            }
+        }
+        Ok(out)
+    }
 
     #[test]
     fn test_peek_eq_parse() {
@@ -1343,7 +1520,7 @@ baz: "qux"
 "#;
         for x in Parser::new_from_str(text).keep_tags(true) {
             let x = x.unwrap();
-            if let Event::MappingStart(_, tag) = x.0 {
+            if let Event::MappingStart(_, tag, _) = x.0 {
                 let tag = tag.unwrap();
                 assert_eq!(tag.handle, "tag:test,2024:");
             }
@@ -1356,5 +1533,94 @@ baz: "qux"
             }
         }
         panic!("Test failed, did not encounter error")
+    }
+
+    /// §1.4.1: every `%TAG` line of a document must stay in scope.
+    ///
+    /// Upstream declares the `tags` map inside the directive loop, so only the last `%TAG` line
+    /// survived and `!a!x` below failed with "the handle wasn't declared".
+    #[test]
+    fn test_multiple_tag_directives_accumulate() {
+        let text = "%TAG !a! tag:a,2024:\n%TAG !b! tag:b,2024:\n--- [ !a!x 1, !b!y 2 ]\n";
+        assert_eq!(
+            tags_of(text).unwrap(),
+            ["!<tag:a,2024:x>", "!<tag:b,2024:y>"]
+        );
+    }
+
+    /// §1.4.1: a `%YAML` line must not wipe the `%TAG` lines that precede it.
+    #[test]
+    fn test_tag_directive_survives_later_version_directive() {
+        let text = "%TAG !a! tag:a,2024:\n%YAML 1.2\n--- !a!x 1\n";
+        assert_eq!(tags_of(text).unwrap(), ["!<tag:a,2024:x>"]);
+    }
+
+    /// §1.4.1: with the map hoisted, the duplicate-handle check is no longer dead code.
+    #[test]
+    fn test_duplicate_tag_handle_is_rejected() {
+        let text = "%TAG !a! tag:a,2024:\n%TAG !a! tag:b,2024:\n--- !a!x 1\n";
+        let err = tags_of(text).expect_err("duplicate %TAG handle must be an error");
+        assert!(err.info().contains("at most once per handle"), "{err}");
+    }
+
+    /// §1.4.2: `Display for Tag` must emit YAML that re-parses to the same tag.
+    ///
+    /// Upstream wrote `{handle}!{suffix}`, i.e. `tag:example.com,2000:!foo`, which is not a tag at
+    /// all (it parses as a plain scalar).
+    #[test]
+    fn test_tag_display_round_trips() {
+        let global = Tag {
+            handle: "tag:example.com,2000:".to_string(),
+            suffix: "foo".to_string(),
+        };
+        assert_eq!(global.to_string(), "!<tag:example.com,2000:foo>");
+
+        let local = Tag {
+            handle: "!".to_string(),
+            suffix: "foo".to_string(),
+        };
+        assert_eq!(local.to_string(), "!foo");
+
+        let non_specific = Tag {
+            handle: String::new(),
+            suffix: "!".to_string(),
+        };
+        assert_eq!(non_specific.to_string(), "!");
+
+        let verbatim = Tag {
+            handle: String::new(),
+            suffix: "tag:example.com,2000:foo".to_string(),
+        };
+        assert_eq!(verbatim.to_string(), "!<tag:example.com,2000:foo>");
+
+        // Feeding the rendered forms back to the parser yields the same tags.
+        let text = format!("- {global} x\n- {local} x\n- {verbatim} x\n");
+        assert_eq!(
+            tags_of(&text).unwrap(),
+            [
+                "!<tag:example.com,2000:foo>",
+                "!foo",
+                "!<tag:example.com,2000:foo>"
+            ]
+        );
+    }
+
+    /// §1.4.3: the `%YAML` version is surfaced instead of being discarded.
+    #[test]
+    fn test_version_directive_is_surfaced() {
+        let mut parser = Parser::new_from_str("%YAML 1.1\n--- a\n...\n--- b\n");
+        assert_eq!(parser.version(), None, "nothing parsed yet");
+
+        let mut versions = Vec::new();
+        while let Some(ev) = parser.next_event() {
+            let (ev, _) = ev.unwrap();
+            match ev {
+                Event::DocumentStart(_) => versions.push(parser.version()),
+                Event::StreamEnd => break,
+                _ => {}
+            }
+        }
+        // The directive applies to the first document only.
+        assert_eq!(versions, [Some((1, 1)), None]);
     }
 }

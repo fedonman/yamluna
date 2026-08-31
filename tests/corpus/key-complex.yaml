@@ -1,0 +1,30 @@
+# covers: explicit `? :` keys - a sequence key, a mapping key, a block-scalar
+# key, a multi-line plain key, an explicit key with an empty value, and
+# explicit entries mixed with simple ones in the same mapping. DESIGN 4.1
+# keeps these hashable via CommentedKeySeq/CommentedKeyMap.
+? [a, b]
+: sequence key
+? {x: 1, y: 2}
+: mapping key
+? |
+  a literal
+  block scalar key
+: block scalar key
+? >-
+  a folded key
+: folded key
+? this is a
+  multi-line plain key
+: multi-line key
+? "a quoted explicit key"
+: quoted key
+? an explicit key with no value
+?
+: an empty key with a value
+simple: mixed in with the explicit ones
+? # a comment between the key indicator and the key
+  commented explicit key
+: value
+nested:
+  ? [inner, key]
+  : inner value

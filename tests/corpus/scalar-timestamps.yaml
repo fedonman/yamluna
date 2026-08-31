@@ -1,0 +1,14 @@
+# covers: timestamp scalars in the YAML 1.1 forms ruamel resolves to
+# datetime/date objects, where a round trip has to reproduce the source
+# spelling rather than the canonical form of the parsed value.
+canonical: 2001-12-15T02:59:43.1Z
+iso8601_offset: 2001-12-14t21:59:43.10-05:00
+space_separated: 2001-12-14 21:59:43.10 -5
+positive_offset: 2001-12-15T02:59:43.1+01:00
+no_fraction: 2001-12-15T02:59:43Z
+date_only: 2002-12-14
+date_single_digits: 2002-1-4
+quoted_is_a_string: "2002-12-14"
+in_a_sequence:
+  - 2002-12-14
+  - 2001-12-15T02:59:43.1Z

@@ -1,0 +1,18 @@
+# covers: duplicate keys - at the top level, in a nested mapping, in a flow
+# mapping, and pairs that differ only in quoting style but resolve to the
+# same key. DESIGN 2.3 records every duplicate instead of silently taking the
+# last one; the Python layer then raises DuplicateKeyError or warns per
+# allow_duplicate_keys. ruamel raises on this file by default.
+a: 1
+b: 2
+a: 3
+nested:
+  x: 1
+  y: 2
+  x: 4
+flow: {k: 1, k: 2}
+"quoted": 1
+quoted: 2
+seq_items_are_not_keys:
+  - dup: 1
+  - dup: 2

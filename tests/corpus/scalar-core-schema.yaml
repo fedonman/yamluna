@@ -1,0 +1,44 @@
+# covers: every core-schema scalar form plus the YAML 1.1 spellings ruamel
+# still resolves - integer bases, underscore separators, floats with
+# exponents, infinities, NaN, and the null and boolean spellings.
+# Resolution differs between 1.1 and 1.2 for several of these (underscores,
+# `0755`, `yes`/`on`); round-tripping the source text must not depend on it.
+int_zero: 0
+int_decimal: 12345
+int_negative: -42
+int_positive: +7
+int_underscore: 1_000_000
+int_hex: 0x1F_FF
+int_hex_upper: 0XABCDEF
+int_octal: 0o755
+int_octal_legacy: 0755
+int_binary: 0b1010_0101
+int_sexagesimal: 190:20:30
+float_simple: 3.14159
+float_exponent: 6.02e23
+float_negative_exp: -1.6E-19
+float_leading_dot: .5
+float_trailing_dot: 5.
+float_underscore: 1_000.000_1
+float_zero: 0.0
+float_negative_zero: -0.0
+inf_positive: .inf
+inf_plus: +.Inf
+inf_negative: -.INF
+not_a_number: .nan
+nan_mixed_case: .NaN
+null_tilde: ~
+null_lower: null
+null_upper: NULL
+null_title: Null
+null_empty:
+bool_true: true
+bool_title: True
+bool_upper: TRUE
+bool_false: false
+bool_yes: yes
+bool_no: no
+bool_on: on
+bool_off: off
+str_looks_numeric: "0x1F"
+str_version: 1.2.3

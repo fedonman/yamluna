@@ -1,0 +1,8 @@
+﻿# covers: a UTF-8 byte order mark at the start of the stream. DESIGN 2.3
+# says the loader strips it (Parser::new_from_str does not), and a byte
+# exact round trip has to write it back.
+key: value
+unicode: café
+nested:
+  - 1
+  - 2

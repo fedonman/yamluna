@@ -1,0 +1,19 @@
+# covers: recursive anchors - a mapping and a sequence that alias themselves,
+# and two nodes that alias each other. DESIGN 2.3 keeps Alias as a node kind
+# rather than cloning the target, which is what makes these representable at
+# all; loaders that clean-copy the anchor blow the stack or fail here.
+self_map: &sm
+  name: node
+  next: *sm
+self_seq: &ss
+  - item
+  - *ss
+mutual:
+  a: &ma
+    peer: &mb
+      peer: *ma
+  b: *mb
+deep_self: &ds
+  level1:
+    level2:
+      back: *ds

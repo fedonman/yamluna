@@ -1,0 +1,33 @@
+# covers: anchors and aliases in every legal ordering - on scalars, sequences
+# and mappings, as keys and as values, inside flow collections, anchor before
+# tag and tag before anchor, and one anchor aliased several times.
+# An alias may only refer to an anchor that appears earlier in the stream, so
+# there is no legal "alias before anchor" ordering to test.
+anchor_scalar: &s plain value
+alias_scalar: *s
+anchor_quoted: &q "quoted value"
+alias_quoted: *q
+anchor_map: &m
+  a: 1
+  b: 2
+alias_map: *m
+anchor_seq: &sq
+  - one
+  - two
+alias_seq: *sq
+anchor_flow_seq: &fs [1, 2]
+anchor_flow_map: &fm {x: 1}
+anchor_in_flow: [&f 1, *f]
+alias_as_key:
+  *s : an alias used as a key
+anchor_on_a_key: &k key_text
+alias_of_key_as_value: *k
+tag_then_anchor: !!str &ta tagged first
+anchor_then_tag: &at !!str anchored first
+anchor_on_empty: &empty
+anchor_block_scalar: &bs |
+  literal body
+alias_block_scalar: *bs
+reused: [*s, *s, *m, *sq]
+shadowing: &s a second anchor with the same name
+after_shadow: *s

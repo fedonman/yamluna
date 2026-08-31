@@ -1,4 +1,4 @@
-use yamluna_scanner::{Event, Parser, ScalarStyle};
+use yamluna_scanner::{AnchorRef, Event, Parser, ScalarStyle};
 
 /// Comment intercepting the multiline text is invalid YAML (case BS4K)
 #[test]
@@ -65,7 +65,7 @@ key: word1
     assert!(events.contains(&Event::Scalar(
         "word1 word2".into(),
         ScalarStyle::Plain,
-        0,
+        AnchorRef::default(),
         None
     )));
 }

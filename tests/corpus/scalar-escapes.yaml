@@ -1,0 +1,23 @@
+# covers: double-quoted escape sequences, single-quoted quote doubling, and
+# the line continuations of quoted and plain multi-line scalars. The cooked
+# value and the raw lexeme differ for every entry here, which is why
+# DESIGN 2 keeps both.
+hex_escape: "\x41\x42"
+unicode_16: "é 中"
+unicode_32: "\U0001F600"
+control_names: "\0\a\b\t\n\v\f\r\e"
+special_names: "\N\_\L\P"
+punctuation: "\" \\ \/ \ "
+line_continuation: "a long double quoted scalar that is \
+  continued on the next line with a backslash"
+folded_in_double: "a double quoted scalar
+  broken across lines folds to a space"
+blank_folds_to_newline: "line one
+
+  line two"
+single_doubling: 'it''s got '''' two quotes'
+single_multiline: 'a single quoted scalar
+  broken across lines'
+plain_multiline: a plain scalar
+  broken across lines
+  and a third

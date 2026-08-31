@@ -1,0 +1,21 @@
+# covers: empty documents and empty collections - an explicitly started
+# document with no content, a document that is only a comment, empty values
+# of every shape, and an empty document at end of stream.
+---
+---
+# a document containing only a comment
+---
+key:
+seq:
+-
+map: {}
+list: []
+explicit_null: null
+tilde: ~
+nested:
+  empty_child:
+---
+{}
+---
+[]
+---

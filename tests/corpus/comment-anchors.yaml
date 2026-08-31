@@ -1,0 +1,14 @@
+# covers: comments on lines that carry an anchor or an alias, where the
+# comment must not be swallowed into the anchor name.
+base: &base   # after an anchor introducing a block mapping
+  a: 1
+  b: 2
+use: *base    # after an alias
+seq: &items   # after an anchor introducing a block sequence
+  # an own-line comment inside the anchored sequence
+  - one       # inside the anchored sequence
+  - two
+copy: *items  # after an alias to the anchored sequence
+scalar: &s "value"  # after an anchor on a quoted scalar
+ref: *s
+flow: [&f 1, *f]    # after a flow collection holding an anchor and an alias

@@ -1,0 +1,10 @@
+# covers: comments attached to the document markers themselves - after `---`,
+# after `...`, and between two documents where they belong to neither.
+--- # after the first document start marker
+a: 1
+... # after the first document end marker
+# between two documents: stream-level trivia, owned by neither document
+--- # after the second document start marker
+b: 2
+...
+# a trailing comment after the final document end marker

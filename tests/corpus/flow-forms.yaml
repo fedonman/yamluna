@@ -1,0 +1,26 @@
+# covers: every flow collection form - empty, inline, nested, spread over
+# several lines, with a trailing comma, the single-pair `[a: 1]` shorthand
+# (which pushes a synthetic empty-span FlowMappingStart, DESIGN 1.2), and the
+# JSON-like subset.
+empty_map: {}
+empty_seq: []
+empty_nested: [{}, [], {a: []}]
+inline_map: {a: 1, b: 2}
+inline_seq: [1, 2, 3]
+nested: {list: [1, [2, 3], {deep: [4]}], map: {x: {y: z}}}
+multiline: [
+  first,
+  second,
+  {key: value},
+]
+multiline_map: {
+  a: 1,
+  b: 2
+}
+implicit_pair: [a: 1]
+implicit_pairs: [{a: 1}, b, [c], d: 2]
+trailing_comma_seq: [1, 2, 3, ]
+trailing_comma_map: {a: 1, b: 2, }
+json_like: {"quoted key": "quoted value", 'single': null}
+spaced: [ 1 , 2 ,  3 ]
+missing_value: {a: , b}

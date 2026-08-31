@@ -1,0 +1,13 @@
+# covers: source lines far past the default emitter width of 80, in every
+# style. An unmodified round trip must not refold them; only a node the user
+# rebuilt is subject to `width`.
+plain_long: Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua ut enim ad minim veniam quis nostrud
+double_long: "Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua ut enim ad minim veniam quis nostrud"
+single_long: 'Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua ut enim ad minim veniam quis nostrud'
+folded_long: >
+  Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua ut enim ad minim veniam quis nostrud
+literal_long: |
+  Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua ut enim ad minim veniam quis nostrud
+flow_long: [alpha, bravo, charlie, delta, echo, foxtrot, golf, hotel, india, juliett, kilo, lima, mike, november, oscar, papa, quebec, romeo, sierra, tango]
+a_very_long_key_that_is_itself_wider_than_the_default_emitter_width_of_eighty_columns: short
+long_eol_comment: 1  # this trailing comment pushes the line well past eighty columns all by itself, which is a separate folding decision

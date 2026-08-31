@@ -1,0 +1,24 @@
+# covers: non-ASCII text - astral-plane emoji, a ZWJ sequence, combining
+# marks, CJK, RTL and a non-breaking space, as values, as keys and inside
+# comments (café 🚀). Every one of these makes a char offset differ
+# from a byte offset, which is the DESIGN 1.5 trap: Marker::index() counts
+# chars, so yamluna-core needs its char->byte table before it can slice.
+emoji: 🌍 🚀 ✨
+emoji_zwj: 👩‍💻
+flag: 🇬🇷
+combining_nfd: é (e + U+0301)
+precomposed_nfc: é (U+00E9)
+combining_stack: á̂̃
+cjk: 日本語のテキスト
+rtl: مرحبا بالعالم
+nbsp: "a b"
+greek: αβγ
+日本語キー: a CJK key
+🔑: an emoji key
+quoted_escape: "\u00e9 \U0001F600"
+seq:
+  - 🍎  # an emoji item with a comment after it
+  - 中文
+literal: |
+  🌍 first line
+  é́ second line

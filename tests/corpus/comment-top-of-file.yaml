@@ -1,0 +1,9 @@
+# covers: a comment block at the very top of the file, before any content,
+# including an empty comment line and a blank line inside the leading run.
+#
+# This whole block is stream-level trivia: it belongs to Document::leading,
+# not to the first key.
+
+# a second paragraph of the header, after a blank line
+first: 1
+second: 2

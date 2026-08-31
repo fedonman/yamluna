@@ -8,7 +8,7 @@ use libtest_mimic::{Arguments, Failed, Trial, run};
 
 use saphyr::{LoadableYamlNode, Mapping, Scalar, Yaml};
 use yamluna_scanner::{
-    Event, Marker, Parser, ScalarStyle, ScanError, Span, SpannedEventReceiver, Tag,
+    AnchorRef, Event, Marker, Parser, ScalarStyle, ScanError, Span, SpannedEventReceiver, Tag,
 };
 
 type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
@@ -220,17 +220,17 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
             Event::DocumentStart(_) => "+DOC".into(),
             Event::DocumentEnd => "-DOC".into(),
 
-            Event::SequenceStart(idx, tag) => {
-                format!("+SEQ{}{}", format_index(idx), format_tag(tag.as_ref()))
+            Event::SequenceStart(anchor, tag, _) => {
+                format!("+SEQ{}{}", format_anchor(&anchor), format_tag(tag.as_ref()))
             }
             Event::SequenceEnd => "-SEQ".into(),
 
-            Event::MappingStart(idx, tag) => {
-                format!("+MAP{}{}", format_index(idx), format_tag(tag.as_ref()))
+            Event::MappingStart(anchor, tag, _) => {
+                format!("+MAP{}{}", format_anchor(&anchor), format_tag(tag.as_ref()))
             }
             Event::MappingEnd => "-MAP".into(),
 
-            Event::Scalar(ref text, style, idx, ref tag) => {
+            Event::Scalar(ref text, style, ref anchor, ref tag) => {
                 let kind = match style {
                     ScalarStyle::Plain => ":",
                     ScalarStyle::SingleQuoted => "'",
@@ -240,22 +240,34 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
                 };
                 format!(
                     "=VAL{}{} {kind}{}",
-                    format_index(idx),
+                    format_anchor(anchor),
                     format_tag(tag.as_ref()),
                     escape_text(text)
                 )
             }
-            Event::Alias(idx) => format!("=ALI *{idx}"),
+            Event::Alias(anchor) => format!("=ALI *{}", anchor.id),
+            // The suite is run with the default `keep_comments(false)`, so no comment can reach
+            // here: the stream must be identical to the one upstream produces.
+            Event::Comment(text) => unreachable!("unexpected comment event: {text:?}"),
             Event::Nothing => return,
         };
         self.events.push(line);
     }
 }
 
-fn format_index(idx: usize) -> String {
-    if idx > 0 {
-        format!(" &{idx}")
+/// Render the anchor the way the test suite expects it: by interned id, not by name.
+///
+/// `expected_events` rewrites the suite's anchor names to the same ids, so the strings compared
+/// here are unchanged by the fork carrying anchor names alongside the ids.
+fn format_anchor(anchor: &AnchorRef<'_>) -> String {
+    if anchor.id > 0 {
+        assert!(
+            anchor.name.is_some(),
+            "an anchored node must carry its name"
+        );
+        format!(" &{}", anchor.id)
     } else {
+        assert!(anchor.name.is_none(), "an id of 0 means \"no anchor\"");
         String::new()
     }
 }

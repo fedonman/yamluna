@@ -1,0 +1,13 @@
+# covers: CRLF line endings throughout, including inside a block scalar
+# and before a comment. YAML normalises \r\n to \n when parsing, so the
+# cooked value of `literal` below contains LF only - but the round trip
+# must write CRLF back out, which is the `line_break` emitter option.
+key: value
+seq:
+  - one
+  - two  # an end-of-line comment before a CRLF break
+literal: |
+  first line
+  second line
+flow: [a, b]
+last: end

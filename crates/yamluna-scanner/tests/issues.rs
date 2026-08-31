@@ -1,5 +1,6 @@
 use yamluna_scanner::Marker;
-use yamluna_scanner::{Event, Parser, ScalarStyle, ScanError, Span};
+use yamluna_scanner::{AnchorRef, Event, Parser, ScalarStyle, ScanError, Span, StructureStyle};
+use yamluna_scanner::StructureStyle::{Block, Flow};
 
 /// Run the parser through the string.
 ///
@@ -94,23 +95,28 @@ fn test_issue1() {
   - 42
 ";
 
-    let expected = [
-        Event::StreamStart,
-        Event::DocumentStart(false),
-        Event::SequenceStart(0, None),
-        Event::MappingStart(0, None),
-        Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
-        Event::SequenceStart(0, None),
-        Event::Scalar("42".into(), ScalarStyle::Plain, 0, None),
-        Event::SequenceEnd,
-        Event::MappingEnd,
-        Event::SequenceEnd,
-        Event::DocumentEnd,
-        Event::StreamEnd,
-    ];
-    assert_eq!(run_parser(reference).unwrap(), expected);
-    assert_eq!(run_parser("[{a: [42]}]").unwrap(), expected);
-    assert_eq!(run_parser("[a: [42]]").unwrap(), expected);
+    // The three spellings below differ only in collection style, which the events now carry.
+    let expected = |style| {
+        [
+            Event::StreamStart,
+            Event::DocumentStart(false),
+            Event::SequenceStart(AnchorRef::default(), None, style),
+            Event::MappingStart(AnchorRef::default(), None, style),
+            Event::Scalar("a".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::SequenceStart(AnchorRef::default(), None, style),
+            Event::Scalar("42".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::SequenceEnd,
+            Event::MappingEnd,
+            Event::SequenceEnd,
+            Event::DocumentEnd,
+            Event::StreamEnd,
+        ]
+    };
+    assert_eq!(run_parser(reference).unwrap(), expected(Block));
+    assert_eq!(run_parser("[{a: [42]}]").unwrap(), expected(Flow));
+    // The implicit flow mapping: its `FlowMappingStart` token is synthetic and has an empty span,
+    // so this is exactly the case that cannot be recovered from spans downstream.
+    assert_eq!(run_parser("[a: [42]]").unwrap(), expected(Flow));
 
     // Other test cases derived from the bug
 
@@ -120,16 +126,17 @@ fn test_issue1() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::MappingStart(0, None),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
-            Event::Scalar("foo".into(), ScalarStyle::Plain, 0, None),
-            Event::SequenceStart(0, None),
-            Event::Scalar("bar".into(), ScalarStyle::Plain, 0, None),
+            // `[foo: [bar]]: baz` is a *block* mapping whose key is a flow sequence.
+            Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
+            Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Flow),
+            Event::MappingStart(AnchorRef::default(), None, StructureStyle::Flow),
+            Event::Scalar("foo".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Flow),
+            Event::Scalar("bar".into(), ScalarStyle::Plain, AnchorRef::default(), None),
             Event::SequenceEnd,
             Event::MappingEnd,
             Event::SequenceEnd,
-            Event::Scalar("baz".into(), ScalarStyle::Plain, 0, None),
+            Event::Scalar("baz".into(), ScalarStyle::Plain, AnchorRef::default(), None),
             Event::MappingEnd,
             Event::DocumentEnd,
             Event::StreamEnd,
@@ -142,10 +149,10 @@ fn test_issue1() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
-            Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
-            Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
+            Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Flow),
+            Event::MappingStart(AnchorRef::default(), None, StructureStyle::Flow),
+            Event::Scalar("~".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar("~".into(), ScalarStyle::Plain, AnchorRef::default(), None),
             Event::MappingEnd,
             Event::SequenceEnd,
             Event::DocumentEnd,
@@ -159,13 +166,13 @@ fn test_issue1() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
-            Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
-            Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
-            Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
+            Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Flow),
+            Event::MappingStart(AnchorRef::default(), None, StructureStyle::Flow),
+            Event::Scalar("~".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Flow),
+            Event::MappingStart(AnchorRef::default(), None, StructureStyle::Flow),
+            Event::Scalar("~".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar("~".into(), ScalarStyle::Plain, AnchorRef::default(), None),
             Event::MappingEnd,
             Event::SequenceEnd,
             Event::MappingEnd,
@@ -186,15 +193,15 @@ fn test_issue1() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
-            Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
-            Event::SequenceStart(0, None),
+            Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Flow),
+            Event::MappingStart(AnchorRef::default(), None, StructureStyle::Flow),
+            Event::Scalar("a".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Flow),
             // No `MappingStart` here.
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
-            Event::Scalar("b".into(), ScalarStyle::Plain, 0, None),
-            Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
+            Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Flow),
+            Event::MappingStart(AnchorRef::default(), None, StructureStyle::Flow),
+            Event::Scalar("b".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar("~".into(), ScalarStyle::Plain, AnchorRef::default(), None),
             Event::MappingEnd,
             Event::SequenceEnd,
             // No `MappingEnd` here.
@@ -216,10 +223,10 @@ fn test_issue1() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
-            Event::Scalar("a".into(), ScalarStyle::DoubleQuoted, 0, None),
-            Event::SequenceStart(0, None),
+            Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Flow),
+            Event::MappingStart(AnchorRef::default(), None, StructureStyle::Flow),
+            Event::Scalar("a".into(), ScalarStyle::DoubleQuoted, AnchorRef::default(), None),
+            Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Flow),
             Event::SequenceEnd,
             Event::MappingEnd,
             Event::SequenceEnd,
@@ -236,8 +243,8 @@ fn test_pr12() {
         [
             Event::StreamStart,
             Event::DocumentStart(true),
-            Event::SequenceStart(0, None),
-            Event::Scalar("a\n".into(), ScalarStyle::Literal, 0, None),
+            Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Block),
+            Event::Scalar("a\n".into(), ScalarStyle::Literal, AnchorRef::default(), None),
             Event::SequenceEnd,
             Event::DocumentEnd,
             Event::StreamEnd,
@@ -257,7 +264,7 @@ fn test_issue14() {
     );
     assert_eq!(
         error.to_string(),
-        "while parsing a flow mapping, did not find expected ',' or '}' at byte 4 line 2 column 1"
+        "while parsing a flow mapping, did not find expected ',' or '}' at char 4 line 2 column 1"
     );
 }
 
@@ -269,7 +276,7 @@ fn test_issue14_v2() {
         error.info(),
         "while parsing a flow mapping, did not find expected ',' or '}'"
     );
-    assert!(error.to_string().ends_with("at byte 4 line 2 column 1"));
+    assert!(error.to_string().ends_with("at char 4 line 2 column 1"));
 }
 
 #[test]
@@ -292,22 +299,22 @@ array:
         [
             Event::StreamStart,
             Event::DocumentStart(true),
-            Event::MappingStart(0, None),
-            Event::Scalar("array".into(), ScalarStyle::Plain, 0, None),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
-            Event::Scalar("object".into(), ScalarStyle::Plain, 0, None),
-            Event::MappingStart(0, None),
-            Event::Scalar("array".into(), ScalarStyle::Plain, 0, None),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
-            Event::Scalar("object".into(), ScalarStyle::Plain, 0, None),
-            Event::MappingStart(0, None),
-            Event::Scalar("array".into(), ScalarStyle::Plain, 0, None),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
-            Event::Scalar("text".into(), ScalarStyle::Plain, 0, None),
-            Event::Scalar("Line 1 Line 2".into(), ScalarStyle::Folded, 0, None),
+            Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
+            Event::Scalar("array".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Block),
+            Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
+            Event::Scalar("object".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
+            Event::Scalar("array".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Block),
+            Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
+            Event::Scalar("object".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
+            Event::Scalar("array".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Block),
+            Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
+            Event::Scalar("text".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar("Line 1 Line 2".into(), ScalarStyle::Folded, AnchorRef::default(), None),
             Event::MappingEnd,
             Event::SequenceEnd,
             Event::MappingEnd,
@@ -333,9 +340,9 @@ fn test_issue22() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::MappingStart(0, None),
-            Event::Scalar("comment".into(), ScalarStyle::Plain, 0, None),
-            Event::Scalar("hello ... world".into(), ScalarStyle::Plain, 0, None),
+            Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
+            Event::Scalar("comment".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar("hello ... world".into(), ScalarStyle::Plain, AnchorRef::default(), None),
             Event::MappingEnd,
             Event::DocumentEnd,
             Event::StreamEnd
@@ -367,36 +374,36 @@ fn test_issue37() {
         [
             (Event::StreamStart,                                                          Span::new(Marker::new(0, 1, 0), Marker::new(0, 1, 0))),
             (Event::DocumentStart(true),                                                  Span::new(Marker::new(0, 1, 0), Marker::new(3, 1, 3))),
-            (Event::MappingStart(0, None),                                                Span::new(Marker::new(8, 2, 4), Marker::new(8, 2, 4))),
-            (Event::Scalar("hash_block_null_value".into(), ScalarStyle::Plain, 0, None),  Span::new(Marker::new(8, 2, 4), Marker::new(29, 2, 25))),
+            (Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),                                                Span::new(Marker::new(8, 2, 4), Marker::new(8, 2, 4))),
+            (Event::Scalar("hash_block_null_value".into(), ScalarStyle::Plain, AnchorRef::default(), None),  Span::new(Marker::new(8, 2, 4), Marker::new(29, 2, 25))),
 
-            (Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),                      Span::new(Marker::new(29, 2, 25), Marker::new(29, 2, 25))),
+            (Event::Scalar("~".into(), ScalarStyle::Plain, AnchorRef::default(), None),                      Span::new(Marker::new(29, 2, 25), Marker::new(29, 2, 25))),
 
-            (Event::Scalar("hash_flow".into(), ScalarStyle::Plain, 0, None),              Span::new(Marker::new(35, 3, 4), Marker::new(44, 3, 13))),
-            (Event::MappingStart(0, None),                                                Span::new(Marker::new(46, 3, 15), Marker::new(47, 3, 16))),
-            (Event::Scalar("hash_flow_null_value".into(), ScalarStyle::Plain, 0, None),   Span::new(Marker::new(47, 3, 16), Marker::new(67, 3, 36))),
-            (Event::Scalar("null".into(), ScalarStyle::Plain, 0, None),                   Span::new(Marker::new(69, 3, 38), Marker::new(73, 3, 42))),
+            (Event::Scalar("hash_flow".into(), ScalarStyle::Plain, AnchorRef::default(), None),              Span::new(Marker::new(35, 3, 4), Marker::new(44, 3, 13))),
+            (Event::MappingStart(AnchorRef::default(), None, StructureStyle::Flow),                                                Span::new(Marker::new(46, 3, 15), Marker::new(47, 3, 16))),
+            (Event::Scalar("hash_flow_null_value".into(), ScalarStyle::Plain, AnchorRef::default(), None),   Span::new(Marker::new(47, 3, 16), Marker::new(67, 3, 36))),
+            (Event::Scalar("null".into(), ScalarStyle::Plain, AnchorRef::default(), None),                   Span::new(Marker::new(69, 3, 38), Marker::new(73, 3, 42))),
             (Event::MappingEnd,                                                           Span::new(Marker::new(73, 3, 42), Marker::new(74, 3, 43))),
-            (Event::Scalar("array_block_null_value".into(), ScalarStyle::Plain, 0, None), Span::new(Marker::new(79, 4, 4), Marker::new(101, 4, 26))),
-            (Event::SequenceStart(0, None),                                               Span::new(Marker::new(109, 5, 6), Marker::new(109, 5, 6))),
+            (Event::Scalar("array_block_null_value".into(), ScalarStyle::Plain, AnchorRef::default(), None), Span::new(Marker::new(79, 4, 4), Marker::new(101, 4, 26))),
+            (Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Block),                                               Span::new(Marker::new(109, 5, 6), Marker::new(109, 5, 6))),
 
-            (Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),                      Span::new(Marker::new(110, 5, 7), Marker::new(110, 5, 7))),
+            (Event::Scalar("~".into(), ScalarStyle::Plain, AnchorRef::default(), None),                      Span::new(Marker::new(110, 5, 7), Marker::new(110, 5, 7))),
 
-            (Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),                                 Span::new(Marker::new(119, 6, 8), Marker::new(120, 6, 9))),
-            (Event::Scalar("null".into(), ScalarStyle::Plain, 0, None),                              Span::new(Marker::new(129, 7, 8), Marker::new(133, 7, 12))),
+            (Event::Scalar("~".into(), ScalarStyle::Plain, AnchorRef::default(), None),                                 Span::new(Marker::new(119, 6, 8), Marker::new(120, 6, 9))),
+            (Event::Scalar("null".into(), ScalarStyle::Plain, AnchorRef::default(), None),                              Span::new(Marker::new(129, 7, 8), Marker::new(133, 7, 12))),
             (Event::SequenceEnd,                                                                     Span::new(Marker::new(138, 8, 4), Marker::new(138, 8, 4))),
-            (Event::Scalar("array_flow_null_value".into(), ScalarStyle::Plain, 0, None),             Span::new(Marker::new(138, 8, 4), Marker::new(159, 8, 25))),
-            (Event::SequenceStart(0, None),                                                          Span::new(Marker::new(161, 8, 27), Marker::new(162, 8, 28))),
-            (Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),                                 Span::new(Marker::new(162, 8, 28), Marker::new(163, 8, 29))),
-            (Event::Scalar("null".into(), ScalarStyle::Plain, 0, None),                              Span::new(Marker::new(165, 8, 31), Marker::new(169, 8, 35))),
+            (Event::Scalar("array_flow_null_value".into(), ScalarStyle::Plain, AnchorRef::default(), None),             Span::new(Marker::new(138, 8, 4), Marker::new(159, 8, 25))),
+            (Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Flow),                                                          Span::new(Marker::new(161, 8, 27), Marker::new(162, 8, 28))),
+            (Event::Scalar("~".into(), ScalarStyle::Plain, AnchorRef::default(), None),                                 Span::new(Marker::new(162, 8, 28), Marker::new(163, 8, 29))),
+            (Event::Scalar("null".into(), ScalarStyle::Plain, AnchorRef::default(), None),                              Span::new(Marker::new(165, 8, 31), Marker::new(169, 8, 35))),
             (Event::SequenceEnd,                                                                     Span::new(Marker::new(169, 8, 35), Marker::new(170, 8, 36))),
-            (Event::Scalar("indentless_array_block_null_value".into(), ScalarStyle::Plain, 0, None), Span::new(Marker::new(175, 9, 4), Marker::new(208, 9, 37))),
-            (Event::SequenceStart(0, None),                                                          Span::new(Marker::new(215, 10, 5), Marker::new(215, 10, 5))),
+            (Event::Scalar("indentless_array_block_null_value".into(), ScalarStyle::Plain, AnchorRef::default(), None), Span::new(Marker::new(175, 9, 4), Marker::new(208, 9, 37))),
+            (Event::SequenceStart(AnchorRef::default(), None, StructureStyle::Block),                                                          Span::new(Marker::new(215, 10, 5), Marker::new(215, 10, 5))),
 
-            (Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),    Span::new(Marker::new(215, 10, 5), Marker::new(215, 10, 5))),
+            (Event::Scalar("~".into(), ScalarStyle::Plain, AnchorRef::default(), None),    Span::new(Marker::new(215, 10, 5), Marker::new(215, 10, 5))),
 
-            (Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),    Span::new(Marker::new(222, 11, 6), Marker::new(223, 11, 7))),
-            (Event::Scalar("null".into(), ScalarStyle::Plain, 0, None), Span::new(Marker::new(230, 12, 6), Marker::new(234, 12, 10))),
+            (Event::Scalar("~".into(), ScalarStyle::Plain, AnchorRef::default(), None),    Span::new(Marker::new(222, 11, 6), Marker::new(223, 11, 7))),
+            (Event::Scalar("null".into(), ScalarStyle::Plain, AnchorRef::default(), None), Span::new(Marker::new(230, 12, 6), Marker::new(234, 12, 10))),
             (Event::SequenceEnd,                                        Span::new(Marker::new(239, 14, 0), Marker::new(239, 14, 0))),
             (Event::MappingEnd,                                         Span::new(Marker::new(239, 14, 0), Marker::new(239, 14, 0))),
             (Event::DocumentEnd,                                        Span::new(Marker::new(239, 14, 0), Marker::new(239, 14, 0))),
@@ -417,14 +424,14 @@ fn test_issue84() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::MappingStart(0, None),
-            Event::Scalar("hello".into(), ScalarStyle::Plain, 0, None),
-            Event::MappingStart(0, None),
-            Event::Scalar("world".into(), ScalarStyle::Plain, 0, None),
+            Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
+            Event::Scalar("hello".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::MappingStart(AnchorRef::default(), None, StructureStyle::Block),
+            Event::Scalar("world".into(), ScalarStyle::Plain, AnchorRef::default(), None),
             Event::Scalar(
                 "this is a string --- still a string".into(),
                 ScalarStyle::Plain,
-                0,
+                AnchorRef::default(),
                 None
             ),
             Event::MappingEnd,

@@ -183,7 +183,11 @@ impl Input for StrInput<'_> {
         }
     }
 
-    fn skip_ws_to_eol(&mut self, skip_tabs: SkipTabs) -> (usize, Result<SkipTabs, &'static str>) {
+    fn skip_ws_to_eol(
+        &mut self,
+        skip_tabs: SkipTabs,
+        comment: Option<&mut String>,
+    ) -> (usize, Result<SkipTabs, &'static str>) {
         assert!(!matches!(skip_tabs, SkipTabs::Result(..)));
 
         let mut new_str = self.buffer;
@@ -224,12 +228,16 @@ impl Input for StrInput<'_> {
             }
 
             // Skip remaining characters until we hit a breakz.
+            let comment_start = new_str;
             while let Some((c, sub_str)) = split_first_char(new_str) {
                 if is_breakz(c) {
                     break;
                 }
                 new_str = sub_str;
                 chars_consumed += 1;
+            }
+            if let Some(out) = comment {
+                out.push_str(&comment_start[..comment_start.len() - new_str.len()]);
             }
         }
 

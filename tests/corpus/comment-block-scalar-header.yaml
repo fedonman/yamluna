@@ -1,0 +1,13 @@
+# covers: comments in a block scalar header - the only place a comment may
+# follow a `|` or `>` indicator. The header comment is not part of the scalar.
+literal: | # header comment on a literal block scalar
+  line one
+  line two
+folded: >- # header comment plus a chomping indicator
+  folded text
+  continues here
+indented: |2 # header comment plus an explicit indent indicator
+    two leading spaces of content
+strip_then_comment: |- # strip chomping and a comment
+  no trailing newline
+after: done

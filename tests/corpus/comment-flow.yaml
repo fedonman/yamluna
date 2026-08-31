@@ -1,0 +1,22 @@
+# covers: comments inside flow collections, where a comment may sit between
+# any two tokens because comments are allowed wherever separation is.
+flow_seq: [
+  a,        # after an item
+  # an own-line comment inside a flow sequence
+  b,
+  c,        # after the last item
+]
+flow_map: {
+  # a leading own-line comment inside a flow mapping
+  x: 1,     # after an entry
+  y: 2,
+  # a trailing own-line comment inside a flow mapping
+}
+nested: [
+  {a: 1},   # a flow mapping inside a flow sequence
+  [b, c],   # a flow sequence inside a flow sequence
+]
+between_key_and_value: {
+  k:        # after the key, before the value
+    v,
+}

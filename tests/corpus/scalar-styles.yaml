@@ -1,0 +1,20 @@
+# covers: all five scalar styles, as values and (where legal) as keys.
+plain: unquoted text
+single: 'single quoted, with '' an escaped quote'
+double: "double quoted, with \" and \\ and a \t tab escape"
+literal: |
+  literal block scalar
+  keeps its line breaks
+folded: >
+  folded block scalar
+  joins these lines into one
+plain key with spaces: plain scalar key
+'single quoted key': 1
+"double quoted key": 2
+plain_empty:
+single_empty: ''
+double_empty: ""
+plain_multiline: this plain scalar
+  runs onto a second line
+plain_with_colon_inside: http://example.com/path
+plain_leading_dash: -not-a-sequence

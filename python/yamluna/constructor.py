@@ -107,6 +107,7 @@ __all__ = [
     'DOC_ATTRIB',
     'EXPLICIT_ATTRIB',
     'FLOW_SEPS_ATTRIB',
+    'NODE_ATTRIB',
     'NULL_ATTRIB',
     'SOURCE_ATTRIB',
     'UNRESOLVED',
@@ -153,26 +154,42 @@ FLOW_SEPS_ATTRIB: Final = '_yaml_flow_seps'
 #: two-slot record for `?~: x` is not worth the code); neither is a ``!!null`` tag.
 NULL_ATTRIB: Final = '_yaml_null'
 
-#: Where a container records the source form of a scalar child that cannot carry it.
+#: Where a container keeps the records its children could not keep themselves.
 #:
-#: A **tag** has nowhere to live on the value a tagged scalar constructs to: ``!!str 123`` is
-#: a bare ``str``, ``!!int "42"`` an ``int``, ``!!binary |`` a ``bytes``, and a
-#: :class:`~yamluna.scalarstring.ScalarString` has no slot for one either.  An **anchor** on a
-#: null has the same problem for the same reason (:meth:`Constructor._anchored` promotes every
-#: other builtin to a class that can hold one; ``None`` has nowhere to go).  Without this the
-#: emitter is handed a bare, untagged node and reformats what the Rust core had preserved:
-#: ``!!str 123`` -> ``'123'``, a ``!!binary`` block scalar -> a re-wrapped double-quoted one,
-#: ``&empty`` -> nothing.
+#: :data:`NODE_ATTRIB` is the carrier, but a bare ``str``, ``int``, ``bool``, ``bytes`` or
+#: ``None`` takes no attribute at all, so for those the parent is the only place a record can
+#: live: ``{key or index: (value, value record, key record)}``, keyed like :data:`NULL_ATTRIB`.
+#: ``key record`` is ``None`` for a sequence, which has keys nowhere.
 #:
-#: The **lexeme** rides along with them, because they are one fact: a node that keeps its tag
-#: but loses its spelling is still not a round trip.  So the record is the loaded
-#: :class:`~yamluna._record.Node` itself, next to the value that was built from it:
-#: ``{key or index: (value, node)}`` on the parent, keyed like :data:`NULL_ATTRIB`.
-#: :mod:`yamluna.representer` applies it only while the entry still holds that value, so an
-#: edited value is written from scratch like any other.
+#: What that saves is everything the value alone cannot say.  A **tag** has nowhere to live on
+#: what a tagged scalar constructs to (``!!str 123`` is a bare ``str``, ``!!int "42"`` an
+#: ``int``, ``!!binary |`` a ``bytes``); an **anchor** on a null has the same problem; and the
+#: **lexeme** rides with them, because a node that keeps its tag but loses its spelling is
+#: still not a round trip.  Without it the emitter is handed a bare node and reformats what
+#: the Rust core had preserved: ``!!str 123`` -> ``'123'``, a ``!!binary`` block scalar -> a
+#: re-wrapped double-quoted one, ``&empty`` -> nothing -- and a lexeme-less scalar at line 0
+#: column 0 is also the emitter's one signal for "the user built this", so losing it there
+#: lays out the whole document afresh.
+#:
+#: :mod:`yamluna.representer` applies the value's record only while the entry still holds the
+#: value that was loaded, so an edited value is written from scratch like any other.  A key
+#: needs no such test: it *is* what the record was looked up by.
 # ponytail: two stores for one idea (NULL_ATTRIB is this, for the one untagged, unanchored
 # value that cannot carry its own lexeme); fold them together if a third case turns up.
 SOURCE_ATTRIB: Final = '_yaml_source'
+
+#: Where a loaded object keeps the record it was built from.
+#:
+#: The source facts the object model has no slot for and no use for -- where the ``&anchor``
+#: and the tag were written, where each entry's ``:`` went -- are **opaque** here.  This layer
+#: never reads them; it hands them back to the emitter for a node it did not change, and the
+#: emitter believes a recorded position only while the output is still on the line it names.
+#:
+#: Parked on the object itself, so it travels with the object and a value rebuilt in Python
+#: simply has none.  A value that cannot hold an attribute (a bare ``str``, ``int``, ``None``)
+#: gets the same facts through :data:`SOURCE_ATTRIB`, which its parent already keeps for it --
+#: and which is exactly the set of scalars that can carry an anchor or a tag at all.
+NODE_ATTRIB: Final = '_yaml_node'
 
 #: The `tag:yaml.org,2002:` namespace: the tags a YAML processor knows without being told.
 YAML_ORG: Final = 'tag:yaml.org,2002:'
@@ -339,7 +356,7 @@ class Constructor:
         node = doc.nodes[doc.root]
         root = self._build(doc.root)
         if not isinstance(root, CommentedBase) and _has_document_facts(doc):
-            root = self._promote(root, node)
+            root = _park(self._promote(root, node), node)
         if isinstance(root, CommentedBase) or hasattr(type(root), 'lexeme'):
             if isinstance(root, CommentedBase):
                 self._prepend_pre(root, self._tokens(doc.leading) + self._tokens(node.before))
@@ -357,6 +374,9 @@ class Constructor:
                 bom=doc.bom,
                 final_line_break=doc.final_line_break,
                 tags_before_version=doc.tags_before_version,
+                directives_raw=doc.directives_raw,
+                stream_tail=doc.stream_tail,
+                line_space=doc.line_space,
             ))
         return root
 
@@ -397,12 +417,16 @@ class Constructor:
                     'composer', f'found undefined alias {node.anchor!r}', node
                 ) from None
         if node.kind == KIND_SCALAR:
-            return self._anchored(self._scalar(node), node)
-        if node.kind == KIND_SEQUENCE:
-            return self._sequence(node, as_key)
-        if node.kind == KIND_MAPPING:
-            return self._mapping(node, as_key)
-        raise self._error('constructor', f'unknown node kind {node.kind!r}', node)
+            built = self._anchored(self._scalar(node), node)
+        elif node.kind == KIND_SEQUENCE:
+            built = self._sequence(node, as_key)
+        elif node.kind == KIND_MAPPING:
+            built = self._mapping(node, as_key)
+        else:
+            raise self._error('constructor', f'unknown node kind {node.kind!r}', node)
+        # An alias returned above: its site is not where its anchor was written, so the
+        # record it would park is the *anchor's*, and the object already has that one.
+        return _park(built, node)
 
     # -- scalars --------------------------------------------------------------------------
 
@@ -487,7 +511,9 @@ class Constructor:
             seq: Any = CommentedKeySeq(self._build(i, True) for i in node.children)
             self._decorate(seq, node)
             self._place_children(seq, enumerate(node.children))
-            return seq
+            # A key is built in one go, so its anchor can only be bound once it exists -- but
+            # bound it must be: `{&a [x]: 1, *a: 2}` aliases a key from inside its own mapping.
+            return self._register(node, seq)
         seq = CommentedSeq()
         self._register(node, seq)
         for position, child in enumerate(node.children):
@@ -517,6 +543,7 @@ class Constructor:
         if as_key:
             built = [(self._build(k, True), self._build(v, True)) for k, v in pairs]
             key_map: Any = CommentedKeyMap(built)
+            self._register(node, key_map)
             self._decorate(key_map, node)
             for (key, _), (key_index, value_index) in zip(built, pairs, strict=True):
                 k, v = self._nodes[key_index], self._nodes[value_index]
@@ -560,7 +587,7 @@ class Constructor:
             mapping[key] = value
             self._entry_trivia(mapping, key, key_node, value_node, value)
             self._note_null(mapping, key, value, value_node)
-            self._note_source(mapping, key, value, value_node)
+            self._note_source(mapping, key, value, value_node, key_node)
             mapping.lc.add_kv_line_col(
                 key, [key_node.line, key_node.col, value_node.line, value_node.col]
             )
@@ -706,15 +733,23 @@ class Constructor:
         store[key] = node.raw
 
     @staticmethod
-    def _note_source(owner: Any, key: Any, value: Any, node: Node) -> None:
-        """Park the record of a scalar whose value cannot carry it.  See :data:`SOURCE_ATTRIB`."""
-        if node.kind != KIND_SCALAR or (node.tag is None and not node.anchor):
-            return
+    def _note_source(
+        owner: Any, key: Any, value: Any, node: Node, key_node: Node | None = None
+    ) -> None:
+        """Keep the records of one entry's children that could not keep them themselves.
+
+        :func:`_park` slides off a bare ``str``/``int``/``None``, and then the parent is the
+        only place left.  See :data:`SOURCE_ATTRIB`.
+        """
+        if getattr(value, NODE_ATTRIB, None) is node and (
+            key_node is None or getattr(key, NODE_ATTRIB, None) is key_node
+        ):
+            return  # both children kept their own; nothing for the parent to hold
         store = getattr(owner, SOURCE_ATTRIB, None)
         if store is None:
             store = {}
             setattr(owner, SOURCE_ATTRIB, store)
-        store[key] = (value, node)
+        store[key] = (value, node, key_node)
 
     # -- trivia ---------------------------------------------------------------------------
 
@@ -818,8 +853,26 @@ class Constructor:
         return handle + suffix, resolved
 
 
+def _park(value: Any, node: Node) -> Any:
+    """Park the record `value` was built from on `value` itself (:data:`NODE_ATTRIB`).
+
+    A bare ``str``/``int``/``None`` has nowhere to put it -- no ``__dict__``, and no slot for
+    it either -- and is left alone; :data:`SOURCE_ATTRIB` on the parent covers those.
+    """
+    if hasattr(value, '__dict__') or hasattr(type(value), NODE_ATTRIB):
+        setattr(value, NODE_ATTRIB, node)
+    return value
+
+
 def _has_document_facts(doc: Doc) -> bool:
-    """Whether this document says anything a bare scalar root would throw away."""
+    """Whether anything outside a bare builtin root would be thrown away by keeping it bare.
+
+    The document's own facts, and the root node's: a bare ``str`` keeps no tag, no anchor, no
+    comment and no record of where its properties were written, and a root has no parent to
+    keep them for it.  Promoting it to a class that can hold :data:`NODE_ATTRIB` is the whole
+    of the fix; nothing here reads what is on the record.
+    """
+    root = None if doc.root is None else doc.nodes[doc.root]
     return bool(
         doc.version
         or doc.tag_directives
@@ -829,6 +882,10 @@ def _has_document_facts(doc: Doc) -> bool:
         or doc.trailing
         or doc.bom
         or not doc.final_line_break
+        or doc.directives_raw
+        or doc.stream_tail
+        or doc.line_space
+        or (root is not None and (root.tag or root.anchor or root.eol or root.after))
     )
 
 

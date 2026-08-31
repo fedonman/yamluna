@@ -53,6 +53,19 @@ Field conventions that the type annotations cannot express:
     ``[ 1 , 2 ]``, and which key of ``{a: 1, b}`` was written with no ``:``.  Empty for a
     collection the user built -- and an insertion or a deletion changes ``children``, which
     is what stops a stale list from being believed.
+``Node.anchor_at`` / ``Node.tag_at`` / ``Node.colon`` / ``Doc.line_space``
+    where the source put things.  ``anchor_at`` and ``tag_at`` are ``(line, col)`` of the
+    ``&anchor`` and of the tag, which sit *ahead* of the node and so have positions of their
+    own; ``colon`` is ``(line, col)`` of each entry's ``:``, one slot per entry in entry order
+    (``None`` where the source wrote none, as in ``{a: 1, b}``), and is empty when nothing was
+    recorded; ``line_space`` is ``{0-based line: the line verbatim}`` for the source lines the
+    emitter cannot reproduce from a column alone -- the ones holding a TAB and the ones ending
+    in white space -- and is a fact about the *stream*, so only the first document carries it.
+
+    These are **opaque** to the Python layer: it never reads them, it hands them back for a
+    node it did not change (:data:`~yamluna.constructor.NODE_ATTRIB`).  The emitter believes a
+    recorded position only while the output is still on the line it names, so a model that has
+    been edited falls back to the layout path instead of writing them somewhere wrong.
 ``Doc.tags_before_version``
     how many of ``tag_directives`` were written above the ``%YAML`` line; the rest were
     written below it.
@@ -131,7 +144,7 @@ def _boring(value: Any) -> bool:
     ``False`` and ``''`` are printed -- ``own_line=False`` and an empty scalar both mean
     something.  ``bool`` is not caught by the ``int`` test because ``type(False) is bool``.
     """
-    return value is None or value == [] or value == () or (type(value) is int and value == 0)
+    return value is None or value in ([], (), {}) or (type(value) is int and value == 0)
 
 
 class _Record:
@@ -179,6 +192,9 @@ class Node(_Record):
         'after',
         'tag_first',
         'flow_seps',
+        'anchor_at',
+        'tag_at',
+        'colon',
     )
 
     kind: int
@@ -198,6 +214,9 @@ class Node(_Record):
     after: list[Trivia]
     tag_first: bool
     flow_seps: list[str]
+    anchor_at: tuple[int, int] | None
+    tag_at: tuple[int, int] | None
+    colon: list[tuple[int, int] | None]
 
     def __init__(
         self,
@@ -218,6 +237,9 @@ class Node(_Record):
         after: list[Trivia] | None = None,
         tag_first: bool = False,
         flow_seps: list[str] | None = None,
+        anchor_at: tuple[int, int] | None = None,
+        tag_at: tuple[int, int] | None = None,
+        colon: list[tuple[int, int] | None] | None = None,
     ) -> None:
         self.kind = kind
         self.style = style
@@ -236,6 +258,9 @@ class Node(_Record):
         self.after = [] if after is None else after
         self.tag_first = tag_first
         self.flow_seps = [] if flow_seps is None else flow_seps
+        self.anchor_at = anchor_at
+        self.tag_at = tag_at
+        self.colon = [] if colon is None else colon
 
     def _show(self, name: str, value: Any) -> str:
         if name == 'kind' and 0 <= value < len(KIND_NAMES):
@@ -286,6 +311,7 @@ class Doc(_Record):
         'tags_before_version',
         'directives_raw',
         'stream_tail',
+        'line_space',
     )
 
     version: tuple[int, int] | None
@@ -306,6 +332,9 @@ class Doc(_Record):
     #: White space the source ends with that no line break closes.  Always ``''`` when
     #: ``final_line_break`` is set.
     stream_tail: str
+    #: The source lines the emitter cannot reproduce from a column alone, by 0-based line.
+    #: A fact about the stream, so only the first document of one carries it.
+    line_space: dict[int, str]
 
     def __init__(
         self,
@@ -322,6 +351,7 @@ class Doc(_Record):
         tags_before_version: int = 0,
         directives_raw: tuple[str, int] | None = None,
         stream_tail: str = '',
+        line_space: dict[int, str] | None = None,
     ) -> None:
         self.version = version
         self.tag_directives = [] if tag_directives is None else tag_directives
@@ -336,6 +366,7 @@ class Doc(_Record):
         self.tags_before_version = tags_before_version
         self.directives_raw = directives_raw
         self.stream_tail = stream_tail
+        self.line_space = {} if line_space is None else line_space
 
 
 class EmitOptions(_Record):

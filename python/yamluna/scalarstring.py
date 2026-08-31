@@ -119,8 +119,13 @@ class _Anchored:
 #: ("nonempty __slots__ not supported for subtype of 'int'"), so they carry a ``__dict__``.
 #:
 #: ``_yaml_doc`` is ``constructor.DOC_ATTRIB``: a document whose root is a scalar has nowhere
-#: else to keep its own ``%YAML``, ``%TAG``, ``---`` and ``...``.
-_SCALAR_SLOTS = ('_yaml_anchor', '_yaml_line_col', '_comment', '_lexeme', '_yaml_doc')
+#: else to keep its own ``%YAML``, ``%TAG``, ``---`` and ``...``.  ``_yaml_node`` is
+#: ``constructor.NODE_ATTRIB``: the record the scalar was loaded from, which is where the
+#: source facts this package carries but never reads (where the ``&anchor`` and the tag were
+#: written) ride back to the emitter.
+_SCALAR_SLOTS = (
+    '_yaml_anchor', '_yaml_line_col', '_comment', '_lexeme', '_yaml_doc', '_yaml_node',
+)
 
 
 class ScalarString(_Anchored, str):

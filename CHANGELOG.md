@@ -7,6 +7,18 @@ versions follow [semver](https://semver.org/).
 
 ### Fixed
 
+- **The recorded facts now cross the FFI.** `Entry::colon`, `Node::anchor_at`, `Node::tag_at`
+  and `Document::line_space` were recorded by the loader and reproduced by the Rust emitter,
+  but had no record slot, so a *Python* round trip threw away what the core had kept: at
+  `8b05b39` the `yaml-test-suite` round trip scored 302/308 through
+  `yamluna_core::{parse, emit}` and 202/308 through `YAML().load_all` / `.dump_all` (191/308
+  through the single-document `load` / `dump`). They are now `Node.colon`, `Node.anchor_at`,
+  `Node.tag_at`
+  and `Doc.line_space` in `python/yamluna/_record.py`, opaque to the Python layer and handed
+  back unchanged for any node it did not change. `tests/test_suite_roundtrip.py` is the new
+  gate over the Python-side score, and `tests/suite_roundtrip.py` prints it with a diff per
+  failing case, so the two numbers can never silently drift apart again.
+
 - **Directive lines round-trip as written.** The whole region above `---` — reserved directives
   (`%FOO`), the spacing inside `%YAML  1.1`, and any comment on or between those lines — is kept
   verbatim on `Document::directives_raw` and echoed, instead of being reconstructed from
@@ -66,10 +78,11 @@ Python API that replaces `ruamel.yaml`'s `typ='rt'`.
   four upstream bug fixes. Every change is logged in `crates/yamluna-scanner/FORK.md`; the
   402-case `yaml-test-suite` and the upstream unit tests stay green.
 - **GIL-free parsing.** `_yamluna.parse` runs the scanner, loader and trivia attachment inside
-  `py.detach`, so loads across threads overlap — measured 2.8x at 4 threads and 4.3x at 8 on
-  the 249 KiB `nested` input, where `ruamel.yaml` is flat at 1.0x (`bench/bench.py --threads`).
+  `py.detach`, so loads across threads overlap — measured 2.83x at 4 threads and 3.89x at 8 on
+  the 249 KiB `nested` input, where `ruamel.yaml` is flat at 0.98x (`bench/bench.py --threads`).
   Only the parse is GIL-free; building the `Node` records and the `CommentedMap`s on top of
-  them is Python object creation, so `YAML.load` itself scales to 1.19x, not 1.6x.
+  them is Python object creation, so `YAML.load` itself scales to 2.45x at 8 threads, not
+  3.89x.
 - **abi3 wheels** (`cp311-abi3`), Python 3.11+.
 
 ### Fixed, relative to `ruamel.yaml` 0.19.1
@@ -95,21 +108,34 @@ On this commit, reproduce with the commands given:
 
 | | |
 | --- | --- |
-| `tests/corpus/`, byte-identical round trip (`python tests/differential.py`) | yamluna 40/40, `ruamel.yaml` 0.19.1 3/40 (`key-duplicate` is scored on behaviour, not bytes) |
-| `yaml-test-suite`, byte-identical round trip (`cargo test -p yamluna-core --test proptest_roundtrip`) | 302/308 |
-| `yaml-test-suite` conformance in the scanner fork (`cargo test -p yamluna-scanner`) | 402/402 |
+| `tests/corpus/`, byte-identical round trip (`python tests/differential.py`) | yamluna 40/40, `ruamel.yaml` 0.19.1 3/40 (7/40 with `--seq-indent`; `key-duplicate` is scored on behaviour, not bytes) |
+| `yaml-test-suite` round trip through the **Rust core** (`cargo test -p yamluna-core --test proptest_roundtrip`) | 302/308 |
+| `yaml-test-suite` round trip through the **Python API** (`python tests/suite_roundtrip.py`) | 299/308 |
+| `yaml-test-suite` conformance in the scanner fork (`cargo test -p yamluna-scanner --test yaml-test-suite`) | 402/402 |
 | `cargo test --workspace` | 720 passed, 0 failed |
-| `pytest tests` | 1088 passed, 45 skipped, 12 xfailed |
-| load / dump throughput vs `ruamel.yaml` (`python bench/bench.py`, release build) | 1.4x–9.9x faster |
+| `pytest tests` | 1092 passed, 45 skipped, 12 xfailed |
+| load / dump throughput vs `ruamel.yaml` (`python bench/bench.py`, release build) | 1.4x–8.9x faster |
+
+The two round-trip scores are separate on purpose. 302 is what the Rust core reproduces; 299 is
+what a user of `YAML().load_all` / `.dump_all` gets, and it is the lower of the two. Quoting only
+the first would be quoting the core rather than the library. The three cases between them are
+the object model, not the boundary: `emit(parse(x))` through the `_record` classes is asserted
+byte-identical to `parse`-then-`emit` inside Rust for all 308
+(`test_the_record_seam_loses_nothing_over_the_suite`).
 
 ### Known gaps
 
 Each is pinned by a guard list or an xfail that fails if it starts passing. The full list, with
 causes, is in [tests/README.md](tests/README.md#known-gaps).
 
-- 6 of the 308 `yaml-test-suite` cases do not yet round-trip byte-for-byte (`KNOWN_GAPS` in
-  `crates/yamluna-core/tests/proptest_roundtrip.rs`). Four are one cluster: a comment splitting
-  the separation run a flow collection wrote between two of its lexemes.
+- 6 of the 308 `yaml-test-suite` cases do not yet round-trip byte-for-byte through the Rust
+  core (`KNOWN_GAPS` in `crates/yamluna-core/tests/proptest_roundtrip.rs`). Four are one
+  cluster: a comment splitting the separation run a flow collection wrote between two of its
+  lexemes.
+- 9 of the 308 do not round-trip through the Python API (`KNOWN_GAPS` in
+  `tests/test_suite_roundtrip.py`). Six are the six above; the other three — `2JQS`, `X38W`,
+  `6KGN` — are the object model: `CommentedMap` is a `dict`, so two keys that compare equal are
+  one key, and `None` is a singleton with no identity to hang an anchor on.
 - One corpus file does not round-trip through the Python layer: `key-duplicate`
   (`CommentedMap` is a `dict`, so equal keys collapse). The Rust core and the FFI records both
   reproduce all 41 files, so `KNOWN_FAILURES` and `KNOWN_RECORD_GAPS` are empty.

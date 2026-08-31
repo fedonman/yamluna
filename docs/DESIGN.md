@@ -140,19 +140,54 @@ Owned, `'static`, no `'input` parameter. The source text is kept *beside* the tr
 borrowed by it. Nodes are `'static` so they can cross the FFI boundary and so a subtree can
 migrate between documents without a use-after-free.
 
+The model carries two kinds of field. Most say what the document **means** — a version, a tag,
+a scalar's value, an entry's key. A second kind says only how the source **spelled** it: `raw`,
+`colon`, `anchor_at`, `tag_at`, `tag_first`, `flow_seps`, `directives_raw`, `stream_tail`,
+`line_space`. Those exist for one reason, stated in §2.5, and they are what the byte-identity
+invariant of §2.4 is actually built out of. They are marked below.
+
 ```rust
 pub struct Document {
+    // -- meaning --------------------------------------------------------------------------
     pub version: Option<(u32, u32)>,          // `%YAML 1.2`
     pub tag_directives: Vec<TagDirective>,    // `%TAG` lines, in source order
     pub explicit_start: bool,                 // had `---`
     pub explicit_end: bool,                   // had `...`
-    pub root: Option<NodeId>,
+    pub root: Option<NodeId>,                 // `None` for a stream of nothing but trivia
     pub nodes: Vec<Node>,                     // arena; NodeId is an index
     pub leading: Vec<Trivia>,                 // before the document's first token
     pub trailing: Vec<Trivia>,                // after the last node
+    pub duplicate_keys: Vec<DuplicateKey>,    // every repeat, in source order (§2.3)
+
+    // -- spelling (§2.5) ------------------------------------------------------------------
+    /// The directive region verbatim: every line from the last thing consumed through the
+    /// line before `---`, plus how many of `leading`'s trivia were read from inside it.
+    /// `None` when the document has no line beginning with `%`.
+    ///
+    /// `version` and `tag_directives` are a directive line's *meaning*, never its spelling:
+    /// `%YAML  1.1` is the same version as `%YAML 1.1`, a reserved directive (`%FOO bar`)
+    /// has no model at all, and a comment may sit on any of those lines or between them.
+    pub directives_raw: Option<(String, usize)>,
+    /// How many of `tag_directives` were written *above* the `%YAML` line; the rest below.
+    /// The two kinds interleave freely on the page and the model keeps them in separate
+    /// fields, so this is what says where the `%YAML` line sat among them.
+    pub tags_before_version: usize,
+    pub bom: bool,                            // the stream began with a BOM; first doc only
+    pub final_line_break: bool,               // the source ended with a break; last doc only
+    /// White space the source ends with that no line break closes. Always empty when
+    /// `final_line_break` is set — that flag already says the stream ends in a break.
+    pub stream_tail: String,
+    /// The source lines whose white space no column can reproduce: the ones holding a TAB,
+    /// and the ones ending in white space. Keyed by 0-based line, verbatim, without the
+    /// break. A fact about the *stream*, so only its first document carries it, and it is
+    /// read only while the model still matches the page.
+    pub line_space: HashMap<u32, String>,
 }
 
 pub struct TagDirective { pub handle: String, pub prefix: String }
+
+/// A key already present in the same mapping. Recorded, never silently merged (§2.3).
+pub struct DuplicateKey { pub key: String, pub first: Position, pub again: Position }
 
 pub type NodeId = u32;
 
@@ -163,20 +198,58 @@ pub enum NodeKind {
     Alias    { anchor: String },
 }
 
-pub struct Entry { pub key: NodeId, pub value: NodeId, pub merge: bool }
+pub struct Entry {
+    pub key: NodeId,
+    pub value: NodeId,
+    pub merge: bool,                  // a `<<` key; recorded, never expanded (§2.3)
+    pub explicit: bool,               // written in the `? key` / `: value` form
+    // -- spelling (§2.5) --
+    /// Where the `:` between the key and the value was written, or `None` when the source
+    /// wrote none (`{a: 1, b}`) or the entry was built rather than loaded. The gap between a
+    /// key and its `:` is white space no node owns, so without this `date   : 2001-01-23`
+    /// comes back as `date:    2001-01-23` — the same columns, the wrong spelling.
+    pub colon: Option<Position>,
+}
 
 pub struct Node {
+    // -- meaning --------------------------------------------------------------------------
     pub kind: NodeKind,
     pub anchor: Option<String>,       // `&name`, without the `&`
     pub tag: Option<NodeTag>,
     pub style: Style,
     /// Cooked scalar value (escapes resolved, block scalars folded). `Scalar` nodes only.
     pub value: Option<String>,
-    /// The lexeme exactly as written, including quotes / block header. `Scalar` nodes only.
-    /// This is what makes an unmodified round trip byte-exact.
-    pub raw: Option<String>,
     pub pos: Position,                // 0-based line and column of the node's first character
     pub trivia: Trivia4,
+
+    // -- spelling (§2.5) ------------------------------------------------------------------
+    /// The lexeme exactly as written, including quotes / block header. `Scalar` nodes only.
+    /// This is what makes an unmodified round trip byte-exact. An implicit empty node
+    /// (`key:` with nothing after it) has `Some("")`; a node the user built has `None`.
+    pub raw: Option<String>,
+    /// Where the `&anchor` and the tag were written, or `None` for a node with neither or
+    /// one the user built. `pos` is the node's *content*, and a property sits ahead of it at
+    /// a line and column nothing else records: without these an anchored key lands at the
+    /// cursor's column rather than the mapping's, the gap after `&anchor` becomes padding to
+    /// the content column rather than the space the source wrote, and a property the source
+    /// put on a line of its own is pulled up onto the node's.
+    pub anchor_at: Option<Position>,
+    pub tag_at: Option<Position>,
+    /// The tag was written *before* the anchor (`!!str &a v`, not `&a !!str v`). YAML allows
+    /// either order and neither is canonical, so the emitter has to be told which was used.
+    pub tag_first: bool,
+    /// What a flow collection's source wrote *between* its lexemes: one run in front of each
+    /// child and one in front of the closing bracket, so a recorded vector is always
+    /// `children + 1` long. Each run is the separation verbatim — white space, `,`, `:`, `?`
+    /// — with its comments taken out, because those are trivia and are written from there;
+    /// anything else (a node's own `&anchor` or tag) ends the run.
+    ///
+    /// It is the one fact that tells `[1, 2]` from `[1, 2, ]` from `[ 1 , 2 ]`, says which
+    /// key of `{a: 1, b}` was written with no `:`, and remembers that the gap in `[a<TAB>,
+    /// b]` was a TAB. Empty for a collection the user built or edited, which the emitter
+    /// lays out instead — and empty is the *only* "not recorded", so a stale vector cannot
+    /// survive an insertion or a deletion.
+    pub flow_seps: Vec<String>,
 }
 
 pub enum Style { Scalar(ScalarStyle), Block, Flow }
@@ -295,11 +368,70 @@ Order of implementation, each stage independently testable:
 **Invariant (the acceptance criterion for the whole crate):** for a node loaded and not
 mutated, the emitter reproduces `raw` verbatim and re-emits trivia in source position, so
 `load → dump` is byte-identical to the input. Style decisions are only consulted for nodes the
-user constructed or modified.
+user constructed or modified. §2.5 says how far that reaches: not just the lexemes, but
+everything between them.
 
 **Emitter options** (`EmitOptions`): `map_indent` (default 2), `seq_indent` (default 2),
 `seq_offset` (default 0), `width` (default 80), `line_break` (`\n`/`\r\n`/`\r`), `explicit_start`,
 `explicit_end`, `default_flow_style`, `canonical`, `preserve_quotes`.
+
+### 2.5 Record the separation, do not reconstruct it
+
+The rule the "spelling" fields of §2 all come from. Applying it is the single change that
+moved the `yaml-test-suite` round-trip score from **209 of 308 to 302 of 308** — measured by
+running `cargo test -p yamluna-core --test proptest_roundtrip
+yaml_test_suite_round_trips_byte_for_byte -- --nocapture` at `1e3b22d` and at `8b05b39`:
+
+> **Whatever the source wrote *between* two lexemes is a fact about the document. Record it
+> verbatim. Never derive it from the two lexemes it sits between.**
+
+A document is not a sequence of nodes. It is a sequence of nodes *and the gaps between them*,
+and the gaps carry as much of the author's intent as the nodes do — which column a key is
+aligned to, whether a flow sequence has a trailing comma, whether the space before a `:` is
+one space or seven, whether a tag sits on the node's line or the line above it. None of that
+follows from the tree. A model that keeps only the tree has to *invent* the gaps on the way
+out, and an invention that is right for one file is wrong for the next.
+
+The failure mode is specific and it is not a crash: the output is valid YAML, holds the right
+data, and has a diff. The reconstruction is *plausible* — `date   : 2001-01-23` comes back as
+`date:    2001-01-23`, same columns, different spelling — which is what makes it so easy to
+ship. Every gap in the emitter that took a real debugging session had this shape.
+
+So a gap gets a field of its own, sized to the gap and not to a node:
+
+| the gap | the field |
+|---|---|
+| between a key and its `:` | `Entry::colon` |
+| between a `&anchor` or a tag and the node it decorates | `Node::anchor_at`, `Node::tag_at`, `Node::tag_first` |
+| between a flow collection's own lexemes — brackets, commas, colons | `Node::flow_seps` |
+| between the `%` lines and the `---` | `Document::directives_raw`, `Document::tags_before_version` |
+| after the last lexeme of a line, and inside any line holding a TAB | `Document::line_space` |
+| after the last lexeme of the stream | `Document::stream_tail` |
+| inside a scalar's own lexeme | `Node::raw` |
+
+Three consequences the rest of the model has to respect:
+
+1. **A recorded gap is verbatim, not normalised.** `flow_seps` keeps the TAB in `[a<TAB>, b]`,
+   `directives_raw` keeps the two spaces in `%YAML  1.1`. The moment a recorder "tidies" its
+   input it has become a reconstructor with extra steps.
+2. **Comments come out of the run, and only comments.** A comment is trivia (§2.1) and is
+   written from its slot, so `flow_seps` holds the separation with its comments removed.
+   That is the boundary of the rule, and the four `KNOWN_GAPS` cases in the flow cluster are
+   exactly where a comment *splits* a run that then cannot be put back around it.
+3. **Empty means "not recorded", and nothing else.** A user edit invalidates the spelling of
+   the region it touched, so an edited collection clears `flow_seps` and the emitter lays it
+   out from the options instead. There is no third state — no stale vector that outlived the
+   `children` it described — which is what keeps a mutation from emitting punctuation for a
+   lexeme that is no longer written.
+
+The same rule applies at the FFI boundary (§3): **a recorded fact that does not cross it is a
+fact the Python API loses**, no matter how carefully the core kept it. That is not
+hypothetical — at `8b05b39`, `Entry::colon`, `Node::anchor_at`, `Node::tag_at` and
+`Document::line_space` were recorded and emitted correctly by the core while having no record
+slot, and the suite scored **302/308 through `parse`/`emit` against 202/308 through
+`YAML().load_all`/`.dump_all`**. Giving them slots is what closed most of that gap; §6.5 is the
+acceptance rule that keeps the two numbers measured side by side so it cannot silently
+reopen.
 
 ---
 
@@ -315,40 +447,97 @@ ever built.
 # python/yamluna/_record.py  -- the FFI contract, owned by Python
 class Node:
     __slots__ = ('kind', 'style', 'anchor', 'tag', 'value', 'raw',
-                 'line', 'col', 'children', 'merge',
-                 'before', 'eol', 'inner', 'after')
+                 'line', 'col', 'children', 'merge', 'explicit',
+                 'before', 'eol', 'inner', 'after',
+                 'tag_first', 'flow_seps', 'anchor_at', 'tag_at', 'colon')
+    # -- meaning --
     kind: int                             # 0 scalar, 1 sequence, 2 mapping, 3 alias
     style: int                            # ScalarStyle for scalars, BLOCK/FLOW for collections
-    anchor: str | None                    # `&name`, without the `&`
+    anchor: str | None                    # `&name` defined, or `*name` referenced for an alias
     tag: tuple[str, str, str] | None      # (handle, suffix, resolved) as written
     value: str | None                     # cooked scalar value
-    raw: str | None                       # source lexeme, verbatim; byte-exact round trip
     line: int; col: int                   # 0-based
     children: list[int]                   # node indices: seq items, or k,v,k,v for mappings
-    merge: list[int]                      # positions in `children` that are `<<` entries
+    merge: list[int]                      # positions in `children` holding a `<<` key
+    explicit: list[int]                   # positions in `children` holding a `? key`
     before: list[Trivia]; eol: Trivia | None
     inner: list[Trivia]; after: list[Trivia]
+    # -- spelling (§2.5) --
+    raw: str | None                       # source lexeme, verbatim; byte-exact round trip
+    tag_first: bool                       # `!!str &a v`, not `&a !!str v`
+    flow_seps: list[str]                  # a flow collection's runs; len(children) + 1, or []
+    anchor_at: tuple[int, int] | None     # where the `&anchor` was written
+    tag_at: tuple[int, int] | None        # where the tag was written
+    colon: list[tuple[int, int] | None]   # where each entry's `:` was written; [] if unrecorded
 
 class Trivia:
     __slots__ = ('text', 'own_line', 'col', 'blank_lines')
+    # a comment (`text` set, `blank_lines == 0`) or a run of blank lines (`blank_lines > 0`)
 
 class Doc:
     __slots__ = ('version', 'tag_directives', 'explicit_start', 'explicit_end',
-                 'root', 'nodes', 'leading', 'trailing')
+                 'root', 'nodes', 'leading', 'trailing',
+                 'bom', 'final_line_break', 'tags_before_version',
+                 'directives_raw', 'stream_tail', 'line_space')
+    # -- meaning --
+    version: tuple[int, int] | None
+    tag_directives: list[tuple[str, str]]
+    explicit_start: bool; explicit_end: bool
+    root: int | None; nodes: list[Node]
+    leading: list[Trivia]; trailing: list[Trivia]
+    # -- spelling (§2.5) --
+    bom: bool                             # first document of the stream only
+    final_line_break: bool                # last document of the stream only
+    tags_before_version: int              # `%TAG` lines written above the `%YAML` line
+    directives_raw: tuple[str, int] | None  # the `%` region verbatim, + how many `leading` it ate
+    stream_tail: str                      # trailing white space no line break closes
+    line_space: dict[int, str]            # {0-based line: verbatim} for TAB / trailing-space lines
 ```
+
+`Entry` has no record class: a mapping's entries are flattened into `children` as
+`k, v, k, v, …`, and the per-entry facts of §2 travel as parallel lists indexed off that —
+`merge` and `explicit` hold the `children` position of the key, and `colon` holds one slot per
+entry in entry order. The flat shape is what keeps the boundary one allocation per node.
+
+**The spelling fields are opaque to the Python layer.** It never reads `raw`, `flow_seps`,
+`colon`, `anchor_at`, `tag_at`, `directives_raw`, `stream_tail` or `line_space`; it carries them
+back unchanged for a node it did not change, and drops them for one it did. That is the §2.5
+rule at the seam, and it is the whole reason the record list is this long: **every recorded fact
+needs a slot, or the Python API loses what the core kept.** Measured — the suite round trip
+scores 302/308 through `yamluna_core::{parse, emit}` and 299/308 through
+`YAML().load_all`/`.dump_all`, and `tests/test_suite_roundtrip.py` is the gate that keeps the
+difference visible instead of letting it grow again. The seam's own half of that is asserted
+directly: `emit(parse(x))` through these classes is byte-identical to `parse`-then-`emit`
+inside Rust for all 308 cases (§6.6) and for all 41 corpus files
+(`tests/test_bindings.py`), so a field that stops crossing fails there rather than at the
+headline number.
 
 ```python
 # yamluna._yamluna, the Rust extension
-def parse(source: str, *, allow_duplicate_keys: bool) -> list[Doc]: ...
+def parse(source: str, *, allow_duplicate_keys: bool = True,
+          name: str = '<unicode string>') -> list[Doc]: ...
 def emit(docs: list[Doc], opts: EmitOptions) -> str: ...
+def _roundtrip_in_rust(source: str, opts: EmitOptions) -> str: ...
 ```
 
-- `py.allow_threads` around parse and emit. The core touches nothing Python, so this is
-  trivially safe and gives genuinely parallel loads — something ruamel cannot do.
-- Errors cross as a structured `ParseError { kind, message, line, col, index }` and the Python
-  layer raises the right class from its own hierarchy. Do not classify by string-matching.
-- `abi3-py311` wheels, plus separate `cp313t`/`cp314t` freethreaded builds — abi3 does not
-  cover `Py_GIL_DISABLED`.
+`_roundtrip_in_rust` never touches a record: it parses and emits entirely inside the core, so
+`tests/test_bindings.py` can subtract it from `emit(parse(...))` and get exactly what the
+records lose. It exists for that subtraction and for nothing else.
+
+- `Python::detach` (`allow_threads` before PyO3 0.26) around parse and emit. The core touches
+  nothing Python, so this is trivially safe and gives genuinely parallel loads — something
+  ruamel cannot do.
+- Errors cross as a structured `ParseError { kind, message, line, col, index }`: `line` and
+  `col` are 0-based, `index` is a **char** offset after the BOM was stripped (§1.5), and `kind`
+  is an `ErrorKind` so the Python layer raises the right class from its own hierarchy without
+  string-matching. `ErrorKind` has one variant today, `Scanner` — everything the core can fail
+  on is lexical or syntactic. `ComposerError` and `DuplicateKeyError` are raised by the Python
+  layer from facts the core *records* rather than errors it raises (`Document::duplicate_keys`,
+  an alias with no anchor in scope), which is why they need no variant here.
+- `abi3-py311` wheels (`abi3-py311` in `crates/yamluna-py/Cargo.toml`, `cp311-abi3` in the
+  filename), Python 3.11+. Freethreaded `cp313t`/`cp314t` builds are **not built yet**: abi3
+  does not cover `Py_GIL_DISABLED`, so they need their own matrix entry, and the wheel job in
+  `.github/workflows/ci.yml` builds only the abi3 wheel today.
 
 ---
 
@@ -455,11 +644,16 @@ applies:
 
 ```yaml
 %TAG ! tag:libx.circuits/
-%TAG !g! tag:libx.gates/
+%TAG !libx-gates! tag:libx.gates/
 ---
 a: !Circuit
-b: !g!Circuit
+  qubits: 2
+b: !libx-gates!Circuit
+  width: 1
 ```
+
+(That block is the verbatim output of `examples/custom_classes.py`, which is what the handle
+derivation actually produces: `libx.gates` sanitised to `libx-gates`, not shortened.)
 
 **When no directive is written.** If the document uses no registered classes at all, no `%TAG`
 line is emitted. A document that *does* use registered classes always declares its sources, even
@@ -505,3 +699,18 @@ unchanged.
    defect in yamluna.
 4. Mutation tests: comments stay attached to the right node across `insert`, `del`, `pop`,
    `move_to_end` and key rename — the cases where ruamel's index-keyed model drifts.
+5. **The same invariant at both ends of the FFI.** `yaml-test-suite` is round-tripped twice: by
+   `yamluna_core::{parse, emit}` (`crates/yamluna-core/tests/proptest_roundtrip.rs`) and by
+   `YAML().load_all` / `.dump_all` (`tests/test_suite_roundtrip.py`), over the same case list,
+   extracted the same way. Both scores are published, separately, and every case either passes
+   or is on that harness's `KNOWN_GAPS` with a cause. **The second number is the library's**;
+   the first is only the core's, and the difference between them is what the boundary and the
+   object model lose (§2.5). Measured on this commit: 302/308 and 299/308. Quoting one of them
+   alone is quoting the wrong layer.
+6. **The boundary loses nothing, and it is asserted rather than believed.** The same 308 cases
+   go through `emit(parse(x))` via the `_record` classes and through `parse`/`emit` inside
+   Rust, and the two must be byte-identical
+   (`test_the_record_seam_loses_nothing_over_the_suite`). While it holds, rule 5's difference
+   is the object model (§4.1) alone — currently `2JQS`, `X38W` and `6KGN`, all three a `dict`
+   that cannot hold one key twice or a `None` that has no identity — and any new Python-side
+   gap that is *not* one of those shapes is a record slot that went missing.

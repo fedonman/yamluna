@@ -117,44 +117,66 @@ The one yamluna does not manage, and why:
 It is pinned by a guard list that fails the suite if it starts passing, so a fix cannot leave a
 stale excuse behind. `tests/README.md` has the per-file table and what ruamel does to each one.
 
-The wider net is the **`yaml-test-suite`**, the cross-implementation conformance corpus. Two
-harnesses run against it:
+The wider net is the **`yaml-test-suite`**, the cross-implementation conformance corpus.
+Three harnesses run against it, and they measure three different things — the numbers are not
+interchangeable and this table is the honest way to read them:
 
-| | |
-|---|---|
-| `cargo test -p yamluna-scanner` | 402 / 402 conformance cases pass — the fork's regression net, green after every patch |
-| `cargo test -p yamluna-core --test proptest_roundtrip` | 302 / 308 parsed cases round-trip **byte-identically** |
+| harness | what it round-trips | score |
+|---|---|---|
+| `cargo test -p yamluna-scanner --test yaml-test-suite` | the fork parses what upstream parses | **402 / 402** conformance cases |
+| `cargo test -p yamluna-core --test proptest_roundtrip` | the **Rust core**, `parse` → `emit` | **302 / 308** byte-identical |
+| `python tests/suite_roundtrip.py` | the **Python API**, `YAML().load_all` → `.dump_all` | **299 / 308** byte-identical |
 
-The second number is the honest one and it is not yet 308. The six that are left are named in
-[tests/README.md](tests/README.md#known-gaps) with their causes, and pinned by a `KNOWN_GAPS`
-list that fails the suite if one starts passing; four of them are one cluster, a comment
-splitting the separation run a flow collection wrote between two of its lexemes. That test
-prints every failing case with its input and its output, so the gap is a worklist rather than an
-estimate. Alongside it, a proptest generates documents and asserts the same property, and a
-second-pass check asserts that emitting twice is a fixed point.
+The last row is the one a user actually gets, and it is the lower of the two round-trip
+numbers, so both are quoted. Both harnesses read the same 308 cases, extracted the same way,
+so they subtract: the **three** cases the Rust core round-trips and the Python API does not
+are `2JQS`, `X38W` and `6KGN`, and all three are the object model rather than the seam.
+`CommentedMap` is a `dict`, so two entries with an empty key (`2JQS`) or an alias that *is*
+its own mapping's key (`X38W`) collapse to one and raise; `None` is a singleton with no
+identity, so an alias to an anchored null (`6KGN`) has nothing to alias. Not subclassing
+`dict` and `list` buys them back, and costs `isinstance(x, dict)`, `json.dumps`, `deepcopy`,
+`pickle` and `==` — the trade [DESIGN §4.1](docs/DESIGN.md) makes on purpose.
+
+That the difference is *only* the object model is a gate, not a measurement:
+`test_the_record_seam_loses_nothing_over_the_suite` asserts that all 308 cases come out of
+`emit(parse(x))` **through the `_record` classes** byte-identical to `parse`-then-`emit`
+inside Rust, so a fact that stops crossing the FFI fails there and names the case. It has not
+always held — at `8b05b39` the colon column, the two property positions and the source's own
+white space were recorded and emitted correctly by the core while having no record slot, and
+the same 308 cases scored 302 in Rust against 202 here. `tests/test_suite_roundtrip.py` is
+the gate that fails when either number regresses, and `suite_roundtrip.py --rust` prints them
+side by side.
+
+Every remaining failure in both rows is named in
+[tests/README.md](tests/README.md#known-gaps) with its cause, and pinned by a `KNOWN_GAPS`
+list that fails the suite if one starts passing. Of the six the Rust core still loses, four are
+one cluster: a comment splitting the separation run a flow collection wrote between two of its
+lexemes. Both harnesses print every failing case with its input and its output, so the gap is a
+worklist rather than an estimate. Alongside them, a proptest generates documents and asserts
+the same property, and a second-pass check asserts that emitting twice is a fixed point.
 
 ## Speed
 
 `bench/bench.py` generates its four inputs rather than committing them, gives both libraries the
 same two lines of configuration (`YAML()`, `preserve_quotes = True`), and reports the **median**
 of five `timeit` batches. Measured on a 12th Gen Intel Core i7-1280P (20 hw threads), Linux,
-CPython 3.13.12, yamluna 0.1.0 vs `ruamel.yaml` 0.19.1:
+CPython 3.13.12, yamluna 0.1.0 vs `ruamel.yaml` 0.19.1, release build:
 
 | document | size | load | dump | load+dump |
 |---|---:|---:|---:|---:|
-| `config` — a hand-written config file | 1 KiB | 9.9x | 4.0x | 5.5x |
-| `nested` — a deep tree, many collections | 249 KiB | 1.4x | 3.8x | 1.8x |
-| `comments` — three lines in four are trivia | 150 KiB | 3.2x | 2.6x | 3.0x |
-| `scalars` — a flat run of every scalar style | 37 KiB | 8.6x | 5.1x | 6.6x |
+| `config` — a hand-written config file | 1 KiB | 8.9x | 3.5x | 5.0x |
+| `nested` — a deep tree, many collections | 249 KiB | 1.4x | 3.2x | 1.8x |
+| `comments` — three lines in four are trivia | 150 KiB | 3.2x | 2.3x | 2.9x |
+| `scalars` — a flat run of every scalar style | 37 KiB | 8.1x | 4.8x | 6.3x |
 
-Faster everywhere, between 1.4x and 9.9x. The margin narrows to **1.4x** on loading the deep
+Faster everywhere, between 1.4x and 8.9x. The margin narrows to **1.4x** on loading the deep
 `nested` tree, and that is the number worth knowing: a document that is almost entirely
 collection structure spends its time building one Python object per node, which no amount of
 Rust helps with. `bench.py` splits a yamluna round trip into three layers — Rust only / + FFI
-records / + object model — and finds **23–83%** of the time going into building the Python
+records / + object model — and finds **22–81%** of the time going into building the Python
 objects, which is where the next win is, not in the Rust. (Build the extension with
 `maturin develop --uv --release` before benchmarking; a debug build is slower than ruamel on
-`nested`.)
+`nested` — measured, 1.8x slower.)
 
 `_yamluna.parse` runs the scanner, the loader and the trivia attachment inside `py.detach`, so
 loads across threads genuinely overlap — something a pure-Python library cannot do at all. 32
@@ -163,16 +185,18 @@ ascending and descending, faster of the two, so the ordering does not decide the
 
 | workload | 1 | 2 | 4 | 8 | speedup at 8 |
 |---|---:|---:|---:|---:|---:|
-| yamluna `_yamluna.parse` | 10.79 s | 6.19 s | 3.92 s | 2.54 s | **4.25x** |
-| yamluna `YAML.load` | 11.98 s | 7.32 s | 4.79 s | 3.99 s | 3.00x |
-| ruamel `YAML.load` | 16.40 s | 15.64 s | 16.46 s | 16.96 s | 0.97x |
+| yamluna `_yamluna.parse` | 11.26 s | 6.41 s | 3.98 s | 2.90 s | **3.89x** |
+| yamluna `YAML.load` | 13.10 s | 8.87 s | 6.72 s | 5.34 s | 2.45x |
+| ruamel `YAML.load` | 16.49 s | 15.79 s | 16.52 s | 16.83 s | 0.98x |
 
 Sub-linear, and stated as measured. Only the *parse* is GIL-free: building the flat `Node`
 records, and everything `Constructor` does on top of them, is Python object creation and holds
-the lock, which is why `YAML.load` reaches 3.00x where `parse` reaches 4.25x. ruamel is flat, as
+the lock, which is why `YAML.load` reaches 2.45x where `parse` reaches 3.89x. ruamel is flat, as
 a pure-Python library has to be. Past four threads this laptop schedules onto efficiency cores,
-so the per-thread gain tails off; two runs of the whole benchmark agreed to within about 5% on
-every ratio here.
+so the per-thread gain tails off. Every figure in this section is one run of
+`python bench/bench.py` against a `--release` build on the machine named above; a laptop under
+thermal management does not repeat to better than a few percent, so read the shape, not the
+third digit.
 
 ## The tag registry
 
@@ -264,6 +288,12 @@ unrelated value if you later re-add the key; `move_to_end` sends a comment to th
 document; and `CommentedSeq.reverse()` moves no comments whatsoever. yamluna attaches trivia to
 the node it describes, so a mutating list or dict operation is correct by construction — including
 the ones nobody remembered to override.
+
+One position is not there yet, and it is written down rather than glossed: an own-line comment
+above a collection's **first** child is filed on the collection rather than on that child, so it
+stays put while the child moves. Twelve xfails in `tests/test_mutation.py` pin it and the four
+`docs/DIVERGENCES.md` entries it touches each carry their measured output. Every byte still
+round-trips either way; what is wrong is the ownership, for one position out of n.
 
 **Blank lines are counted, not smuggled** (A7, B9). ruamel encodes them as bare `\n`s inside
 another node's comment text, which loses a leading blank line and normalises whitespace-only lines.

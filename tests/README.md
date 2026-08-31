@@ -5,11 +5,32 @@ measures it. When a design question comes up ("should the emitter normalise this
 is whichever choice keeps the corpus byte-identical.
 
 ```
-corpus/            41 hand-written YAML files, one concern each
-conftest.py        corpus discovery + the single yamluna seam
-differential.py    ruamel.yaml 0.19.1 and yamluna, scored side by side
-test_roundtrip.py  DESIGN 6.2 end to end: dump(load(text)) == text
+corpus/                  41 hand-written YAML files, one concern each
+conftest.py              corpus discovery + the single yamluna seam
+differential.py          ruamel.yaml 0.19.1 and yamluna, scored side by side
+test_roundtrip.py        DESIGN 6.2 end to end: dump(load(text)) == text
+test_suite_roundtrip.py  the same, over yaml-test-suite, through the Python API
+suite_roundtrip.py       that score interactively, with a diff per failing case
 ```
+
+**Three round-trip scores, and they are not the same number.** Each measures a different
+stack, so quoting one of them as "the" score is quoting the wrong thing:
+
+<!-- scores: regenerate with the three commands in the right-hand column -->
+
+| what round-trips | over | score | command |
+|---|---|---|---|
+| the Python API — `YAML().load` → `.dump` | `tests/corpus/` | **40 / 40** (of 41 files; `key-duplicate` is scored on behaviour, below) | `python tests/differential.py` |
+| the Rust core — `parse` → `emit` | `yaml-test-suite` | **302 / 308** | `cargo test -p yamluna-core --test proptest_roundtrip` |
+| the Python API — `YAML().load_all` → `.dump_all` | `yaml-test-suite` | **299 / 308** | `python tests/suite_roundtrip.py` |
+
+The corpus is what the library is *for*; the suite is what YAML *is*. The gap between the
+second and third rows is **three cases**, and as of this commit all three are the Python
+object model (`2JQS`, `X38W`, `6KGN` below) rather than the FFI seam: the seam carries every
+recorded fact, and `test_the_record_seam_loses_nothing_over_the_suite` is the gate that keeps
+it that way over all 308. When a recorded fact stops crossing, that gate fails first and names
+the case — which is the failure DESIGN §2.5 is about, and the one that cost 100 cases at
+`8b05b39`.
 
 ## Running things
 
@@ -29,12 +50,23 @@ PYTHONPATH=python .venv/bin/python tests/differential.py comment-eol
 # ruamel again with the indentation style most of the corpus uses
 PYTHONPATH=python .venv/bin/python tests/differential.py --seq-indent
 
+# yaml-test-suite through the Python API: the score, and every failing case
+PYTHONPATH=python .venv/bin/python tests/suite_roundtrip.py
+
+# ... with in/out for each failure, or for one case
+PYTHONPATH=python .venv/bin/python tests/suite_roundtrip.py --diff
+PYTHONPATH=python .venv/bin/python tests/suite_roundtrip.py 26DV
+
+# ... alongside the Rust core's score for the same 308 cases, to see the difference
+PYTHONPATH=python .venv/bin/python tests/suite_roundtrip.py --rust
+
 # the Python suite (needs `maturin develop --uv` first for the corpus tests)
 PYTHONPATH=python .venv/bin/pytest tests -q
 
 # the Rust side
-cargo test --workspace                       # core + emitter unit tests
-cargo test -p yamluna-scanner                # upstream tests + yaml-test-suite
+cargo test --workspace                          # everything: 720 tests
+cargo test -p yamluna-scanner --test yaml-test-suite   # the fork's 402 conformance cases
+cargo test -p yamluna-core --test proptest_roundtrip -- --nocapture   # the suite round trip
 ```
 
 `differential.py` exits non-zero if the corpus itself is malformed (not UTF-8, or a file whose
@@ -44,11 +76,13 @@ first line is not a `# covers:` comment), so it doubles as the corpus lint.
 
 | layer | assertion | where |
 |---|---|---|
-| `yamluna-scanner` | the upstream unit tests and all 402 `yaml-test-suite` cases stay green after every patch; `keep_comments(false)` is byte-identical to upstream | `cargo test -p yamluna-scanner` |
+| `yamluna-scanner` | the upstream unit tests and all 402 `yaml-test-suite` cases stay green after every patch; `keep_comments(false)` is byte-identical to upstream | `cargo test -p yamluna-scanner` (585 tests, of which `--test yaml-test-suite` is the 402) |
 | `yamluna-core` | for every corpus file, `load -> dump` with nothing mutated is **byte-identical to the input** (DESIGN 6.2) | Rust integration test over `tests/corpus` |
 | `yamluna-py` | `emit(parse(text))` through the `_record` classes is byte-identical to `parse`-then-`emit` inside Rust: every record gap is named in `KNOWN_RECORD_GAPS`, with the field it needs | `tests/test_bindings.py` |
 | `python/yamluna` | the object model, registry and error hierarchy, tested against hand-built record lists — no extension needed | `pytest tests` |
 | end to end | `YAML().dump(YAML().load(text)) == text` for every corpus file, with every exception named in `KNOWN_LOSSES` | `tests/test_roundtrip.py` |
+| end to end, wide | `YAML().dump_all(YAML().load_all(text)) == text` for all 308 `yaml-test-suite` cases, with every exception named in `KNOWN_GAPS` — the same cases the Rust harness scores, extracted the same way, so the two numbers subtract | `tests/test_suite_roundtrip.py` |
+| the seam, wide | `emit(parse(text))` through the `_record` classes is byte-identical to `parse`-then-`emit` inside Rust for all 308 suite cases, so the difference between the two round-trip scores is the object model and nothing else | `tests/test_suite_roundtrip.py::test_the_record_seam_loses_nothing_over_the_suite` |
 | differential | every divergence from ruamel is either a deliberate fix recorded in `docs/DIVERGENCES.md` or a defect in yamluna (DESIGN 6.3) | `differential.py` |
 | mutation | comments stay attached to the right node across `insert`, `del`, `pop`, `move_to_end` and key rename (DESIGN 6.4) | `pytest tests` |
 
@@ -180,7 +214,7 @@ reproduced further down.
 Everything that does not pass, with its cause and the guard that will notice when it stops
 failing. Nothing on this list is silent: each entry fails the suite if it starts passing.
 
-**The corpus — 1 of 41.**
+#### The corpus — 1 of 41
 
 | file | cause | pinned by |
 |---|---|---|
@@ -188,13 +222,15 @@ failing. Nothing on this list is silent: each entry fails the suite if it starts
 
 `text-tabs` and `flow-forms` were the last two to close: both needed the separation a flow
 collection's source wrote *between* its lexemes, which is one field — `Node.flow_seps`, carried
-across the FFI by the record slot of the same name. `KNOWN_FAILURES`
+across the FFI by the record slot of the same name (DESIGN §2.5). `KNOWN_FAILURES`
 (`crates/yamluna-core/tests/roundtrip.rs`) and `KNOWN_RECORD_GAPS` (`tests/test_bindings.py`)
 are both empty as a result.
 
-**`yaml-test-suite` — 6 of 308.** `cargo test -p yamluna-core --test proptest_roundtrip` scores
-every suite case that parses; these six do not come back byte-identical. Each is a real defect
-with a minimal repro, pinned by `KNOWN_GAPS` in that file, which fails if one starts passing.
+#### `yaml-test-suite` through the Rust core — 6 of 308
+
+`cargo test -p yamluna-core --test proptest_roundtrip` runs `parse → emit` over every suite
+case; these six do not come back byte-identical. Each is a real defect with a minimal repro,
+pinned by `KNOWN_GAPS` in that file, which fails if one starts passing.
 
 | case | cause |
 |---|---|
@@ -207,21 +243,49 @@ with a minimal repro, pinned by `KNOWN_GAPS` in that file, which fails if one st
 
 The first four are one cluster: everything a flow collection wrote between its lexemes is one
 `String` per gap with the comments taken out of it, so a run that a comment splits cannot be put
-back around that comment. The other two each need one recorded position the model does not carry.
+back around that comment (DESIGN §2.5, consequence 2). The other two each need one recorded
+position the model does not carry.
 
-**Mutation — 12 xfails, all in `tests/test_mutation.py`.** Two causes, and both are model
-defects rather than test debt:
+#### `yaml-test-suite` through the Python API — 9 of 308
+
+`python tests/suite_roundtrip.py` runs `YAML().load_all → .dump_all` over the same 308 cases;
+`tests/test_suite_roundtrip.py` is the gate over the same list, with the same excuses in its own
+`KNOWN_GAPS`. **Six of the nine are the six above** — the core loses them first, so the API
+cannot get them back. The other three are the Python side's own, and all three are the same
+trade: `CommentedMap` is a `dict` and `CommentedSeq` is a `list` (DESIGN §4.1), so two objects
+that compare equal are one key, and `None` is a singleton with no identity to hang an anchor on.
+
+| case | cause |
+|---|---|
+| `6HB6`, `7TMG`, `CN3R`, `CT4Q`, `M5C3`, `M7A3` | the six core gaps above, unchanged — each is marked `(core)` in `KNOWN_GAPS` |
+| `2JQS` — `': a\n: b\n'` | two entries with an empty key are two entries with the *same* key, so the constructor raises `DuplicateKeyError` where the core keeps both. The `key-duplicate` wall, reached through `null` |
+| `X38W` — `'{ &a [a, &b b]: *b, *a : [c, *b, d]}'` | an alias used as a key of the mapping its own anchor is defined in is the *same object* as that key, so the mapping has a duplicate key and raises. The same wall, reached through an alias |
+| `6KGN` — `'a: &anchor\nb: *anchor\n'` | an anchor on a null survives on the parent, but an alias to it constructs to the one `None` singleton, which carries no identity to alias on, so `b: *anchor` comes back `b:` |
+
+Buying these three back means not subclassing `dict` and `list`, which costs `isinstance(x,
+dict)`, `json.dumps`, `deepcopy`, `pickle` and `==` — the trade DESIGN §4.1 makes on purpose.
+The core keeps all three; only the object model cannot represent them.
+
+#### Mutation — 12 xfails, all in `tests/test_mutation.py`
+
+Two causes, and both are model defects rather than test debt:
 
 | xfails | cause |
 |---|---|
-| 8 — `test_a2_insert_at_the_front`, `test_a3_deleting_the_first_item`, `test_a4_deleting_the_first_key`, `test_a5_move_to_end`, `test_a5_move_to_front`, `test_a6_reverse`, `test_map_clear`, `test_seq_clear` | `loader.rs::take_before` files a first child's own-line comment on the enclosing collection's `inner` slot rather than on the child's `before`, so an insertion at the front labels the new element with the old one's comment. Every byte still round-trips; only the ownership is wrong, and only for the first child. DESIGN 2.2 rule 2 requires `before` and says so; DIVERGENCES A2–A6 carry the same caveat. |
+| 8 — `test_a2_insert_at_the_front`, `test_a3_deleting_the_first_item`, `test_a4_deleting_the_first_key`, `test_a5_move_to_end`, `test_a5_move_to_front`, `test_a6_reverse`, `test_map_clear`, `test_seq_clear` | `loader.rs::take_before` files a first child's own-line comment on the enclosing collection's `inner` slot rather than on the child's `before`, so an insertion at the front labels the new element with the old one's comment. Every byte still round-trips; only the ownership is wrong, and only for the first child. DESIGN §2.2 rule 2 requires `before` and says so; DIVERGENCES A2–A6 carry the same caveat, each with its measured output. |
 | 4 — `test_a2_insert_in_the_middle`, `test_no_mutation_strands_a_dash_from_its_value[seq-insert-front / -middle / -slice-set]` | after an insertion the emitter strands the `-` of the item preceding an own-line comment: `-\n  value` where the source wrote `- value` |
 
-**Skips.** `pytest tests -q` skips 45, and every one is a guard declining a case that does not
-apply, not a gap: 40 are the "a known loss still fails" test declining the 40 files that are
-*not* known losses; 3 more are `test_roundtrip.py` declining `key-duplicate` (it is the known
-loss, and it refuses to load at all under the default `allow_duplicate_keys=False`); 2 are
-`test_api.py` skipping the "the extension is not built" branch, because it is.
+#### Skips — 45, and none of them is a gap
+
+`pytest tests -q` skips 45, every one a guard declining a case that does not apply:
+
+| count | skip |
+|---|---|
+| 40 | `test_roundtrip.py:72` "not a known loss" — the "a known loss still fails" test declining the 40 files that are not known losses |
+| 1 | `test_roundtrip.py:63` "known loss" — `key-duplicate`, the one file on `KNOWN_LOSSES` |
+| 2 | `test_roundtrip.py:94`, `:110` "does not load" — `key-duplicate` again, which refuses to load at all under the default `allow_duplicate_keys=False` |
+| 2 | `test_api.py:308`, `:316` "the extension is built" — the two branches that test the *unbuilt* extension's error messages |
+
 
 ## What ruamel.yaml 0.19.1 does to this corpus
 

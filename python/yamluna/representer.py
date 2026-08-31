@@ -113,6 +113,7 @@ from yamluna.constructor import (
     DOC_ATTRIB,
     EXPLICIT_ATTRIB,
     FLOW_SEPS_ATTRIB,
+    NODE_ATTRIB,
     NULL_ATTRIB,
     SOURCE_ATTRIB,
     UNRESOLVED,
@@ -247,9 +248,18 @@ def _trackable(obj: Any) -> bool:
 
 
 def _state(obj: Any) -> Mapping[Any, Any]:
-    """The attribute mapping a registered class is represented from (ruamel's rule)."""
+    """The attribute mapping a registered class is represented from (ruamel's rule).
+
+    Minus the record the object was loaded from: that is parked *on* the object
+    (:data:`~yamluna.constructor.NODE_ATTRIB`) and lands in its ``__dict__`` like anything
+    else, but it is this package's bookkeeping and not a field of the user's class.
+    """
     state = obj.__getstate__() if hasattr(obj, '__getstate__') else getattr(obj, '__dict__', None)
-    return state if isinstance(state, Mapping) else {}
+    if not isinstance(state, Mapping):
+        return {}
+    return state if NODE_ATTRIB not in state else {
+        k: v for k, v in state.items() if k != NODE_ATTRIB
+    }
 
 
 def _children(obj: Any) -> Iterator[Any]:
@@ -339,13 +349,87 @@ def _flow_seps(obj: Any) -> list[str]:
     return list(getattr(obj, FLOW_SEPS_ATTRIB, None) or ())
 
 
-def _source_of(container: Any, key: Any) -> tuple[Any, Node] | None:
-    """The ``(value, node)`` `container` recorded for a child (:data:`SOURCE_ATTRIB`)."""
+def _loaded(value: Any, found: tuple[Any, Node, Node | None] | None) -> Node | None:
+    """The record `value` was loaded from: its own, or the one its parent kept for it."""
+    src: Node | None = getattr(value, NODE_ATTRIB, None)
+    if src is not None:
+        return src
+    return found[1] if found is not None and found[0] is value else None
+
+
+def _carry(node: Node, src: Node | None) -> None:
+    """Hand the emitter back everything the source said that this layer cannot keep itself.
+
+    `src` is the record the object was loaded from -- off the object
+    (:data:`~yamluna.constructor.NODE_ATTRIB`), or off its parent
+    (:data:`~yamluna.constructor.SOURCE_ATTRIB`) for the bare builtins that hold no attribute.
+    Either way it describes a node that has not been replaced, so nothing here has to
+    *understand* any of it: where the ``&anchor`` and the tag were written, where each entry's
+    ``:`` went, which of the tag and the anchor came first, the lexeme itself.  It is handed
+    back, and the emitter -- which believes a recorded position only while its output is still
+    on the line that position names -- decides what is still usable.
+
+    Only what the node does not already supply is filled in: a `TaggedScalar` brings its own
+    tag, a `ScalarString` its own anchor.  Two staleness tests are made here because the
+    emitter cannot make them: ``colon`` has a slot per entry, so an insertion or a deletion
+    retires it (the rule :data:`~yamluna.constructor.FLOW_SEPS_ATTRIB` lives by), and a
+    position is taken only for a node that has none of its own.
+    """
+    if src is None:
+        return
+    # `tag_first` is which of `!!str &a` and `&a !!str` the source wrote -- how the properties
+    # were laid out, like where they were laid out, and nothing the object model has a slot for
+    # even when the object brings its own tag.
+    node.anchor_at, node.tag_at, node.tag_first = src.anchor_at, src.tag_at, src.tag_first
+    if node.line == 0 and node.col == 0:
+        # A scalar has no `.lc` of its own and a *root* has no parent to place it, so without
+        # this the one document whose root is a scalar on the line below `---` loses that line.
+        node.line, node.col = src.line, src.col
+    if len(src.colon) * 2 == len(node.children):
+        node.colon = src.colon
+    if node.kind != KIND_SCALAR or src.kind != KIND_SCALAR:
+        return
+    if node.tag is None:
+        node.tag = src.tag
+    if node.anchor is None:
+        node.anchor = src.anchor
+    if src.raw is not None:
+        # The record is the authority, not what the value could reconstruct: a `ScalarFloat`
+        # built from `!!float "1.5"` remembers `1.5`, not the quotes, and re-encoding
+        # `!!binary` loses the line wrapping of the payload.  The three travel together --
+        # the emitter reads a block scalar's header off the lexeme, and the cooked value is
+        # what the lexeme meant.  A scalar with neither a lexeme nor a position is also the
+        # emitter's one signal for "the user built this", so a bare `str` that cannot keep
+        # its own lexeme has to get it back from here or the document is laid out afresh.
+        node.style, node.value, node.raw = src.style, src.value, src.raw
+
+
+def _unmerge_value_pre(node: Node, src: Node | None) -> None:
+    """Split a value's `after` back into the comments that came *before* it and the rest.
+
+    ``.ca`` has one slot for both -- the comments between a ``key:`` and its value, and the
+    ones that follow the value -- so :meth:`Constructor._entry_trivia` merges them, and the
+    record is what tells them apart again: the head of the slot the record says was `before`.
+    A slot the user has edited no longer starts with it and stays whole, which is the safe way
+    to be wrong.
+    """
+    if src is None or not src.before or node.before:
+        return
+    head = node.after[: len(src.before)]
+    if head == src.before:
+        node.before, node.after = head, node.after[len(src.before) :]
+
+
+def _source_of(container: Any, key: Any) -> tuple[Any, Node, Node | None] | None:
+    """The ``(value, value record, key record)`` `container` kept for one entry.
+
+    See :data:`~yamluna.constructor.SOURCE_ATTRIB`.
+    """
     store = getattr(container, SOURCE_ATTRIB, None)
     if not store:
         return None
     try:
-        found: tuple[Any, Node] | None = store.get(key)
+        found: tuple[Any, Node, Node | None] | None = store.get(key)
     except TypeError:  # an unhashable key was never recorded
         return None
     return found
@@ -386,7 +470,9 @@ def _stream_trivia(carried: Doc | None, root: Node) -> tuple[list[Trivia], list[
     them, so the constructor folds them into the root's own comments and the loaded document
     record -- parked on the root by :data:`~yamluna.constructor.DOC_ATTRIB` -- is what says
     how many of them there were.  A prefix or suffix the user has since edited no longer
-    matches and simply stays on the root, which is the safe way to be wrong.
+    matches and simply stays on the root, which is the safe way to be wrong -- but a root
+    that holds no comments at all never took them in the first place (the fold only happens
+    for a `CommentedBase`), and there the record is all there is.
 
     The prefix comes back off ``before`` for a block root and off ``inner`` for a flow one:
     :func:`_leading_is_before` must leave a flow collection's ``inner`` alone (a comment there
@@ -402,15 +488,17 @@ def _stream_trivia(carried: Doc | None, root: Node) -> tuple[list[Trivia], list[
             setattr(root, slot, run[len(leading) :])
             break
     else:
-        leading = []
+        # Nothing folded in, and nothing to fold *out* of: a root that holds no comments at
+        # all -- a scalar -- never took the document's, so they stand exactly as recorded.
+        leading = leading if not (root.before or root.inner) else []
     if trailing and root.after[-len(trailing) :] == trailing:
         root.after = root.after[: -len(trailing)]
-    else:
+    elif root.after:
         trailing = []
     return leading, trailing
 
 
-def _leading_is_before(node: Node) -> None:
+def _leading_is_before(node: Node, src: Node | None = None) -> None:
     """Move ``inner`` to ``before``: ``.ca`` cannot tell the two apart (see the module doc).
 
     Only for a *block* collection, where the two render identically -- it starts on the line
@@ -427,9 +515,12 @@ def _leading_is_before(node: Node) -> None:
           {x: 1, ... }
 
     so promoting `inner` there rewrites the source.  `.ca` keeps the slot for a flow
-    collection, so nothing is lost by leaving it alone.
+    collection, so nothing is lost by leaving it alone -- except when the record says
+    otherwise, and then the head it says was `before` moves and the rest stays inside.
     """
     if node.style == STYLE_FLOW:
+        if src is not None and src.before and node.inner[: len(src.before)] == src.before:
+            node.before, node.inner = src.before + node.before, node.inner[len(src.before) :]
         return
     node.before, node.inner = node.inner + node.before, []
 
@@ -514,6 +605,9 @@ class _Representer:
                 bom=carried.bom,
                 final_line_break=carried.final_line_break,
                 tags_before_version=carried.tags_before_version,
+                directives_raw=carried.directives_raw,
+                stream_tail=carried.stream_tail,
+                line_space=dict(carried.line_space),
             )
         if carried is not None:
             version = carried.version if version is None else version
@@ -527,11 +621,16 @@ class _Representer:
         if self.registry is not None and self.used:
             self.plan = self.registry.plan(self.used)
         root = self._add(Node(value='null')) if data is None else self._emit(data)
-        _leading_is_before(self.nodes[root])  # no parent holds the root's leading comments
+        # No parent holds the root's leading comments, nor its end-of-line one: an entry's come
+        # off the parent's `.ca`, and a root has no parent, so the record is all there is.
+        _leading_is_before(self.nodes[root], getattr(data, NODE_ATTRIB, None))
+        if self.nodes[root].eol is None:
+            self.nodes[root].eol = getattr(getattr(data, NODE_ATTRIB, None), 'eol', None)
         leading, trailing = _stream_trivia(carried, self.nodes[root])
+        directives = self._directives(carried)
         return Doc(
             version=version,
-            tag_directives=self._directives(carried),
+            tag_directives=directives,
             explicit_start=explicit_start,
             explicit_end=explicit_end,
             root=root,
@@ -543,6 +642,14 @@ class _Representer:
             # Where the `%YAML` line sat among the `%TAG` lines. A plan's directives are
             # appended, so they land below it exactly as the source's own tail did.
             tags_before_version=0 if carried is None else carried.tags_before_version,
+            # The directive region is echoed *whole*, so it is only the truth while nothing
+            # has been added to the directives it spells out.
+            directives_raw=None if carried is None
+            or version != carried.version
+            or directives != carried.tag_directives
+            else carried.directives_raw,
+            stream_tail='' if carried is None else carried.stream_tail,
+            line_space={} if carried is None else dict(carried.line_space),
         )
 
     def _directives(self, carried: Doc | None) -> list[tuple[str, str]]:
@@ -602,8 +709,10 @@ class _Representer:
         index = self._emit_node(obj)
         node = self.nodes[index]
         # An alias site is not where its anchor was written; only the parent can place it.
-        if node.kind != KIND_ALIAS and (pos := _lc(obj)) is not None:
-            node.line, node.col = pos
+        if node.kind != KIND_ALIAS:
+            _carry(node, getattr(obj, NODE_ATTRIB, None))
+            if (pos := _lc(obj)) is not None:
+                node.line, node.col = pos
         return index
 
     def _at(self, index: int, pos: tuple[int, int] | None) -> None:
@@ -643,7 +752,11 @@ class _Representer:
 
     def _scalar_node(self, obj: Any) -> Node:
         style, value, raw = _scalar(obj, self.version)
-        return Node(KIND_SCALAR, style, value=value, raw=raw, tag=self._tag_of(obj))
+        node = Node(KIND_SCALAR, style, value=value, raw=raw, tag=self._tag_of(obj))
+        # A `TaggedScalar` is a `CommentedBase` and can hold comments of its own, and a scalar
+        # *root* is where the document's end-of-line comment is folded in.
+        self._own_trivia(obj, node)
+        return node
 
     def _mapping(self, obj: Mapping[Any, Any], anchor: str | None) -> int:
         node = Node(KIND_MAPPING, _flow_style(obj, self.default_flow_style),
@@ -653,16 +766,20 @@ class _Representer:
         explicit = getattr(obj, EXPLICIT_ATTRIB, None) or frozenset()
         for key, value, is_merge in _entries(obj):
             record = _record_of(obj, key)
+            source = _source_of(obj, key)
             key_index = self._emit(key)
+            self._respell_key(key_index, source)
             self._at(key_index, _lc_of(obj, key, 'key'))
             self._entry_trivia(self.nodes[key_index], record, C_KEY_PRE, C_KEY_EOL, None)
             value_index = self._emit(value)
             self._at(value_index, _lc_of(obj, key, 'value'))
             if value is None:
                 self._spell_null(value_index, _null_lexeme(obj, key))
-            self._respell(value_index, value, _source_of(obj, key))
-            _leading_is_before(self.nodes[value_index])  # a value has no `before` slot of its own
+            self._respell(value_index, value, source)
+            src = _loaded(value, source)
+            _leading_is_before(self.nodes[value_index], src)  # a value has no `before` of its own
             self._entry_trivia(self.nodes[value_index], record, None, C_VALUE_EOL, C_VALUE_POST)
+            _unmerge_value_pre(self.nodes[value_index], src)
             if is_merge:
                 node.merge.append(len(node.children))
             elif _in(explicit, key):
@@ -742,36 +859,25 @@ class _Representer:
             node = self.nodes[index]
             node.value = node.raw = lexeme
 
-    def _respell(self, index: int, value: Any, found: tuple[Any, Node] | None) -> None:
-        """Give a scalar back the tag, anchor and lexeme its value has nowhere to keep.
+    def _respell(self, index: int, value: Any, found: tuple[Any, Node, Node | None] | None) -> None:
+        """Hand a value the record its parent kept for it (:data:`SOURCE_ATTRIB`).
 
-        `found` is the parent's ``(value, node)`` record
-        (:data:`~yamluna.constructor.SOURCE_ATTRIB`).  It is applied only while the entry
-        still holds the value that was loaded -- an edited value is a new value and is
-        written from scratch like any other -- and only over what the value did not already
-        supply: a `TaggedScalar` brings its own tag and a `ScalarString` its own anchor.
+        Applied only while the entry still holds the value that was loaded: an edited value
+        is a new value and is written from scratch like any other.  That test is the whole
+        difference between this and the record a value keeps on itself, which cannot outlive
+        the object it is parked on.
         """
         if found is None or not isinstance(value, _ATOMS):
             return
-        node = self.nodes[index]
-        if node.kind != KIND_SCALAR:
-            return
-        was, src = found
+        was, src, _ = found
         if type(was) is not type(value) or was != value:
             return
-        if node.tag is None:
-            # `tag_first` is which of `!!str &ta` and `&ta !!str` the source wrote: part of
-            # how the tag was written, so it travels with it.
-            node.tag, node.tag_first = src.tag, src.tag_first
-        if node.anchor is None:
-            node.anchor = src.anchor
-        if src.raw is not None:
-            # The record is the authority, not what the value could reconstruct: a
-            # `ScalarFloat` built from `!!float "1.5"` remembers `1.5`, not the quotes, and
-            # re-encoding `!!binary` loses the line wrapping of the payload.  The three
-            # travel together -- the emitter reads a block scalar's header off the lexeme,
-            # and the cooked value is what the lexeme meant.
-            node.style, node.value, node.raw = src.style, src.value, src.raw
+        _carry(self.nodes[index], src)
+
+    def _respell_key(self, index: int, found: tuple[Any, Node, Node | None] | None) -> None:
+        """The same, for the key the record was looked up by -- which cannot have changed."""
+        if found is not None and found[2] is not None:
+            _carry(self.nodes[index], found[2])
 
     # -- trivia ---------------------------------------------------------------------------
 

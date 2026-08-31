@@ -89,4 +89,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uvx ruff check python tests bench examples
+      # `ci/smoke.py` is executed by the wheel job, so it gets linted like everything else.
+      - run: uvx ruff check python tests bench examples ci

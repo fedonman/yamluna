@@ -65,26 +65,34 @@ because it never belonged to the item whose slot it lives in (A1).
 **Why it is wrong.** Inserting an element must not change what any existing comment
 describes.
 
-**yamluna.** `insert` moves nothing: the comment is on `one`'s node, and `zero` is a new
-node with empty trivia.
+**yamluna.** `insert` moves nothing: the comment is on the node it describes, and the new
+element is a new node with empty trivia. `s.insert(3, 'extra')` on the same source, measured:
 
 ```
-- zero
 # about one
 - one
 # about two
 - two
 # about three
 - three
+- extra
 ```
 
-> **Shipped except for the first item.** An own-line comment above a collection's *first*
-> child is filed on the collection's `inner` slot rather than on that child's `before`
-> (`loader.rs::take_before`), so it stays where it is while the child it describes moves —
-> exactly the defect above, for one position out of n. Every byte still round-trips; only the
-> ownership is wrong. Eight xfails in `tests/test_mutation.py` pin it, and DESIGN §2.2 rule 2
-> names `before` as the target. `insert` additionally strands the `-` of the item preceding an
-> own-line comment (`-\n  value`), which four more xfails pin.
+Every comment is still above the item it was written above, where ruamel relabels one of them.
+
+> **Two positions where this is not yet true**, both pinned by xfails in
+> `tests/test_mutation.py` that fail the suite if either closes unnoticed.
+>
+> **The first child (8 xfails).** An own-line comment above a collection's *first* child is
+> filed on the collection's `inner` slot rather than on that child's `before`
+> (`loader.rs::take_before`), so it stays put while the child it describes moves — exactly the
+> defect above, for one position out of n. DESIGN §2.2 rule 2 names `before` as the target and
+> says so. Every byte still round-trips; only the ownership is wrong.
+>
+> **A stranded `-` (4 xfails).** Inserting immediately before an item that carries an own-line
+> comment emits `-\n  value` where the source wrote `- value`. `s.insert(0, 'zero')` measures
+> `'# about one\n- zero\n-\n  one\n# about two\n- two\n# about three\n- three\n'`, which
+> shows both defects at once.
 
 ---
 
@@ -105,18 +113,25 @@ s = load(SRC); del s[0]     # -> '# about one\n- two\n# about three\n- three\n'
 leave every other comment where it was. ruamel does the opposite in both directions
 simultaneously.
 
-**yamluna.** Deleting a node deletes its trivia and nothing else.
+**yamluna.** Deleting a node deletes its trivia and nothing else. Measured:
 
 ```
-del s[1]  ->  # about one\n- one\n# about three\n- three
-del s[0]  ->  # about two\n- two\n# about three\n- three
+del s[1]  ->  '# about one\n- one\n# about three\n- three\n'
+del s[0]  ->  '# about one\n# about two\n- two\n# about three\n- three\n'
 ```
+
+`del s[1]` is the fix: `# about two` goes with `two`, and `# about three` stays on `three`,
+where ruamel destroys the first and moves the second.
+
+`del s[0]` still carries the [A2](#a2-seqinsert-puts-the-following-items-comment-above-the-new-item)
+first-item caveat: `# about one` is filed on the *collection's* `inner` slot rather than on
+`one`, so deleting `one` leaves it behind, above `two`. The neighbour's comment is no longer
+destroyed — that half of the ruamel defect is gone — but the orphan half is not, for the first
+position only. `test_a3_deleting_the_first_item` is the xfail that pins it.
 
 Deleting the last item of a collection re-parents its `before` trivia onto the collection's
 `after` slot rather than leaving it dangling as the final line of the document.
 
-
-Same first-item caveat as [A2](#a2-seqinsert-puts-the-following-items-comment-above-the-new-item).
 ---
 
 ### A4. `CommentedMap.__delitem__` never touches `.ca`, so comments drift *and* resurrect
@@ -183,10 +198,26 @@ travels with alpha because it lives in alpha's EOL token.
 key must carry its comments to the new key.
 
 **yamluna.** Reordering moves nodes; trivia rides along because it hangs off the node.
-A rename is a node mutation, not a delete-plus-insert, so all four slots survive.
+Measured:
 
+```python
+m.rename('beta', 'BETA')
+# '# about alpha\nalpha: 1   # eol alpha\n# about beta\nBETA: 2   # eol beta\n# about gamma\ngamma: 3   # eol gamma\n'
+m.move_to_end('beta')
+# '# about alpha\nalpha: 1   # eol alpha\n# about gamma\ngamma: 3   # eol gamma\n# about beta\nbeta: 2   # eol beta\n'
+```
 
-Same first-item caveat as [A2](#a2-seqinsert-puts-the-following-items-comment-above-the-new-item).
+Both slots follow the key. `rename` is a yamluna addition — ruamel has no rename at all, which
+is why its column above spells one as `insert(1, 'BETA', m.pop('beta'))`, a delete plus an
+insert that cannot keep what the deleted node held. `rename` mutates the key of an existing
+node, so all four slots survive by construction.
+
+Moving the *first* entry carries the
+[A2](#a2-seqinsert-puts-the-following-items-comment-above-the-new-item) caveat: its own-line
+comment is filed on the mapping's `inner` slot, so `move_to_end('alpha')` moves `alpha` and its
+end-of-line comment and leaves `# about alpha` at the top. `test_a5_move_to_end` and
+`test_a5_move_to_front` are the xfails that pin it.
+
 ---
 
 ### A6. `CommentedSeq.reverse()` moves nothing
@@ -205,10 +236,18 @@ reverse()          -> '- d  # ca\n- c  # cb\n- b  # cc\n- a  # cd\n'   every com
 no way to tell which from the outside.
 
 **yamluna.** There is no comment table to maintain, so every mutating list operation is
-correct by construction — including the ones nobody remembered to override.
+correct by construction — including the ones nobody remembered to override. `reverse()` on the
+six-line source above, measured:
 
+```
+'# about one\n# about three\n- three\n# about two\n- two\n- one\n'
+```
 
-Same first-item caveat as [A2](#a2-seqinsert-puts-the-following-items-comment-above-the-new-item).
+`three` and `two` bring their comments with them, which is the fix. `# about one` does not,
+for the [A2](#a2-seqinsert-puts-the-following-items-comment-above-the-new-item) reason — it is
+on the sequence's `inner` slot, not on `one` — so it stays at the top and `one` arrives at the
+bottom bare. `test_a6_reverse` is the xfail that pins it.
+
 ---
 
 ### A7. Blank lines are smuggled inside comment text
@@ -295,8 +334,22 @@ C_VALUE_POST=3, C_VALUE_PRE=4, C_KEY_POST=5`. Under `typ='rt'` the actual layout
 **Why it is wrong.** The only named constants for the slots name them wrongly for the only
 `typ` this library supports.
 
-**yamluna.** The projection exposes the four rt slots and documents them by position; the
-misleading constants are not re-exported.
+**yamluna.** `yamluna.comments` exports constants that name the slots the projection
+actually has, and only those:
+
+```python
+C_KEY_EOL = 0      # the key's end-of-line comment
+C_KEY_PRE = 1      # the own-line comments above the key
+C_VALUE_EOL = 2    # the value's end-of-line comment
+C_VALUE_POST = 3   # the own-line comments below the value
+
+C_ELEM_EOL, C_ELEM_PRE, C_ELEM_POST = C_KEY_EOL, C_KEY_PRE, C_VALUE_POST   # sequences
+```
+
+`C_VALUE_PRE` and `C_KEY_POST` do not exist here: they belong to ruamel's `rtsc`
+`comment_handling` scheme, and there is no slot for them in a `typ='rt'` record. Any code
+importing them by name gets an `ImportError` rather than an index that silently points at the
+wrong slot.
 
 ---
 
@@ -380,9 +433,14 @@ The last case turns a valid document into one that ruamel itself cannot read:
 **Why it is wrong.** A load→dump cycle must never produce invalid YAML. This one does, on a
 four-line input.
 
-**yamluna.** The explicit-key indicator is part of the entry's recorded style and is
-re-emitted. Emitting a `?`-less key whose value is on the next line is rejected by the
-emitter's own re-parse invariant.
+**yamluna.** The explicit-key indicator is `Entry::explicit` in the document model, carried
+across the FFI as `Node.explicit`, and re-emitted. All three inputs above come back byte-for-byte,
+the third included, so the load→dump cycle no longer produces YAML that cannot be re-read.
+
+One exception, pinned: an explicit key **inside a flow collection** loses its `?` —
+`'[\n? foo\n bar : baz\n]\n'` comes back as `'[\n{ foo\n bar : baz,\n}\n]\n'`. The indicator is
+recorded; the flow emitter does not write it. That is `CT4Q` in `KNOWN_GAPS`
+(`crates/yamluna-core/tests/proptest_roundtrip.rs`).
 
 ---
 

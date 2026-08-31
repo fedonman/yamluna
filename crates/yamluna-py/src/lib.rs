@@ -92,6 +92,19 @@ fn style_from_code(code: u8) -> PyResult<Style> {
 
 // -- core -> record -----------------------------------------------------------------------
 
+/// A [`Position`] as the record spells it: `(line, col)`, or `None` for one that was never
+/// recorded. The Python layer never reads these — it hands them straight back (DESIGN §3).
+fn place(p: Option<Position>) -> Option<(u32, u32)> {
+    p.map(|p| (p.line, p.col))
+}
+
+/// The inverse of [`place`], for a record built or carried by Python.
+fn read_place(o: &Bound<'_, PyAny>, name: &str) -> PyResult<Option<Position>> {
+    Ok(o.getattr(name)?
+        .extract::<Option<(u32, u32)>>()?
+        .map(|(line, col)| Position { line, col }))
+}
+
 fn build_trivia<'py>(py: Python<'py>, t: &Trivia) -> PyResult<Bound<'py, PyAny>> {
     let cls = trivia_class(py)?;
     match t {
@@ -138,6 +151,17 @@ fn build_node<'py>(py: Python<'py>, n: &Node) -> PyResult<Bound<'py, PyAny>> {
     };
     let merge = positions(|e| e.merge);
     let explicit = positions(|e| e.explicit);
+    // One slot per entry, in entry order. All-`None` is no record at all, and goes as the empty
+    // list the record contract reads as "not recorded".
+    let colon: Vec<Option<(u32, u32)>> = match &n.kind {
+        NodeKind::Mapping { entries } => entries.iter().map(|e| place(e.colon)).collect(),
+        _ => Vec::new(),
+    };
+    let colon = if colon.iter().all(Option::is_none) {
+        Vec::new()
+    } else {
+        colon
+    };
     let tag = n
         .tag
         .as_ref()
@@ -164,6 +188,9 @@ fn build_node<'py>(py: Python<'py>, n: &Node) -> PyResult<Bound<'py, PyAny>> {
         build_trivia_list(py, &n.trivia.after)?.into_any(),
         n.tag_first.into_bound_py_any(py)?,
         n.flow_seps.clone().into_bound_py_any(py)?,
+        place(n.anchor_at).into_bound_py_any(py)?,
+        place(n.tag_at).into_bound_py_any(py)?,
+        colon.into_bound_py_any(py)?,
     ];
     node_class(py)?.call1(PyTuple::new(py, args)?)
 }
@@ -197,6 +224,7 @@ fn build_doc<'py>(py: Python<'py>, d: &Document) -> PyResult<Bound<'py, PyAny>> 
         d.tags_before_version.into_bound_py_any(py)?,
         d.directives_raw.clone().into_bound_py_any(py)?,
         d.stream_tail.as_str().into_bound_py_any(py)?,
+        d.line_space.clone().into_bound_py_any(py)?,
     ];
     doc_class(py)?.call1(PyTuple::new(py, args)?)
 }
@@ -230,6 +258,7 @@ fn read_node(o: &Bound<'_, PyAny>) -> PyResult<Node> {
     let children: Vec<NodeId> = o.getattr(intern!(py, "children"))?.extract()?;
     let merge: Vec<usize> = o.getattr(intern!(py, "merge"))?.extract()?;
     let explicit: Vec<usize> = o.getattr(intern!(py, "explicit"))?.extract()?;
+    let colon: Vec<Option<(u32, u32)>> = o.getattr(intern!(py, "colon"))?.extract()?;
 
     let kind = match kind {
         KIND_SCALAR => NodeKind::Scalar,
@@ -249,7 +278,11 @@ fn read_node(o: &Bound<'_, PyAny>) -> PyResult<Node> {
                         value: kv[1],
                         merge: merge.contains(&(i * 2)),
                         explicit: explicit.contains(&(i * 2)),
-                        colon: None,
+                        colon: colon
+                            .get(i)
+                            .copied()
+                            .flatten()
+                            .map(|(line, col)| Position { line, col }),
                     })
                     .collect(),
             }
@@ -284,10 +317,8 @@ fn read_node(o: &Bound<'_, PyAny>) -> PyResult<Node> {
             line: o.getattr(intern!(py, "line"))?.extract()?,
             col: o.getattr(intern!(py, "col"))?.extract()?,
         },
-        // Where the properties were written. The record contract does not carry it yet, so a
-        // document that has been through Python gets the emitter's layout for them.
-        anchor_at: None,
-        tag_at: None,
+        anchor_at: read_place(o, "anchor_at")?,
+        tag_at: read_place(o, "tag_at")?,
         flow_seps: o.getattr(intern!(py, "flow_seps"))?.extract()?,
         trivia: Trivia4 {
             before: read_trivia_list(&o.getattr(intern!(py, "before"))?)?,
@@ -351,9 +382,7 @@ fn read_doc(o: &Bound<'_, PyAny>) -> PyResult<Document> {
         leading: read_trivia_list(&o.getattr(intern!(py, "leading"))?)?,
         trailing: read_trivia_list(&o.getattr(intern!(py, "trailing"))?)?,
         duplicate_keys: Vec::new(),
-        // Like the flow separators, the source's own white space does not cross the boundary: it
-        // is a fact about a source the Python layer never sees.
-        line_space: std::collections::HashMap::new(),
+        line_space: o.getattr(intern!(py, "line_space"))?.extract()?,
     })
 }
 

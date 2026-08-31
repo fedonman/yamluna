@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 81154d25bc2a1dd0ad75a20215083bbd99e023d51a0ac03a3945bf099a1582ec # shrinks to docs = [Doc { directives: false, explicit_start: true, explicit_end: false, root: Node { anchor: false, tag: Some(0), before: [], eol: None, val: Seq(false, [Node { anchor: false, tag: None, before: [], eol: None, val: Plain("a") }]) } }]
+cc 145e0dd2b98ba95b5dca4445fbebde1a083eb01c37da9b6a67cccb85bdfb4d1d # shrinks to docs = [Doc { directives: false, explicit_start: false, explicit_end: false, root: Node { anchor: false, tag: None, before: [], eol: None, val: Map(false, [("a", Node { anchor: false, tag: None, before: [], eol: None, val: Map(false, [("a", Node { anchor: false, tag: None, before: [], eol: None, val: Block('|', false, ["a"]) }), ("a", Node { anchor: false, tag: None, before: [], eol: None, val: Plain("a") })]) })]) } }]
+cc ad210027ef83af02430a93ebfe2070ab5031474443b4840e578565271221753d # shrinks to docs = [Doc { directives: false, explicit_start: false, explicit_end: false, root: Node { anchor: false, tag: None, before: [], eol: Some("#"), val: Block('|', false, ["a"]) } }]
+cc 81c282e5600589509faf0724897419cc13675f5f8a532cf54c48ac29440214ed # shrinks to docs = [Doc { directives: false, explicit_start: false, explicit_end: false, root: Node { anchor: false, tag: None, before: [], eol: None, val: Seq(false, [Node { anchor: false, tag: None, before: [], eol: Some("#"), val: Seq(false, [Node { anchor: false, tag: None, before: [], eol: None, val: Plain("a") }]) }]) } }]

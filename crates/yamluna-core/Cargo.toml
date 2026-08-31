@@ -9,6 +9,8 @@ repository.workspace = true
 authors.workspace = true
 
 [dev-dependencies]
+proptest = "1.11.0"
+saphyr = "0.0.12"
 yamluna-scanner.workspace = true
 
 [dependencies]

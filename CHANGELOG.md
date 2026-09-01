@@ -3,65 +3,6 @@
 Notable changes to `yamluna`. Format follows [Keep a Changelog](https://keepachangelog.com/1.1.0/);
 versions follow [semver](https://semver.org/).
 
-## [0.1.0] - 2026-09-01
-
-First release.
-
-### Changed
-
-- **Tooling: `ruff` for linting and formatting, `ty` for type checking.** `mypy` is gone; it
-  was configured but reported 109 errors and gated nothing. `ruff` now runs with
-  `select = ["ALL"]` and both `ruff check` and `ruff format --check` are CI gates, as is
-  `ty check` over the whole tree including the tests, the examples and the benchmark.
-  Getting there took 6473 lint violations and 143 type diagnostics to zero. The visible
-  half of that is the docstrings: Python summary lines are now imperative (`Return the
-  byte offset`, not `Returns the byte offset`), every previously undocumented magic method,
-  `__init__` and public method has a docstring, and `D417` holds every documented function
-  to documenting all of its parameters. No pydocstyle `convention` is set, because both of
-  the ones ruff ships would silently disable one of those two rules.
-
-- **The scalar types carry real types.** `_Attr`, the descriptor behind `lexeme`, `anchor`,
-  `caps`, `width` and the rest, is generic with typed `__get__` overloads, and the classes
-  declare the private fields it reads. `HexInt(0x1F).caps` resolves as `bool` and
-  `LiteralScalarString('x').lexeme()` as `str | None`, where before a checker saw nothing.
-
-### Fixed
-
-- **The recorded facts now cross the FFI.** `Entry::colon`, `Node::anchor_at`, `Node::tag_at`
-  and `Document::line_space` were recorded by the loader and reproduced by the Rust emitter,
-  but had no record slot, so a *Python* round trip threw away what the core had kept: at
-  `8b05b39` the `yaml-test-suite` round trip scored 302/308 through
-  `yamluna_core::{parse, emit}` and 202/308 through `YAML().load_all` / `.dump_all` (191/308
-  through the single-document `load` / `dump`). They are now `Node.colon`, `Node.anchor_at`,
-  `Node.tag_at`
-  and `Doc.line_space` in `python/yamluna/_record.py`, opaque to the Python layer and handed
-  back unchanged for any node it did not change. `tests/test_suite_roundtrip.py` is the new
-  gate over the Python-side score, and `tests/suite_roundtrip.py` prints it with a diff per
-  failing case, so the two numbers can never silently drift apart again.
-
-- **Directive lines round-trip as written.** The whole region above `---`, meaning reserved
-  directives (`%FOO`), the spacing inside `%YAML  1.1`, and any comment on or between those
-  lines, is kept verbatim on `Document::directives_raw` and echoed, instead of being reconstructed from
-  `version` / `tag_directives`. Nine `yaml-test-suite` cases.
-- **White space at the end of a stream** that no line break closes is recorded on
-  `Document::stream_tail` and written back, instead of being dropped (`4RWC`, `L24T-01`).
-- **A flow collection's separation run may now cross a line** when nothing was taken out of it,
-  so `{ "a" : b\n , c : 'd' }` keeps its leading-comma layout instead of being re-laid-out
-  (`DFF7`, `FRK4`, `LP6E`, `WZ62`, and the last two corpus files).
-- **A stored comment is never silently discarded.** A scalar-valued entry's `C_VALUE_POST`
-  comment reached the document model and was then dropped by the emitter: the exact
-  store-then-discard path D4 on the behaviour-differences list says this library does not have.
-- Recorded flow runs are no longer echoed once the emitter has stopped landing where the model
-  says: a document rebuilt from user-made nodes was getting punctuation for lexemes that were
-  no longer being written, and could emit YAML that did not re-parse.
-- A block-scalar header written onto a line a comment already owned (`# c` / `|`) swallowed the
-  header and made the output unparseable.
-- An empty node's `&anchor` and tag no longer swallow the `,` that follows them inside a flow
-  collection (`{foo: !!str, bar: 1}` lost the comma).
-- An `&anchor` or tag the source put on a line of its own keeps its own column (`BU8L`).
-- An explicit `? key` whose `:` line the source wrote keeps it, even with an empty value
-  (`KK5P`).
-
 ## [0.1.0] - unreleased
 
 First release. A round-trip YAML library: Rust scanner, document model and emitter behind a
@@ -104,7 +45,11 @@ Python API that replaces `ruamel.yaml`'s `typ='rt'`.
   Only the parse is GIL-free; building the `Node` records and the `CommentedMap`s on top of
   them is Python object creation, so `YAML.load` itself scales to 2.45x at 8 threads, not
   3.89x.
-- **abi3 wheels** (`cp311-abi3`), Python 3.11+.
+- **abi3 wheels** (`cp311-abi3`), Python 3.11+, dual licensed MIT or Apache-2.0.
+- **Types that reach the caller.** The package ships `py.typed`, so an installed consumer
+  gets the annotations rather than being told the library is untyped. `ruff` with
+  `select = ["ALL"]` and `ty` over the whole tree are both CI gates, alongside
+  `cargo clippy -D warnings`.
 
 ### Fixed, relative to `ruamel.yaml` 0.19.1
 
@@ -133,7 +78,7 @@ On this commit, reproduce with the commands given:
 | `yaml-test-suite` round trip through the **Rust core** (`cargo test -p yamluna-core --test proptest_roundtrip`) | 308/308 |
 | `yaml-test-suite` round trip through the **Python API** (`python tests/suite_roundtrip.py`) | 306/308 |
 | `yaml-test-suite` conformance in the scanner fork (`cargo test -p yamluna-scanner --test yaml-test-suite`) | 402/402 |
-| `cargo test --workspace` | 722 passed, 0 failed |
+| `cargo test --workspace` | 726 passed, 0 failed |
 | `pytest tests` | 1097 passed, 45 skipped, 12 xfailed |
 | load / dump throughput vs `ruamel.yaml` (`python bench/bench.py`, release build) | 1.4x–8.9x faster |
 

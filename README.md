@@ -1,9 +1,11 @@
 # yamluna
 
-Round-trip YAML for Python. Load a document, change what you need, write it back — with the
+Round-trip YAML for Python. Load a document, change what you need, write it back, with the
 comments, blank lines, quoting, anchors, directives and indentation the author put there still
 in place. The scanner, document model and emitter are Rust; the API is `ruamel.yaml`'s
 `typ='rt'`, minus its bugs.
+
+**Documentation: <https://qilimanjaro-tech.github.io/yamluna/>**
 
 ```python
 from pathlib import Path
@@ -33,7 +35,7 @@ ports:
   - 443               # https
 ```
 
-and after — the blank line, the indentation, the comment alignment and the two comments that
+and after. The blank line, the indentation, the comment alignment and the two comments that
 describe surviving keys are all still there; the one comment that described `legacy_mode` went
 with it:
 
@@ -48,7 +50,7 @@ ports:
   - 8080
 ```
 
-The same script through `ruamel.yaml` 0.19.1 — only the import changes — produces the right
+The same script through `ruamel.yaml` 0.19.1, changing only the import, produces the right
 *data* and loses the blank line, re-indents the sequence to column 0, and shifts both
 end-of-line comments to follow:
 
@@ -81,7 +83,7 @@ uv pip install -e . --group dev    # or: .venv/bin/pip install -e . && ... insta
 ```
 
 `pip install -e .` builds the extension through maturin. During development,
-`.venv/bin/maturin develop --uv` rebuilds it in place after a Rust change — that is `just build`,
+`.venv/bin/maturin develop --uv` rebuilds it in place after a Rust change. That is `just build`,
 and `just check` is build + `cargo test --workspace` + `pytest`.
 
 Importing `yamluna` does **not** need the extension: the object model, the scalar types, the
@@ -90,13 +92,13 @@ they say so if it is not built.
 
 ## Round trips that actually round trip
 
-`tests/corpus/` is 41 hand-written files, one YAML concern each — comments in every position,
+`tests/corpus/` is 41 hand-written files, one YAML concern each: comments in every position,
 anchors, merge keys, directives, document markers, block-scalar headers, a BOM, CRLF, a file with
 no trailing newline, a file that is nothing but comments. The measure is the strict one: load the
 file, change nothing, dump it, and compare **bytes**.
 
-Both libraries get the ordinary recipe — `YAML()`, `preserve_quotes = True`, everything else
-default. Reproduce with `.venv/bin/python tests/differential.py`:
+Both libraries get the ordinary recipe (`YAML()`, `preserve_quotes = True`, everything else
+default). Reproduce with `.venv/bin/python tests/differential.py`:
 
 | | round-trips byte-identically |
 |---|---|
@@ -106,7 +108,7 @@ default. Reproduce with `.venv/bin/python tests/differential.py`:
 Point ruamel at the indentation style most of the corpus uses
 (`yaml.indent(mapping=2, sequence=4, offset=2)`, i.e. `differential.py --seq-indent`) and it
 manages 7 of 40. No single setting does better, because `struct-seq-indent.yaml` mixes two
-indentations inside one document — which is what files written by humans do.
+indentations inside one document, which is what files written by humans do.
 
 The one yamluna does not manage, and why:
 
@@ -118,8 +120,8 @@ It is pinned by a guard list that fails the suite if it starts passing, so a fix
 stale excuse behind. `tests/README.md` has the per-file table and what ruamel does to each one.
 
 The wider net is the **`yaml-test-suite`**, the cross-implementation conformance corpus.
-Three harnesses run against it, and they measure three different things — the numbers are not
-interchangeable and this table is the honest way to read them:
+Three harnesses run against it, and they measure three different things. The numbers are not
+interchangeable, and this table is the honest way to read them:
 
 | harness | what it round-trips | score |
 |---|---|---|
@@ -134,14 +136,15 @@ quoted. Both harnesses read the same 308 cases, extracted the same way, so they 
 both are the object model rather than the seam. `CommentedMap` is a `dict`, so two entries with
 an empty key (`2JQS`) or an alias that *is* its own mapping's key (`X38W`) are one entry, and
 loading raises `DuplicateKeyError`. Not subclassing `dict` and `list` buys them back, and costs
-`isinstance(x, dict)`, `json.dumps`, `deepcopy`, `pickle` and `==` — the trade
-[DESIGN §4.1](docs/DESIGN.md) makes on purpose.
+`isinstance(x, dict)`, `json.dumps`, `deepcopy`, `pickle` and `==`, the trade
+[the design contract §4.1](https://qilimanjaro-tech.github.io/yamluna/internals/) makes on
+purpose.
 
 That the difference is *only* the object model is a gate, not a measurement:
 `test_the_record_seam_loses_nothing_over_the_suite` asserts that all 308 cases come out of
 `emit(parse(x))` **through the `_record` classes** byte-identical to `parse`-then-`emit`
 inside Rust, so a fact that stops crossing the FFI fails there and names the case. It has not
-always held — at `8b05b39` the colon column, the two property positions and the source's own
+always held: at `8b05b39` the colon column, the two property positions and the source's own
 white space were recorded and emitted correctly by the core while having no record slot, and
 the same 308 cases scored 302 in Rust against 202 here. `tests/test_suite_roundtrip.py` is
 the gate that fails when either number regresses, and `suite_roundtrip.py --rust` prints them
@@ -149,8 +152,8 @@ side by side.
 
 The Rust core's `KNOWN_GAPS` list is now **empty**, and the Python one holds exactly the two
 cases above, each marked permanent with the reason. Both are documents YAML's own uniqueness
-rule rejects — two entries with the null key, and an alias used as a key of the mapping its
-anchor is defined in — so `DuplicateKeyError` naming both source positions is the answer rather
+rule rejects (two entries with the null key, and an alias used as a key of the mapping its
+anchor is defined in), so `DuplicateKeyError` naming both source positions is the answer rather
 than a workaround to find; ruamel raises on both, and PyYAML never reaches the question. They
 are named with their causes in [tests/README.md](tests/README.md#known-gaps) and pinned by a
 list that fails the suite if one starts passing, so an excuse cannot go stale. Both harnesses
@@ -167,22 +170,22 @@ CPython 3.13.12, yamluna 0.1.0 vs `ruamel.yaml` 0.19.1, release build:
 
 | document | size | load | dump | load+dump |
 |---|---:|---:|---:|---:|
-| `config` — a hand-written config file | 1 KiB | 8.9x | 3.5x | 5.0x |
-| `nested` — a deep tree, many collections | 249 KiB | 1.4x | 3.2x | 1.8x |
-| `comments` — three lines in four are trivia | 150 KiB | 3.2x | 2.3x | 2.9x |
-| `scalars` — a flat run of every scalar style | 37 KiB | 8.1x | 4.8x | 6.3x |
+| `config` (a hand-written config file) | 1 KiB | 8.9x | 3.5x | 5.0x |
+| `nested` (a deep tree, many collections) | 249 KiB | 1.4x | 3.2x | 1.8x |
+| `comments` (three lines in four are trivia) | 150 KiB | 3.2x | 2.3x | 2.9x |
+| `scalars` (a flat run of every scalar style) | 37 KiB | 8.1x | 4.8x | 6.3x |
 
 Faster everywhere, between 1.4x and 8.9x. The margin narrows to **1.4x** on loading the deep
 `nested` tree, and that is the number worth knowing: a document that is almost entirely
 collection structure spends its time building one Python object per node, which no amount of
-Rust helps with. `bench.py` splits a yamluna round trip into three layers — Rust only / + FFI
-records / + object model — and finds **22–81%** of the time going into building the Python
-objects, which is where the next win is, not in the Rust. (Build the extension with
+Rust helps with. `bench.py` splits a yamluna round trip into three layers (Rust only, then
++ FFI records, then + object model) and finds **22–81%** of the time going into building the
+Python objects, which is where the next win is, not in the Rust. (Build the extension with
 `maturin develop --uv --release` before benchmarking; a debug build is slower than ruamel on
-`nested` — measured, 1.8x slower.)
+`nested`, measured at 1.8x slower.)
 
 `_yamluna.parse` runs the scanner, the loader and the trivia attachment inside `py.detach`, so
-loads across threads genuinely overlap — something a pure-Python library cannot do at all. 32
+loads across threads genuinely overlap, which a pure-Python library cannot do at all. 32
 loads of the 249 KiB `nested` document, spread over N threads (each count measured twice,
 ascending and descending, faster of the two, so the ordering does not decide the answer):
 
@@ -208,14 +211,15 @@ This is the part that is deliberately not ruamel-compatible.
 `ruamel.yaml`'s `register_class` keys its registry on `'!' + cls.__name__`, in a process-global
 table. Two libraries that both define a `Circuit` register the same tag; the second overwrites the
 first; loading gives you whichever class was imported last, holding the other one's attributes, with
-no warning ([DIVERGENCES C1](docs/DIVERGENCES.md#c1-register_class-keys-the-constructor-registry-on-the-class-name)).
+no warning ([behaviour differences,
+C1](https://qilimanjaro-tech.github.io/yamluna/migrating/differences/)).
 
 yamluna keys the registry on the fully qualified class path, so registration cannot overwrite, and
 writes the namespace into the document using YAML's own mechanism: `%TAG` directives. One
 directive line per source, no pollution of user data, and any conformant YAML parser round-trips
 it.
 
-**One library** — its source takes the primary `!` handle, so tags are bare:
+**One library.** Its source takes the primary `!` handle, so tags are bare:
 
 ```yaml
 %TAG ! tag:libx/
@@ -224,7 +228,7 @@ main: !Circuit
   qubits: 2
 ```
 
-**Two libraries** — the most-used source keeps `!`; the rest get named handles derived from the
+**Two libraries.** The most-used source keeps `!`; the rest get named handles derived from the
 source name (ties broken on the name, so the output does not depend on registration order):
 
 ```yaml
@@ -237,7 +241,7 @@ b: !liby!Circuit
   n: 3
 ```
 
-**Two modules of one library** — both classes are `Circuit`, both sources default to the root
+**Two modules of one library.** Both classes are `Circuit`, both sources default to the root
 package `libx`, so the colliding pair is automatically promoted to full module paths and the same
 rule applies:
 
@@ -255,7 +259,7 @@ Promotion is a pure function of the registry contents, recomputed on every regis
 explicit `register_class(cls, source='qilisdk')` pins the source and is never promoted.
 
 Reading back, a tag that resolves through a directive to `tag:{source}/{name}` is looked up by
-`(source, name)` — exactly one match, or an error. A **bare** `!Circuit` in a hand-written file
+`(source, name)`: exactly one match, or an error. A **bare** `!Circuit` in a hand-written file
 with no directive in scope is looked up by name alone: one candidate constructs it, more than one
 raises rather than guessing.
 
@@ -271,17 +275,23 @@ A tag in a namespace this registry has never heard of is somebody else's documen
 untouched, tag and all.
 
 The registry is **per `YAML()` instance**. `yaml.register_class(Circuit)` never touches another
-instance's registry, so a library that builds its own `YAML()` cannot poison — or be poisoned by —
-anybody else's ([DIVERGENCES C2](docs/DIVERGENCES.md#c2-register_class-is-process-global-not-per-yaml)).
+instance's registry, so a library that builds its own `YAML()` cannot poison anybody else's, or
+be poisoned by one ([behaviour differences,
+C2](https://qilimanjaro-tech.github.io/yamluna/migrating/differences/)).
 A module-level `register_class` and a shared `default_registry` exist for the
 "one registry for my whole app" case, opted into with `YAML(registry=default_registry)`.
 
-Full contract: [DESIGN.md §5](docs/DESIGN.md). Runnable: [`examples/custom_classes.py`](examples/custom_classes.py).
+Full contract:
+[the design contract §5](https://qilimanjaro-tech.github.io/yamluna/internals/). How to use it:
+[Custom classes and tags](https://qilimanjaro-tech.github.io/yamluna/guide/custom-classes/).
+Runnable: [`examples/custom_classes.py`](examples/custom_classes.py).
 
 ## What it fixes
 
-Every entry in [docs/DIVERGENCES.md](docs/DIVERGENCES.md) is a defect measured against
-`ruamel.yaml==0.19.1`, with a repro, and a regression test so it cannot come back. The headlines:
+Every entry in
+[Behaviour differences](https://qilimanjaro-tech.github.io/yamluna/migrating/differences/) is a
+defect measured against `ruamel.yaml==0.19.1`, with a repro, and a regression test so it cannot
+come back. The headlines:
 
 **Comments belong to nodes, not to indices** (A1–A7). ruamel stores an own-line comment glued into
 the *previous* sibling's end-of-line token, so `seq.insert(0, x)` labels the new element with the
@@ -289,13 +299,13 @@ old first element's comment; `del seq[0]` destroys its neighbour's comment; `Com
 never touches `.ca` at all, so a deleted key's comment survives and re-attaches itself to an
 unrelated value if you later re-add the key; `move_to_end` sends a comment to the far end of the
 document; and `CommentedSeq.reverse()` moves no comments whatsoever. yamluna attaches trivia to
-the node it describes, so a mutating list or dict operation is correct by construction — including
+the node it describes, so a mutating list or dict operation is correct by construction, including
 the ones nobody remembered to override.
 
 One position is not there yet, and it is written down rather than glossed: an own-line comment
 above a collection's **first** child is filed on the collection rather than on that child, so it
-stays put while the child moves. Twelve xfails in `tests/test_mutation.py` pin it and the four
-`docs/DIVERGENCES.md` entries it touches each carry their measured output. Every byte still
+stays put while the child moves. Twelve xfails in `tests/test_mutation.py` pin it, and the four
+behaviour-difference entries it touches each carry their measured output. Every byte still
 round-trips either way; what is wrong is the ownership, for one position out of n.
 
 **Blank lines are counted, not smuggled** (A7, B9). ruamel encodes them as bare `\n`s inside
@@ -320,7 +330,7 @@ Also fixed: `.ca.end` actually round-trips (A9), `copy()` no longer shares its `
 with the original (D6), `.lc.key(k)` returns `None` for a node with no recorded position instead of
 raising `KeyError` (D7), and `allow_duplicate_keys=True` warns naming both source positions and
 lets the last value win, where ruamel silently keeps the first (D5). (Representing both
-entries is still the `key-duplicate` gap above — a `dict` holds one.)
+entries is still the `key-duplicate` gap above: a `dict` holds one.)
 
 ## What it is not
 
@@ -329,8 +339,9 @@ plug-ins; no `scan()`/`compose()`/`serialize()`; no legacy module-level `load()`
 
 Those are deliberate omissions, not gaps. `typ='rt'` is the mode with the interesting problem and
 the broken implementation; the others are `json.load` with more spelling. `YAML(typ='safe')` raises
-with a message pointing here. See [docs/MIGRATING.md](docs/MIGRATING.md) for the workaround for
-each one.
+with a message pointing here. See
+[Migrating from ruamel.yaml](https://qilimanjaro-tech.github.io/yamluna/migrating/) for the
+workaround for each one.
 
 ## Examples
 
@@ -345,12 +356,24 @@ at the bottom.
 
 ## Documentation
 
+The site is <https://qilimanjaro-tech.github.io/yamluna/>, built from `docs/` with
+[zensical](https://zensical.org).
+
 | | |
 |---|---|
-| [docs/DESIGN.md](docs/DESIGN.md) | the normative contract between the layers |
-| [docs/DIVERGENCES.md](docs/DIVERGENCES.md) | every ruamel defect this library refuses to reproduce, measured |
-| [docs/MIGRATING.md](docs/MIGRATING.md) | ruamel API → yamluna API, and what is missing |
-| [docs/RUAMEL-BEHAVIOR.md](docs/RUAMEL-BEHAVIOR.md) | the raw measurements the other two cite |
+| [Why yamluna](https://qilimanjaro-tech.github.io/yamluna/why/) | the problem it was built for, and what node-owned comments buy you |
+| [How it compares](https://qilimanjaro-tech.github.io/yamluna/comparison/) | next to `ruamel.yaml`, PyYAML, `strictyaml` and the Rust crates |
+| [Guide](https://qilimanjaro-tech.github.io/yamluna/guide/) | loading, dumping, comments, scalar styles, anchors, custom classes, settings, errors |
+| [Migrating from ruamel.yaml](https://qilimanjaro-tech.github.io/yamluna/migrating/) | ruamel API to yamluna API, and what is missing |
+| [Behaviour differences](https://qilimanjaro-tech.github.io/yamluna/migrating/differences/) | every ruamel defect this library refuses to reproduce, measured |
+| [API reference](https://qilimanjaro-tech.github.io/yamluna/api/) | every public class and function, generated from the docstrings |
+| [Internals](https://qilimanjaro-tech.github.io/yamluna/internals/) | the normative contract between the layers |
+| [Measured ruamel behaviour](https://qilimanjaro-tech.github.io/yamluna/internals/ruamel-behaviour/) | the raw measurements the differences page cites |
+
+In the repository, and not on the site:
+
+| | |
+|---|---|
 | [tests/README.md](tests/README.md) | what each test layer asserts, and the per-file corpus table |
 | [crates/yamluna-scanner/FORK.md](crates/yamluna-scanner/FORK.md) | every change made to the vendored parser |
 | [CHANGELOG.md](CHANGELOG.md) | what is in each release, and the known gaps |
@@ -365,10 +388,11 @@ python/yamluna/           the API: YAML, CommentedMap/Seq, scalar types, registr
 tests/                    corpus, differential harness, the acceptance suite
 bench/                    yamluna vs ruamel, and the parallel-load scaling
 examples/                 three runnable scripts, each carrying its real output
+docs/                     the documentation site, built with zensical from zensical.toml
 ci/                       the wheel smoke test CI runs against a fresh venv
 ```
 
-The FFI boundary is flat and symmetric — `parse(str) -> list[Doc]`, `emit(list[Doc]) -> str` —
+The FFI boundary is flat and symmetric (`parse(str) -> list[Doc]`, `emit(list[Doc]) -> str`),
 and the record types are defined once, in Python, in `python/yamluna/_record.py`. Rust never walks
 a `CommentedMap`; Python never formats YAML text.
 

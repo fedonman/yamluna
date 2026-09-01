@@ -1,9 +1,17 @@
-//! `yamluna-core` — the round-trip YAML document model, loader and emitter.
+//! The round-trip YAML document model, loader and emitter.
 //!
-//! The model (DESIGN §2) is owned and `'static`: the source text is kept beside the tree, never
-//! borrowed by it. [`parse`] turns a source string into [`Document`]s whose nodes carry the raw
-//! lexeme, the style, the position and the comments and blank lines in source order, which is
-//! everything an emitter needs to reproduce the input byte for byte.
+//! A [`Document`] is owned and `'static`: the source text is kept beside the tree, never
+//! borrowed by it, so a node can cross an FFI boundary and a subtree can move from one document
+//! into another. [`parse`] turns a source string into one document per YAML document in the
+//! stream. Every node carries the lexeme as written, the style, the position, and the comments
+//! and blank lines in source order, which is everything [`emit`] needs to write the input back
+//! byte for byte.
+//!
+//! Read [`Document`] and [`Node`] for the shape of the model, [`Trivia4`] for the four slots a
+//! node hangs comments in, and [`EmitOptions`], [`analyze`] and [`choose_style`] for the
+//! decisions the emitter makes about nodes you build yourself.
+//!
+//! # Examples
 //!
 //! ```
 //! let docs = yamluna_core::parse("a: 1  # hi\n").unwrap();

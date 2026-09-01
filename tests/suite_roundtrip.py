@@ -1,16 +1,20 @@
-"""`yaml-test-suite` through the Python API, interactively -- the companion to the gate.
+"""`yaml-test-suite` through the Python API, interactively: the companion to the gate.
 
-`tests/test_suite_roundtrip.py` is the gate: it fails the suite when a case regresses or when
-a `KNOWN_GAPS` entry starts passing.  This is the same measurement with a diff per case, for
-working *on* a gap rather than gating on it, and it is the command the README quotes::
+`tests/test_suite_roundtrip.py` is the gate. It fails the suite when a case regresses or
+when a `KNOWN_GAPS` entry starts passing. This is the same measurement with a diff per
+case, for working on a gap rather than gating on it, and it is the command the README
+quotes:
 
-    python tests/suite_roundtrip.py            # the score, and every failing case
-    python tests/suite_roundtrip.py --diff     # ... with in/out for each
-    python tests/suite_roundtrip.py 26DV       # one case, always with its diff
-    python tests/suite_roundtrip.py --rust     # ... and the Rust core's score, for the delta
+```bash
+python tests/suite_roundtrip.py            # the score, and every failing case
+python tests/suite_roundtrip.py --diff     # the same, with in and out for each
+python tests/suite_roundtrip.py 26DV       # one case, always with its diff
+python tests/suite_roundtrip.py --rust     # add the Rust core's score, for the delta
+```
 
-The case list, the visual-escape table and the `KNOWN_GAPS` excuses all come from the gate,
-so there is exactly one definition of "the 308 cases" and one list of what is excused.
+The case list, the visual-escape table and the `KNOWN_GAPS` excuses all come from the
+gate, so there is exactly one definition of "the 308 cases" and one list of what is
+excused.
 """
 
 from __future__ import annotations
@@ -27,7 +31,18 @@ ROOT = Path(__file__).parents[1]
 
 
 def round_trip(source: str) -> str:
-    """`dump_all(load_all(source))` on one fresh `YAML`, configured as a user would."""
+    """Loads then dumps a suite case on one fresh `YAML`, configured as a user would.
+
+    Args:
+        source: The case's YAML, with the suite's visible stand-ins already decoded.
+
+    Returns:
+        What `dump_all` writes for what `load_all` read.
+
+    Raises:
+        YAMLError: yamluna refused the case or could not represent what it loaded.
+        ImportError: The Rust extension is not built.
+    """
     from yamluna import YAML
 
     yaml = YAML()
@@ -38,7 +53,12 @@ def round_trip(source: str) -> str:
 
 
 def rust_score() -> str:
-    """The line the Rust harness prints for the same 308 cases."""
+    """Runs the Rust harness and returns its score line for the same 308 cases.
+
+    Returns:
+        The harness's `yaml-test-suite:` line, or cargo's own output when that line is
+        not there, which is what a build failure looks like from here.
+    """
     proc = subprocess.run(
         ['cargo', 'test', '-p', 'yamluna-core', '--test', 'proptest_roundtrip',
          'yaml_test_suite_round_trips_byte_for_byte', '--', '--nocapture'],
@@ -51,6 +71,18 @@ def rust_score() -> str:
 
 
 def main(argv: list[str]) -> int:
+    """Scores the suite through the Python API and prints every failing case.
+
+    Args:
+        argv: The command-line arguments after the script name. Flags are `--diff` and
+            `--rust`; anything else is a case id to measure on its own, which turns the
+            diff on.
+
+    Returns:
+        0 when every failure is a `KNOWN_GAPS` entry and every entry still fails, and 1
+        for a regression, a stale excuse, or an unknown case id. With a case id given,
+        0 when that case round-trips and 1 when it does not.
+    """
     show_diff = '--diff' in argv
     with_rust = '--rust' in argv
     only = [a for a in argv if not a.startswith('-')]
@@ -62,14 +94,17 @@ def main(argv: list[str]) -> int:
             print(f'no such case: {", ".join(only)}')
             return 1
         show_diff = True
-    total = len(cases)  # after the filter, so `26DV` scores 1/1 rather than 1/308
+    # Counted after the filter, so a single case scores 1/1 rather than 1/308.
+    total = len(cases)
 
     identical = 0
     failures: list[tuple[str, str, str]] = []
     for case in cases:
         try:
             got = round_trip(case.yaml)
-        except Exception as exc:  # a raise is a failure to round-trip, not a skip
+        # A raise is a failure to round-trip rather than a skip: a user who gets a
+        # traceback where ruamel returns text has lost the round trip just as thoroughly.
+        except Exception as exc:
             failures.append((case.id, case.yaml, f'raised {type(exc).__name__}: {exc}'))
             continue
         if got == case.yaml:
@@ -99,7 +134,7 @@ def main(argv: list[str]) -> int:
     if unexpected:
         print(f'\nnot in KNOWN_GAPS, so this is a regression: {unexpected}')
     if stale:
-        print(f'\nnow round-trip -- drop from KNOWN_GAPS: {stale}')
+        print(f'\nnow round-trip, so drop from KNOWN_GAPS: {stale}')
     return 1 if unexpected or stale else 0
 
 

@@ -1,23 +1,22 @@
-//! The `PyO3` boundary of DESIGN §3: `yamluna_core::Document` ⟷ the record classes.
+//! The `PyO3` boundary: [`yamluna_core::Document`] on one side, the Python record classes on
+//! the other.
 //!
-//! The record types are defined **once, in Python** (`python/yamluna/_record.py`). This crate
-//! imports that module once, caches a [`Py<PyType>`] per class in a [`PyOnceLock`], builds
-//! instances through the C API on load and reads their attributes back on dump. There is
-//! deliberately no `#[pyclass]` here: a second definition of `Node` would be a second contract.
+//! `parse` takes YAML source and returns a list of `Doc` records, one per document in the
+//! stream; `emit` takes those records back and returns one YAML stream. The record types
+//! themselves are defined in Python, in the `yamluna._record` module, and nowhere else. This
+//! crate imports that module once, caches a [`Py<PyType>`] per class in a [`PyOnceLock`], calls
+//! the class to build an instance on load, and reads attributes off it on dump.
 //!
-//! Two rules the rest of the file exists to keep:
+//! Both directions run the core inside [`Python::detach`], so loads and emits on several
+//! threads overlap and only the record building is serialised by the GIL.
 //!
-//! * **The GIL is released around the core.** [`yamluna_core::parse`] and the emitter touch
-//!   nothing Python, so [`Python::detach`] (`allow_threads` in older `PyO3`) around them is
-//!   trivially safe, and it is what lets several threads load YAML at once.
-//! * **Errors cross as data.** A [`ParseError`] carries an [`ErrorKind`]; that discriminant picks
-//!   the exception class, via `yamluna.error.make_error`. Nothing on either side of the boundary
-//!   ever string-matches a message.
+//! Errors cross as data. A [`ParseError`] carries an [`ErrorKind`], and `kind_name` is the one
+//! place that discriminant becomes a Python exception class, by name, through
+//! `yamluna.error.make_error`. Neither side of the boundary ever string-matches a message.
 //!
-//! Positions are **char** offsets with 0-based line and column all the way to Python — a byte
-//! offset in `Mark.pointer` slices mid-character on any document with an accent or an emoji.
-//! [`yamluna_scanner::Marker::index`] is already a char offset, so this is a matter of not
-//! "helpfully" converting it.
+//! Positions stay char offsets with 0-based line and column all the way into Python. A byte
+//! offset in `Mark.pointer` slices mid-character on any document holding an accent or an emoji,
+//! and the scanner's `Marker::index` is already a char offset, so nothing here converts it.
 
 #![deny(missing_docs)]
 
@@ -40,6 +39,9 @@ const ERROR: &str = "yamluna.error";
 
 // -- the cached record classes ------------------------------------------------------------
 
+// There is no `#[pyclass]` in this crate on purpose: a second definition of `Node` here would
+// be a second contract to keep in step with the one in `yamluna._record`. Each class is looked
+// up once and held, so building a node costs a call, not an import.
 macro_rules! cached {
     ($name:ident, $module:expr, $attr:literal, $ty:ty) => {
         fn $name(py: Python<'_>) -> PyResult<&Bound<'_, $ty>> {
@@ -55,16 +57,17 @@ cached!(doc_class, RECORD, "Doc", PyType);
 cached!(make_error, ERROR, "make_error", PyAny);
 cached!(emitter_error, ERROR, "EmitterError", PyType);
 
-// -- the kind and style codes of `_record.py` ---------------------------------------------
+// -- the kind and style codes of `yamluna._record` -----------------------------------------
 
 const KIND_SCALAR: u8 = 0;
 const KIND_SEQUENCE: u8 = 1;
 const KIND_MAPPING: u8 = 2;
 const KIND_ALIAS: u8 = 3;
 
-/// `Style` → the `STYLE_*` constant. 0..=4 are [`ScalarStyle`] in declaration order, 5 and 6 the
-/// collection styles; they cannot collide because a node is never both.
+/// The `STYLE_*` constant `yamluna._record` gives a [`Style`].
 fn style_code(style: Style) -> u8 {
+    // 0..=4 are the `ScalarStyle` variants in declaration order, 5 and 6 the collection
+    // styles. One field carries both ranges because a node is never both.
     match style {
         Style::Scalar(ScalarStyle::Plain) => 0,
         Style::Scalar(ScalarStyle::SingleQuoted) => 1,
@@ -76,7 +79,7 @@ fn style_code(style: Style) -> u8 {
     }
 }
 
-/// The inverse of [`style_code`], for a record built in Python.
+/// The inverse of [`style_code`], for a record built in Python. Above 6 is a `ValueError`.
 fn style_from_code(code: u8) -> PyResult<Style> {
     Ok(match code {
         0 => Style::Scalar(ScalarStyle::Plain),
@@ -93,7 +96,7 @@ fn style_from_code(code: u8) -> PyResult<Style> {
 // -- core -> record -----------------------------------------------------------------------
 
 /// A [`Position`] as the record spells it: `(line, col)`, or `None` for one that was never
-/// recorded. The Python layer never reads these — it hands them straight back (DESIGN §3).
+/// recorded. The Python layer hands these back unread.
 fn place(p: Option<Position>) -> Option<(u32, u32)> {
     p.map(|p| (p.line, p.col))
 }
@@ -105,6 +108,7 @@ fn read_place(o: &Bound<'_, PyAny>, name: &str) -> PyResult<Option<Position>> {
         .map(|(line, col)| Position { line, col }))
 }
 
+/// One [`Trivia`] as a `Trivia` record: a comment, or a run of blank lines.
 fn build_trivia<'py>(py: Python<'py>, t: &Trivia) -> PyResult<Bound<'py, PyAny>> {
     let cls = trivia_class(py)?;
     match t {
@@ -113,7 +117,7 @@ fn build_trivia<'py>(py: Python<'py>, t: &Trivia) -> PyResult<Bound<'py, PyAny>>
             own_line,
             col,
         } => cls.call1((text, *own_line, *col, 0u32)),
-        // A blank run has no text and no column; `_record.py` prints neither.
+        // A blank run has no text and no column; `yamluna._record` prints neither.
         Trivia::BlankLines(n) => cls.call1((py.None(), true, 0u32, *n)),
     }
 }
@@ -127,9 +131,10 @@ fn build_trivia_list<'py>(py: Python<'py>, ts: &[Trivia]) -> PyResult<Bound<'py,
     )
 }
 
+/// One [`Node`] as a `Node` record, with its trivia and its recorded positions.
 fn build_node<'py>(py: Python<'py>, n: &Node) -> PyResult<Bound<'py, PyAny>> {
-    // `Node.anchor` is the anchor the node *defines*, except on an alias where it is the one the
-    // node *references* (`NodeKind::Alias { anchor }`). A node never does both.
+    // `Node.anchor` is the anchor the node *defines*, except on an alias where it is the one
+    // the node *references* (`NodeKind::Alias { anchor }`). A node never does both.
     let (kind, anchor) = match &n.kind {
         NodeKind::Scalar => (KIND_SCALAR, n.anchor.clone()),
         NodeKind::Sequence { .. } => (KIND_SEQUENCE, n.anchor.clone()),
@@ -196,6 +201,7 @@ fn build_node<'py>(py: Python<'py>, n: &Node) -> PyResult<Bound<'py, PyAny>> {
     node_class(py)?.call1(PyTuple::new(py, args)?)
 }
 
+/// One [`Document`] as a `Doc` record, holding every node of the tree in one flat arena.
 fn build_doc<'py>(py: Python<'py>, d: &Document) -> PyResult<Bound<'py, PyAny>> {
     let nodes = PyList::new(
         py,
@@ -209,8 +215,8 @@ fn build_doc<'py>(py: Python<'py>, d: &Document) -> PyResult<Bound<'py, PyAny>> 
         .iter()
         .map(|t| (t.handle.as_str(), t.prefix.as_str()))
         .collect();
-    // Past twelve fields a tuple is no longer a `call1` argument, so it is built by hand — the
-    // same way `build_node` has always had to.
+    // Past twelve fields a tuple is no longer a `call1` argument, so the tuple is built by
+    // hand, the same way `build_node` has always had to.
     let args = [
         d.version.into_bound_py_any(py)?,
         directives.into_bound_py_any(py)?,
@@ -232,8 +238,11 @@ fn build_doc<'py>(py: Python<'py>, d: &Document) -> PyResult<Bound<'py, PyAny>> 
 
 // -- record -> core -----------------------------------------------------------------------
 
+/// The [`Trivia`] a `Trivia` record stands for.
 fn read_trivia(o: &Bound<'_, PyAny>) -> PyResult<Trivia> {
     let py = o.py();
+    // A non-zero `blank_lines` is what tells a blank run from a comment; the two share a class,
+    // and a comment record leaves the count at zero.
     let blank: u32 = o.getattr(intern!(py, "blank_lines"))?.extract()?;
     if blank > 0 {
         return Ok(Trivia::BlankLines(blank));
@@ -252,6 +261,10 @@ fn read_trivia_list(o: &Bound<'_, PyAny>) -> PyResult<Vec<Trivia>> {
     o.try_iter()?.map(|t| read_trivia(&t?)).collect()
 }
 
+/// The [`Node`] a `Node` record stands for.
+///
+/// A mapping record needs an even number of children, an alias record needs `anchor` set, and
+/// `kind` and `style` must be codes the record module defines; anything else is a `ValueError`.
 fn read_node(o: &Bound<'_, PyAny>) -> PyResult<Node> {
     let py = o.py();
     let kind: u8 = o.getattr(intern!(py, "kind"))?.extract()?;
@@ -335,6 +348,10 @@ fn read_node(o: &Bound<'_, PyAny>) -> PyResult<Node> {
     })
 }
 
+/// The [`Document`] a `Doc` record stands for, with every node index checked against the arena.
+///
+/// The returned document has no `duplicate_keys`: the record carries no such field, and the
+/// emitter writes whatever entries the tree holds.
 fn read_doc(o: &Bound<'_, PyAny>) -> PyResult<Document> {
     let py = o.py();
     let nodes: Vec<Node> = o
@@ -388,24 +405,23 @@ fn read_doc(o: &Bound<'_, PyAny>) -> PyResult<Document> {
     })
 }
 
-/// Read an `EmitOptions` record into the core's options.
+/// The core [`EmitOptions`] an `EmitOptions` record asks for.
 ///
-/// Three fields cannot be carried across as they stand, and each collapse is deliberate:
+/// Three of the record's fields do not cross as they stand:
 ///
-/// * `line_break` is a plain `str` on the record and `main.py` writes `self.line_break or '\n'`,
-///   so "unset" and "LF" are the same value by the time they get here. `'\n'` therefore means
-///   [`LineBreak::Auto`] — the emitter then takes the break from the lexemes, which is what keeps
-///   a CRLF file byte-identical through a default `YAML()`.
-///   ponytail: an `Optional[str]` slot on the record would make the two cases distinguishable.
-/// * `explicit_start`, `explicit_end` and `default_flow_style` are `Option<bool>` in the core —
-///   `None` keeps what each document had, `Some` overrides it — and plain `bool` on the record,
-///   where `False` is what an unset `YAML.explicit_start` collapses to. `False` is therefore
-///   "leave the documents alone", which is the only reading under which an unmodified round trip
-///   survives.
-/// * `canonical` has no counterpart in the core emitter and is ignored; `allow_unicode` has no
-///   counterpart on the record and keeps its default.
+/// * `line_break` of `'\n'` becomes [`LineBreak::Auto`], so the emitter takes the break from
+///   the lexemes and a CRLF file stays byte-identical through a default `YAML()`.
+/// * `explicit_start`, `explicit_end` and `default_flow_style` are `bool` on the record and
+///   `Option<bool>` in the core. `False` becomes `None`, which leaves each document with the
+///   markers and the flow style it already had; only `True` overrides them.
+/// * `canonical` is ignored, having no counterpart in the core emitter, and `allow_unicode` has
+///   no counterpart on the record, so it keeps the core default.
+///
+/// A `line_break` other than `'\n'`, `'\r\n'` or `'\r'` is a `ValueError`.
 fn read_opts(o: &Bound<'_, PyAny>) -> PyResult<EmitOptions> {
     let py = o.py();
+    // `False` is what an unset `YAML.explicit_start` collapses to, so it has to read as "leave
+    // the documents alone": under any other reading an unmodified round trip gains markers.
     let force = |name: &str| -> PyResult<Option<bool>> {
         Ok(if o.getattr(name)?.extract::<bool>()? {
             Some(true)
@@ -413,6 +429,9 @@ fn read_opts(o: &Bound<'_, PyAny>) -> PyResult<EmitOptions> {
             None
         })
     };
+    // The record types `line_break` as a plain `str` and `main.py` writes `self.line_break or
+    // '\n'`, so unset and LF are the same value by the time they arrive here.
+    // ponytail: an `Optional[str]` slot on the record would tell the two apart.
     let line_break: String = o.getattr(intern!(py, "line_break"))?.extract()?;
     Ok(EmitOptions {
         map_indent: o.getattr(intern!(py, "map_indent"))?.extract()?,
@@ -439,20 +458,22 @@ fn read_opts(o: &Bound<'_, PyAny>) -> PyResult<EmitOptions> {
 
 // -- errors -------------------------------------------------------------------------------
 
-/// The [`ErrorKind`] discriminant as `make_error` spells it. This match is the *whole* of error
-/// classification: adding a variant to `ErrorKind` breaks this build, which is the point.
+/// The name `yamluna.error.make_error` classifies an [`ErrorKind`] by.
 fn kind_name(kind: ErrorKind) -> &'static str {
+    // This match is the whole of error classification. Adding a variant to `ErrorKind` fails
+    // this build, which is how a new kind is made to pick its Python class here rather than by
+    // string-matching a message somewhere downstream.
     match kind {
         ErrorKind::Scanner => "scanner",
     }
 }
 
-/// Turn an [`EmitError`] into `yamluna.error.EmitterError`.
-///
-/// It goes to the class directly rather than through `make_error`: an emit failure has no
-/// position in any source text, and a `Mark` pointing at line 1 column 1 would be a lie. The
-/// class is still chosen by the Rust type, never by matching the message.
+/// Turns an [`EmitError`] into `yamluna.error.EmitterError`, carrying its message and no
+/// position.
 fn emit_error(py: Python<'_>, e: &EmitError) -> PyErr {
+    // Straight to the class rather than through `make_error`: an emit failure has no position
+    // in any source text, and a `Mark` pointing at line 1 column 1 would be a lie. The Rust
+    // type still picks the class.
     let built = emitter_error(py)
         .and_then(|cls| cls.call1((py.None(), py.None(), e.to_string(), py.None())));
     match built {
@@ -461,10 +482,14 @@ fn emit_error(py: Python<'_>, e: &EmitError) -> PyErr {
     }
 }
 
-/// Turn a core [`ParseError`] into the exception `yamluna.error` says it is.
+/// Turns a core [`ParseError`] into the exception `yamluna.error` says its kind is.
 ///
-/// `source` must be the text the core actually scanned (BOM stripped), because `index` is a char
-/// offset into *that*, and `Mark` slices `source` by it to build the snippet.
+/// # Arguments
+///
+/// * `source`: the text the core actually scanned, with any byte-order mark already off.
+///   `index` is a char offset into that text and `Mark` slices it to build the snippet, so a
+///   source that differs by one character puts the caret in the wrong place.
+/// * `name`: the stream name the error prints, such as `<unicode string>` or a file path.
 fn parse_error(py: Python<'_>, e: &ParseError, source: &str, name: &str) -> PyErr {
     let built = make_error(py).and_then(|f| {
         f.call1((
@@ -486,12 +511,20 @@ fn parse_error(py: Python<'_>, e: &ParseError, source: &str, name: &str) -> PyEr
 
 // -- the module -----------------------------------------------------------------------------
 
-/// Load every document of `source` into a list of `Doc` records.
+/// Loads every document of `source` into a list of `Doc` records.
 ///
-/// `allow_duplicate_keys` is accepted for signature compatibility and deliberately not acted on
-/// here: `yamluna.constructor` reports duplicates, because it compares *constructed* keys and
-/// owns the ruamel-shaped message. A second detector in Rust, keyed on the canonical rendering of
-/// the key, would disagree with it on exactly the interesting cases.
+/// # Arguments
+///
+/// * `source`: the YAML stream. A leading byte-order mark is taken off before scanning and
+///   recorded on the first document, so it comes back on emit.
+/// * `allow_duplicate_keys`: accepted for signature compatibility and not acted on here.
+///   Duplicate keys are reported by `yamluna.constructor`, whatever this is set to.
+/// * `name`: the stream name that appears in the position of any error raised.
+///
+/// # Errors
+///
+/// Raises the exception `yamluna.error` maps the core's [`ErrorKind`] to when `source` is not
+/// well-formed YAML, with a `Mark` pointing into `source`.
 #[pyfunction]
 #[pyo3(signature = (source, *, allow_duplicate_keys = true, name = "<unicode string>"))]
 fn parse<'py>(
@@ -500,9 +533,14 @@ fn parse<'py>(
     allow_duplicate_keys: bool,
     name: &str,
 ) -> PyResult<Bound<'py, PyList>> {
+    // Duplicate detection stays in `yamluna.constructor`, which compares constructed keys and
+    // owns the message ruamel users match on. A second detector here, keyed on the canonical
+    // rendering of the key, would disagree with it on exactly the interesting cases.
     let _ = allow_duplicate_keys;
     // The core reports positions relative to the text it scanned, which is BOM-stripped.
     let scanned = strip_bom(source);
+    // The core touches nothing Python, so detaching around it is safe, and it lets a load on
+    // another thread run at the same time.
     let docs = py
         .detach(|| load(scanned, source))
         .map_err(|e| parse_error(py, &e, scanned, name))?;
@@ -514,7 +552,20 @@ fn parse<'py>(
     )
 }
 
-/// Emit a list of `Doc` records as one YAML stream.
+/// Emits `Doc` records as one YAML stream and returns it.
+///
+/// # Arguments
+///
+/// * `docs`: any iterable of `Doc` records, emitted in order.
+/// * `opts`: an `EmitOptions` record.
+///
+/// # Errors
+///
+/// Raises `ValueError` when a record cannot be read as a document: a mapping with an odd number
+/// of children, a node index past the end of the arena, an alias with no name, an unknown kind
+/// or style code, or a `line_break` the emitter does not write. Raises
+/// `yamluna.error.EmitterError` when the tree itself cannot be emitted. A missing or wrongly
+/// typed attribute raises whatever the attribute access does.
 #[pyfunction]
 fn emit(py: Python<'_>, docs: &Bound<'_, PyAny>, opts: &Bound<'_, PyAny>) -> PyResult<String> {
     let docs: Vec<Document> = docs
@@ -526,13 +577,18 @@ fn emit(py: Python<'_>, docs: &Bound<'_, PyAny>, opts: &Bound<'_, PyAny>) -> PyR
         .map_err(|e| emit_error(py, &e))
 }
 
-/// `parse` then `emit`, without ever building a record: the reference the record path is
-/// measured against.
+/// Parses and emits `source` inside the core, without ever building a record.
 ///
-/// It exists so a round-trip failure is attributable. When `emit(parse(text))` differs from the
-/// source, this says whether the difference survives a trip through Python — in which case it is
-/// a boundary bug, something the record model cannot carry — or not, in which case the emitter
-/// and the boundary agree and the defect is upstream of both.
+/// This is the reference the record path is measured against, so that a round-trip failure is
+/// attributable. If `emit(parse(text))` differs from the source and this does not, the record
+/// model dropped something and the bug is at the boundary. If this differs the same way, the
+/// emitter and the boundary agree and the defect is upstream of both.
+///
+/// # Errors
+///
+/// Raises the same exceptions as `parse` and `emit`: a `yamluna.error` class for a source that
+/// is not well-formed, `yamluna.error.EmitterError` for a tree that cannot be emitted, and
+/// `ValueError` for an `opts` record the core cannot take.
 #[pyfunction]
 fn _roundtrip_in_rust(py: Python<'_>, source: &str, opts: &Bound<'_, PyAny>) -> PyResult<String> {
     let opts = read_opts(opts)?;
@@ -549,15 +605,14 @@ fn _roundtrip_in_rust(py: Python<'_>, source: &str, opts: &Bound<'_, PyAny>) -> 
 }
 
 /// The source with a leading byte-order mark taken off.
-///
-/// The core strips one of its own and records it on the first document, but it never gets to:
-/// stripping here is what keeps [`ParseError::index`] a char offset into the very text `Mark`
-/// slices to build a snippet.
 fn strip_bom(source: &str) -> &str {
+    // The core strips a mark of its own and records it on the first document, but it never gets
+    // the chance: stripping here is what keeps `ParseError::index` a char offset into the very
+    // text `Mark` slices to build its snippet.
     source.strip_prefix('\u{feff}').unwrap_or(source)
 }
 
-/// [`yamluna_core::parse`] over the stripped text, with the BOM put back on the first document.
+/// [`yamluna_core::parse`] over the stripped text; the first document records the mark.
 fn load(scanned: &str, source: &str) -> Result<Vec<Document>, ParseError> {
     let mut docs = yamluna_core::parse(scanned)?;
     if scanned.len() != source.len()
@@ -574,7 +629,7 @@ enum RoundTrip {
     Emit(EmitError),
 }
 
-/// The extension module: `yamluna._yamluna`.
+/// The extension module `yamluna._yamluna`: `parse`, `emit` and `_roundtrip_in_rust`.
 #[pymodule]
 fn _yamluna(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse, m)?)?;

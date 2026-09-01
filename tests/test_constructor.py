@@ -1,9 +1,11 @@
-"""Tests for records -> Python tree (DESIGN.md 3 -> 4.1).
+"""Tests for the constructor: FFI records in, a Python tree out.
 
-Runs with no Rust extension: every input is a hand-built record tree from
-``tests/_records.py``::
+Nothing here needs the Rust extension. Every input is a hand-built record tree from
+`tests/_records.py`, so the file runs on a checkout that has never been compiled.
 
-    PYTHONPATH=python .venv/bin/pytest tests/test_constructor.py
+```sh
+PYTHONPATH=python .venv/bin/pytest tests/test_constructor.py
+```
 """
 
 from __future__ import annotations
@@ -61,11 +63,20 @@ from yamluna.timestamp import TimeStamp
 
 
 def tree(root: Any, **options: Any) -> Any:
-    """The Python tree for a single-document record built by ``_records``."""
+    """Returns the Python tree for a single-document record built by `_records`.
+
+    Args:
+        root: The root record node, as built by `mapping`, `seq` or `scalar`.
+        options: Keyword options for `construct`, such as `preserve_quotes` or `registry`.
+
+    Returns:
+        The constructed document root.
+    """
     return construct(doc(root), **options)
 
 
 def values(tokens: Any) -> list[str]:
+    """Returns the text of each comment token, or an empty list when there are none."""
     return [t.value for t in tokens or ()]
 
 
@@ -107,7 +118,7 @@ def test_resolve_plain_values(lexeme: str, kind: type, expected: Any) -> None:
 @pytest.mark.parametrize(
     ('lexeme', 'kind'),
     [
-        # DIVERGENCES B8: ruamel drops the '+'
+        # ruamel drops the leading '+' of an integer.
         ('+7', ScalarInt),
         ('1_000_000', ScalarInt),
         ('017', ScalarInt),
@@ -115,12 +126,13 @@ def test_resolve_plain_values(lexeme: str, kind: type, expected: Any) -> None:
         ('0x1F_FF', HexInt),
         ('0o755', OctalInt),
         ('0b1010_0101', BinaryInt),
-        # DIVERGENCES D2: ruamel refuses a capital X/O/B
+        # ruamel does not resolve a capital 0X, 0O or 0B prefix as an integer at all.
         ('0XABCDEF', HexInt),
         ('0O17', OctalInt),
         ('0B101', BinaryInt),
         ('-0x1F', HexInt),
-        # DIVERGENCES B7: the separator survives, and nothing zero-pads
+        # The digit separator survives and nothing gains a leading zero. ruamel turns
+        # '1_000.5' into '01000.5'.
         ('1_000.5', ScalarFloat),
         ('+2.5', ScalarFloat),
         ('3.14000', ScalarFloat),
@@ -214,7 +226,7 @@ def test_scalars_through_a_document() -> None:
 
 
 def test_raw_wins_over_the_cooked_value() -> None:
-    """A loaded node resolves from ``raw``; ``value`` is only the cooked text."""
+    """A loaded node resolves from `raw`; `value` holds only the cooked text."""
     node = scalar('1000.5', raw='1_000.5')
     assert tree(mapping([('x', node)]))['x'].lexeme() == '1_000.5'
 
@@ -274,7 +286,7 @@ def test_a_multi_line_plain_scalar_is_a_string() -> None:
 
 
 def test_alias_is_the_same_object() -> None:
-    """``doc['use'] is doc['base']`` -- the identity user code depends on."""
+    """`doc['use'] is doc['base']`: the identity user code depends on."""
     base = mapping([('x', '1')], anchor='b')
     m = tree(mapping([('base', base), ('use', alias('b')), ('again', alias('b'))]))
     assert m['use'] is m['base']
@@ -299,7 +311,10 @@ def test_alias_to_a_sequence_and_to_a_scalar() -> None:
 
 
 def test_recursive_anchor_self_mapping() -> None:
-    """DIVERGENCES B1 / corpus anchors-recursive: ruamel cannot load this at all."""
+    """A mapping that aliases its own anchor loads, and ruamel cannot load it at all.
+
+    The file this stands in for is `tests/corpus/anchors-recursive.yaml`.
+    """
     node = mapping([('name', 'node'), ('next', alias('sm'))], anchor='sm')
     m = tree(mapping([('self_map', node)]))
     assert m['self_map']['next'] is m['self_map']
@@ -332,7 +347,11 @@ def test_deeply_nested_self_reference() -> None:
 
 
 def test_anchor_is_recorded_and_always_dumped() -> None:
-    """A source anchor is source text, so it is emitted however often it is used (B1)."""
+    """A source anchor is source text, so it is emitted however often it is used.
+
+    ruamel drops any anchor referenced fewer than twice, which deletes source the user
+    wrote.
+    """
     m = tree(mapping([('unused', mapping([('y', '2')], anchor='unused'))]))
     assert m['unused'].anchor.value == 'unused'
     assert m['unused'].anchor.always_dump is True
@@ -382,7 +401,7 @@ def test_merge_is_readable_through_normal_lookup() -> None:
 
 
 def test_merge_is_not_expanded_into_the_owned_entries() -> None:
-    """A dump must re-emit ``<<: *base``, so the merged keys are not this node's own."""
+    """A dump has to re-emit `<<: *base`, so the merged keys are not this node's own."""
     d = construct(_merge_docs())['derived']
     assert list(d.non_merged_items()) == [('b', 'overridden')]
     assert '<<' not in d
@@ -453,7 +472,11 @@ def test_duplicate_key_raises_by_default() -> None:
 
 
 def test_duplicate_key_warns_and_the_last_one_wins() -> None:
-    """DIVERGENCES D5: ruamel keeps the *first* value and says nothing."""
+    """The last value wins and a warning names both positions.
+
+    ruamel keeps the first value, warns about nothing, and its next dump writes the file
+    back with the losing entry deleted.
+    """
     d = doc(mapping([('a', '1'), ('b', '2'), ('a', '3')]))
     with pytest.warns(DuplicateKeyFutureWarning, match='last value wins'):
         m = construct(d, allow_duplicate_keys=True)
@@ -483,12 +506,12 @@ def test_keys_that_resolve_alike_are_duplicates() -> None:
 
 
 def test_an_alias_to_a_key_of_its_own_mapping_is_a_duplicate() -> None:
-    """`yaml-test-suite` X38W: ``{&a [x]: 1, *a : 2}``.
+    """The `yaml-test-suite` case X38W, `{&a [x]: 1, *a : 2}`.
 
-    An alias *is* the node its anchor named (rule 2), so both entries carry the one key
-    object -- not merely two equal ones.  YAML requires a mapping's keys to be unique, so
-    this document is ill-formed and the error is the honest answer; ruamel raises
-    `DuplicateKeyError` here too and PyYAML never gets that far ("found unhashable key").
+    An alias resolves to the very object its anchor named, so both entries carry one key
+    object rather than two equal ones. YAML requires a mapping's keys to be unique, so
+    the document is ill-formed and the error is the honest answer. ruamel raises
+    `DuplicateKeyError` here too, and PyYAML stops earlier with "found unhashable key".
     """
     d = doc(mapping([(seq(['x'], anchor='a'), '1'), (alias('a'), '2')]))
     with pytest.raises(DuplicateKeyError):
@@ -496,14 +519,14 @@ def test_an_alias_to_a_key_of_its_own_mapping_is_a_duplicate() -> None:
 
     with pytest.warns(DuplicateKeyFutureWarning):
         m = construct(d, allow_duplicate_keys=True)
-    assert len(m) == 1, 'one key object, so one `dict` entry -- the document is unrepresentable'
+    assert len(m) == 1, 'one key object, so one `dict` entry: the document is unwritable'
 
 
 def test_two_empty_keys_are_one_null_key() -> None:
-    """`yaml-test-suite` 2JQS: ``: a`` over ``: b``.
+    """The `yaml-test-suite` case 2JQS, `: a` over `: b`.
 
-    An empty key is the null key, so the two entries carry the one key and the suite tags
-    the case ``duplicate-key`` itself -- X38W without the alias, and the same answer.
+    An empty key is the null key, so the two entries carry one key and the suite tags the
+    case `duplicate-key` itself. It is X38W without the alias, and it gets the same answer.
     """
     d = doc(mapping([('', 'a'), ('', 'b')]))
     with pytest.raises(DuplicateKeyError, match='duplicate key None'):
@@ -570,7 +593,11 @@ def test_a_tag_in_our_namespace_with_no_class_raises() -> None:
 
 
 def test_an_ambiguous_bare_tag_raises_and_names_every_candidate() -> None:
-    """DESIGN 5.4.2: never guess -- the ruamel bug this library exists to not have."""
+    """A bare tag with more than one candidate raises and names every candidate.
+
+    Picking one is the ruamel bug this library exists to not have: there the winner is
+    whichever class was imported last.
+    """
     registry = TagRegistry()
     for module in ('libx.circuits', 'liby.gates'):
         cls = type('Circuit', (), {})
@@ -721,7 +748,11 @@ def test_mapping_entry_trivia_lands_in_the_right_slots() -> None:
 
 
 def test_blank_lines_are_first_class() -> None:
-    """DIVERGENCES A7: ruamel smuggles them into another node's comment text."""
+    """A blank line is a token of its own; ruamel hides them inside comment text.
+
+    Buried in a neighbour's text there is no answer to "how many blank lines separate
+    these two keys" that does not involve parsing the comment back apart.
+    """
     key = scalar('b', before=[blank(3), comment('# about b')])
     m = tree(mapping([('a', '1'), (key, '2')]))
     tokens = m.ca.items['b'][C_KEY_PRE]
@@ -738,7 +769,11 @@ def test_sequence_element_trivia_uses_the_element_slots() -> None:
 
 
 def test_sequence_trivia_travels_with_its_element() -> None:
-    """The whole point of the identity-keyed store (DIVERGENCES A2/A3)."""
+    """The point of the identity-keyed store: trivia rides with the element it describes.
+
+    ruamel keys by index, so an insert relabels the following element's comment and a
+    delete destroys the neighbour's alongside the removed one.
+    """
     items = [scalar(t, before=[comment(f'# about {t}')]) for t in ('one', 'two', 'three')]
     s = tree(seq(items))
     s.insert(0, 'zero')
@@ -767,8 +802,12 @@ def test_document_leading_and_trailing_trivia() -> None:
     assert values(m.ca.end) == ['# after root\n', '# the very end\n']
 
 
-def test_document_trailing_comment_survives(  # DIVERGENCES A9 / B3
-) -> None:
+def test_document_trailing_comment_survives() -> None:
+    """A comment written after the document's last node reaches `ca.end`.
+
+    ruamel loses it twice over: its round-trip loader never fills `ca.end` at all, and a
+    comment written after a `...` marker is destroyed outright.
+    """
     m = construct(doc(mapping([('a', '1')]), trailing=[comment('# after end marker')]))
     assert values(m.ca.end) == ['# after end marker\n']
 

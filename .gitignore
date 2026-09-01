@@ -7,3 +7,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 dist/
+
+# zensical documentation site
+/site/
+/.cache/

@@ -19,9 +19,9 @@ versions follow [semver](https://semver.org/).
   gate over the Python-side score, and `tests/suite_roundtrip.py` prints it with a diff per
   failing case, so the two numbers can never silently drift apart again.
 
-- **Directive lines round-trip as written.** The whole region above `---` — reserved directives
-  (`%FOO`), the spacing inside `%YAML  1.1`, and any comment on or between those lines — is kept
-  verbatim on `Document::directives_raw` and echoed, instead of being reconstructed from
+- **Directive lines round-trip as written.** The whole region above `---`, meaning reserved
+  directives (`%FOO`), the spacing inside `%YAML  1.1`, and any comment on or between those
+  lines, is kept verbatim on `Document::directives_raw` and echoed, instead of being reconstructed from
   `version` / `tag_directives`. Nine `yaml-test-suite` cases.
 - **White space at the end of a stream** that no line break closes is recorded on
   `Document::stream_tail` and written back, instead of being dropped (`4RWC`, `L24T-01`).
@@ -29,8 +29,8 @@ versions follow [semver](https://semver.org/).
   so `{ "a" : b\n , c : 'd' }` keeps its leading-comma layout instead of being re-laid-out
   (`DFF7`, `FRK4`, `LP6E`, `WZ62`, and the last two corpus files).
 - **A stored comment is never silently discarded.** A scalar-valued entry's `C_VALUE_POST`
-  comment reached the document model and was then dropped by the emitter — the exact
-  store-then-discard path DIVERGENCES D4 says this library does not have.
+  comment reached the document model and was then dropped by the emitter: the exact
+  store-then-discard path D4 on the behaviour-differences list says this library does not have.
 - Recorded flow runs are no longer echoed once the emitter has stopped landing where the model
   says: a document rebuilt from user-made nodes was getting punctuation for lexemes that were
   no longer being written, and could emit YAML that did not re-parse.
@@ -42,9 +42,9 @@ versions follow [semver](https://semver.org/).
 - An explicit `? key` whose `:` line the source wrote keeps it, even with an empty value
   (`KK5P`).
 
-## [0.1.0] — unreleased
+## [0.1.0] - unreleased
 
-First release. A round-trip YAML library — Rust scanner, document model and emitter behind a
+First release. A round-trip YAML library: Rust scanner, document model and emitter behind a
 Python API that replaces `ruamel.yaml`'s `typ='rt'`.
 
 ### Added
@@ -62,14 +62,15 @@ Python API that replaces `ruamel.yaml`'s `typ='rt'`.
   belongs to the node it describes, so `insert`, `del`, `pop`, `rename`, `move_to_end`,
   `reverse` and `sort` move comments with the entries they describe. `.ca.items` is a
   projection over that store, so ported code that reads `.ca` still works
-  (docs/DIVERGENCES.md A1–A7).
+  ([behaviour differences](https://qilimanjaro-tech.github.io/yamluna/migrating/differences/) A1–A7).
 - **Blank lines as a first-class trivium with a count**, rather than bare newlines smuggled
   inside another node's comment text (A7, B9).
-- **A tag registry keyed on the fully qualified class path**, so two libraries — or two
-  modules of one library — that both define a `Circuit` cannot overwrite each other. The
+- **A tag registry keyed on the fully qualified class path**, so two libraries, or two
+  modules of one library, that both define a `Circuit` cannot overwrite each other. The
   namespace is written into the document with `%TAG` directives; a colliding `(source, name)`
   pair promotes both sources to their full module paths. A bare `!Name` with two registered
-  candidates raises rather than guessing (docs/DESIGN.md §5, C1–C2).
+  candidates raises rather than guessing
+  ([the design contract](https://qilimanjaro-tech.github.io/yamluna/internals/) §5, C1–C2).
 - **A per-`YAML()` registry.** `yaml.register_class(...)` never touches another instance's
   registry. A module-level `register_class` and a shared `default_registry` remain for the
   one-registry-per-app case.
@@ -78,7 +79,7 @@ Python API that replaces `ruamel.yaml`'s `typ='rt'`.
   four upstream bug fixes. Every change is logged in `crates/yamluna-scanner/FORK.md`; the
   402-case `yaml-test-suite` and the upstream unit tests stay green.
 - **GIL-free parsing.** `_yamluna.parse` runs the scanner, loader and trivia attachment inside
-  `py.detach`, so loads across threads overlap — measured 2.83x at 4 threads and 3.89x at 8 on
+  `py.detach`, so loads across threads overlap: measured 2.83x at 4 threads and 3.89x at 8 on
   the 249 KiB `nested` input, where `ruamel.yaml` is flat at 0.98x (`bench/bench.py --threads`).
   Only the parse is GIL-free; building the `Node` records and the `CommentedMap`s on top of
   them is Python object creation, so `YAML.load` itself scales to 2.45x at 8 threads, not
@@ -88,7 +89,7 @@ Python API that replaces `ruamel.yaml`'s `typ='rt'`.
 ### Fixed, relative to `ruamel.yaml` 0.19.1
 
 Every entry is measured, with a repro and a regression test, in
-[docs/DIVERGENCES.md](docs/DIVERGENCES.md).
+[Behaviour differences](https://qilimanjaro-tech.github.io/yamluna/migrating/differences/).
 
 - Comments no longer drift or resurrect across mutation (A1–A6), `.ca` is no longer mutated by
   dumping (A8), and `.ca.end` / `yaml_end_comment_extend` round-trip (A9).
@@ -116,7 +117,7 @@ On this commit, reproduce with the commands given:
 | `pytest tests` | 1097 passed, 45 skipped, 12 xfailed |
 | load / dump throughput vs `ruamel.yaml` (`python bench/bench.py`, release build) | 1.4x–8.9x faster |
 
-The two round-trip scores are separate on purpose. 308 is what the Rust core reproduces — every
+The two round-trip scores are separate on purpose. 308 is what the Rust core reproduces, every
 case the suite has; 306 is what a user of `YAML().load_all` / `.dump_all` gets, and it is the
 lower of the two. Quoting only the first would be quoting the core rather than the library. The
 two cases between them are the object model, not the boundary: `emit(parse(x))` through the
@@ -130,15 +131,15 @@ causes, is in [tests/README.md](tests/README.md#known-gaps).
 
 - None through the Rust core: all 308 `yaml-test-suite` cases round-trip byte-for-byte and
   `KNOWN_GAPS` in `crates/yamluna-core/tests/proptest_roundtrip.rs` is empty. The last six
-  closed by recording one more fact each — a `#` mark where a comment stood inside a flow
+  closed by recording one more fact each: a `#` mark where a comment stood inside a flow
   collection's separation run and a run count that says a single pair wrote no brackets
   (`6HB6`, `7TMG`, `CN3R`, `CT4Q`), `Node::header_at` for a block scalar's header (`M5C3`),
   and `Document::directives_raw` widened to cover a `...` that ends no document (`M7A3`).
 - 2 of the 308 do not round-trip through the Python API (`KNOWN_GAPS` in
   `tests/test_suite_roundtrip.py`), and both are permanent object-model limits rather than
   unfinished work: `2JQS` (`: a` over `: b`) and `X38W` (an alias used as a key of the mapping
-  its anchor is defined in). `CommentedMap` is a `dict`, so two keys that compare equal — or
-  one key reached twice — are one entry; YAML requires a mapping's keys to be unique, so both
+  its anchor is defined in). `CommentedMap` is a `dict`, so two keys that compare equal, or
+  one key reached twice, are one entry; YAML requires a mapping's keys to be unique, so both
   documents are ill-formed and `DuplicateKeyError` naming both positions is the answer. ruamel
   raises on both; PyYAML never reaches the question.
 - One corpus file does not round-trip through the Python layer: `key-duplicate`
@@ -147,7 +148,7 @@ causes, is in [tests/README.md](tests/README.md#known-gaps).
 - 12 xfails in `tests/test_mutation.py`: eight because a first child's own-line comment is filed
   on the enclosing collection's `inner` slot rather than the child's `before`, so an insertion
   at the front mislabels it; four because an insertion strands the `-` of the item before an
-  own-line comment. `docs/DIVERGENCES.md` A2–A6 carry the same caveat.
+  own-line comment. The behaviour-differences entries A2–A6 carry the same caveat.
 - `mypy --strict` is configured in `pyproject.toml` but reports 109 errors in `python/yamluna`,
   so it is not a CI gate yet.
 
@@ -155,7 +156,8 @@ causes, is in [tests/README.md](tests/README.md#known-gaps).
 
 `typ='rt'` only; no safe/base/unsafe; no `!!python/object:`; no component substitution; no
 plug-ins; no `scan()`/`compose()`/`serialize()`; no legacy module-level `load()`/`dump()`.
-See [docs/MIGRATING.md](docs/MIGRATING.md) for the workaround for each.
+See [Migrating from ruamel.yaml](https://qilimanjaro-tech.github.io/yamluna/migrating/)
+for the workaround for each.
 
 [Unreleased]: https://github.com/qilimanjaro-tech/yamluna/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/qilimanjaro-tech/yamluna/releases/tag/v0.1.0

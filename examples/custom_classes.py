@@ -1,11 +1,16 @@
-"""register_class, and the %TAG wire format that keeps two `Circuit`s apart.
+"""Registering a class, and the %TAG wire format that keeps two `Circuit`s apart.
 
 ruamel keys its registry on the class *name*, so the second library to register a
-`Circuit` silently overwrites the first and you get the wrong class back
-(docs/DIVERGENCES.md C1).  yamluna keys on the fully qualified path and writes the
-namespace into the document with YAML's own `%TAG` mechanism.
+`Circuit` silently overwrites the first and you get the wrong class back. yamluna keys
+on the fully qualified path (`libx.circuits.Circuit`) and writes the namespace into the
+document with YAML's own `%TAG` mechanism, so both classes survive a round trip and
+come back as themselves.
 
-    .venv/bin/python examples/custom_classes.py
+Run it:
+
+```bash
+.venv/bin/python examples/custom_classes.py
+```
 """
 
 from yamluna import YAML
@@ -13,29 +18,39 @@ from yamluna.error import ConstructorError
 
 
 def a_class(module: str, name: str) -> type:
-    """A class pretending to live in `module`.
+    """Builds a class that reports `module` as the module it was defined in.
 
-    In real code these live in real modules and `cls.__module__` is already right;
-    faking it keeps this example to one file.
+    Args:
+        module: The dotted module path the class claims to come from.
+        name: The name of the class.
+
+    Returns:
+        A new class whose constructor copies its keyword arguments onto the instance.
     """
     cls = type(name, (), {'__init__': lambda self, **kw: self.__dict__.update(kw)})
+    # In real code the class already lives in a real module and `cls.__module__` is
+    # right on its own. Faking it keeps this example to a single file.
     cls.__module__ = module
     return cls
 
 
 LibxCircuit = a_class('libx.circuits', 'Circuit')  # libx.circuits.Circuit
 LibyCircuit = a_class('liby.core', 'Circuit')  # liby.core.Circuit
-LibxGate = a_class('libx.gates', 'Circuit')  # libx.gates.Circuit — same name again
+LibxGate = a_class('libx.gates', 'Circuit')  # libx.gates.Circuit, the same name again
 
 
-# -- one library: the source takes the primary `!` handle, tags are bare ------------
+# -- one library --------------------------------------------------------------------
+#
+# A single registered source takes YAML's primary `!` handle, so its tags go out bare.
 
 yaml = YAML()
 yaml.register_class(LibxCircuit)
 print('# one library'.ljust(60, '-'))
 print(yaml.dump({'main': LibxCircuit(qubits=2)}))
 
-# -- two libraries: the most-used source keeps `!`, the rest get named handles ------
+# -- two libraries ------------------------------------------------------------------
+#
+# The most-used source keeps `!`; every other source gets a named handle.
 
 yaml = YAML()
 yaml.register_class(LibxCircuit)
@@ -49,7 +64,10 @@ assert type(back['a']) is LibxCircuit and back['a'].qubits == 2
 assert type(back['b']) is LibyCircuit and back['b'].n == 3
 assert yaml.dump(back) == two_libs  # and it round-trips
 
-# -- two modules of one library: the colliding sources promote to module paths ------
+# -- two modules of one library -----------------------------------------------------
+#
+# Two classes called `Circuit` under the same top-level package collide, so both
+# sources promote from the package name to the full module path.
 
 yaml = YAML()
 yaml.register_class(LibxCircuit)
@@ -64,7 +82,10 @@ back = yaml.load(two_mods)
 assert type(back['a']) is LibxCircuit
 assert type(back['b']) is LibxGate
 
-# -- a hand-written bare `!Circuit` with two candidates: never guesses --------------
+# -- a hand-written bare `!Circuit` with two candidates -----------------------------
+#
+# With more than one candidate the loader raises instead of picking one, and the
+# message lists the candidates and the two ways to disambiguate.
 
 yaml = YAML()
 yaml.register_class(LibxCircuit)

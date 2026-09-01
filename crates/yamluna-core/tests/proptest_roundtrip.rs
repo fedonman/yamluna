@@ -1,19 +1,20 @@
-//! Fuzzing for the DESIGN §6.2 invariant: **for any YAML that parses, `parse → emit` is
-//! byte-identical to the input.**
+//! Fuzzing for the round-trip invariant: for any YAML that parses, `parse` then `emit` is
+//! byte-identical to the input.
 //!
 //! Two document sources, because they fail in different ways:
 //!
-//! 1. `yaml-test-suite` — 351 files, ~400 cases, adversarial and real. It already ships with the
-//!    scanner fork; nothing here was written for us, which is the point.
-//! 2. A proptest generator over *documents* (not bytes): nested block and flow collections, every
-//!    scalar style, anchors, aliases, tags, comments in every slot, blank lines, multi-document
-//!    streams, unicode, CRLF. Random bytes almost never parse; random documents almost always do,
-//!    and only a document that parses can test the invariant.
+//! 1. `yaml-test-suite`: 351 files holding 308 cases that are expected to parse, adversarial
+//!    and real. It already ships with the vendored scanner fork, and none of it was written
+//!    for this library, which is the point.
+//! 2. A proptest generator over documents rather than bytes: nested block and flow collections,
+//!    every scalar style, anchors, aliases, tags, comments in every slot, blank lines,
+//!    multi-document streams, unicode, CRLF. Random bytes almost never parse, random documents
+//!    almost always do, and only a document that parses can test the invariant.
 //!
-//! `KNOWN_GAPS` is **empty**: every suite case the loader accepts re-emits byte for byte. Any
-//! counterexample goes there with a minimal repro, and `known_gaps_are_still_gaps` fails when a
-//! listed one starts passing, so a fix cannot leave a stale excuse behind. `tests/README.md`
-//! carries the same list in prose.
+//! All 308 suite cases the loader accepts re-emit byte for byte, so `KNOWN_GAPS` is empty. A
+//! counterexample goes there with a minimal repro, and the round-trip test fails both on an
+//! unlisted failure and on a listed case that starts passing, so a fix cannot leave a stale
+//! excuse behind.
 
 use std::{fmt::Write as _, path::PathBuf};
 
@@ -47,7 +48,7 @@ fn visual_to_raw(yaml: &str) -> String {
     for (pat, replacement) in [
         ("␣", " "),
         ("»", "\t"),
-        ("—", ""), // tab line continuation ——»
+        ("—", ""), // the suite's marker for a tab line continuation
         ("←", "\r"),
         ("⇔", "\u{feff}"),
         ("↵", ""), // trailing newline marker
@@ -58,9 +59,9 @@ fn visual_to_raw(yaml: &str) -> String {
     yaml
 }
 
-/// Every case in the suite that is *expected to parse*: `fail: true` and `skip` cases are dropped,
-/// and fields other than `fail` are inherited from the previous case in the file, exactly as the
-/// scanner's own harness reads them.
+/// Every case in the suite that is expected to parse. `fail: true` and `skip` cases are
+/// dropped, and fields other than `fail` are inherited from the previous case in the file,
+/// exactly as the scanner's own harness reads them.
 fn suite_cases() -> Vec<SuiteCase> {
     use saphyr::{LoadableYamlNode, Mapping, Scalar, Yaml};
 
@@ -109,17 +110,20 @@ fn suite_cases() -> Vec<SuiteCase> {
     out
 }
 
-/// Suite cases that do not round-trip byte-for-byte, and why.
+/// Suite cases that do not round-trip byte for byte, and why.
 ///
-/// **Empty, and the point is that it stays that way.** Each entry would be a real defect,
-/// minimised in `tests/README.md` under "Known gaps"; the test below fails both on an unlisted
-/// failure and on a listed case that starts passing, so neither a regression nor a stale excuse
-/// can survive here. The last six went at `HEAD`: `6HB6`, `7TMG`, `CN3R`, `CT4Q` (flow separation
-/// runs, now recording a `#` where a comment stood and a pair's missing brackets in their length),
-/// `M5C3` (`Node::header_at`) and `M7A3` (`Document::directives_raw` covering a bare `...`).
+/// Empty, and the point is that it stays that way. Each entry would be a real defect, carrying
+/// a minimised repro alongside its id. The test below fails both on an unlisted failure and on
+/// a listed case that starts passing, so neither a regression nor a stale excuse can survive
+/// here.
+///
+/// The last six closed together. `6HB6`, `7TMG`, `CN3R` and `CT4Q` needed the separation runs a
+/// flow collection writes between its lexemes, which now record a `#` where a comment stood and
+/// count a pair's missing brackets in their length. `M5C3` needed `Node::header_at`, and `M7A3`
+/// needed `Document::directives_raw` to cover a bare `...`.
 const KNOWN_GAPS: &[(&str, &str)] = &[];
 
-/// **The headline number.** Every suite case that the loader accepts must re-emit byte-identically.
+/// The headline number: all 308 suite cases the loader accepts re-emit byte-identically.
 #[test]
 fn yaml_test_suite_round_trips_byte_for_byte() {
     let cases = suite_cases();
@@ -159,7 +163,7 @@ fn yaml_test_suite_round_trips_byte_for_byte() {
     );
     assert!(
         unexpected_pass.is_empty(),
-        "now round-trip — drop from KNOWN_GAPS: {unexpected_pass:?}"
+        "now round-trip, drop from KNOWN_GAPS: {unexpected_pass:?}"
     );
     assert!(
         failures.is_empty(),
@@ -168,8 +172,9 @@ fn yaml_test_suite_round_trips_byte_for_byte() {
     );
 }
 
-/// A case that does not round-trip must at least be a fixed point of the emitter: dumping what we
-/// dumped changes nothing. A gap that fails this one is not a spelling difference, it is data loss.
+/// A case that does not round-trip is at least a fixed point of the emitter: dumping its own
+/// output changes nothing. A gap failing this one has lost data, not picked a different
+/// spelling.
 #[test]
 fn suite_emitting_is_idempotent() {
     for case in suite_cases() {
@@ -186,15 +191,14 @@ fn suite_emitting_is_idempotent() {
 // 2. the document generator
 // =================================================================================================
 //
-// A generator over random *bytes* is useless here: essentially none of them parse, and only a
-// document that parses can test the invariant. So this generates a small YAML *tree* and renders
+// A generator over random bytes is useless here: almost none of them parse, and only a
+// document that parses can test the invariant. So this generates a small YAML tree and renders
 // it, which gives documents that parse by construction and a tree proptest can shrink.
 //
 // The renderer deliberately stays inside the styles the emitter already handles, so a red run
-// means a *new* bug. Everything it avoids is listed in `KNOWN_GAPS` / `tests/README.md` and is
-// already covered by the suite above: inter-token padding, tabs, CRLF, `?`-explicit keys,
-// empty block scalars, `+`-chomping, multi-line flow collections, comments inside flow, and
-// blank lines before the first token of a stream.
+// means a new bug. What it leaves out is already covered by the suite above: inter-token
+// padding, tabs, CRLF, `?`-explicit keys, empty block scalars, `+`-chomping, multi-line flow
+// collections, comments inside flow, and blank lines before the first token of a stream.
 
 /// A comment line or a run of blank lines, in a slot where the emitter accepts one.
 #[derive(Debug, Clone)]
@@ -334,8 +338,8 @@ struct Render {
 }
 
 impl Render {
-    /// `&a1 !!str ` — the part that precedes a node's own text. Empty for an alias, which can
-    /// carry neither.
+    /// The `&a1 !!str ` prefix that precedes a node's own text. Empty for an alias, which can
+    /// carry neither an anchor nor a tag.
     fn head(&mut self, n: &Node) -> String {
         if matches!(n.val, Val::Alias) {
             return String::new();
@@ -350,7 +354,8 @@ impl Render {
             self.anchors.push(name);
         }
         if let Some(t) = n.tag {
-            // Gap `verbatim-tag-block-scalar`: `!<uri>` on a `|` scalar re-emits it as `>`.
+            // A verbatim `!<uri>` tag on a `|` scalar comes back out as `>`, so that pair
+            // is never generated.
             let verbatim = TAGS[t as usize].starts_with("!<");
             if !(verbatim && matches!(n.val, Val::Block(..))) {
                 s.push_str(TAGS[t as usize]);
@@ -435,12 +440,11 @@ impl Render {
         }
     }
 
-    /// Everything after the `:` or `-` that introduces `n`, including the line break, with `n`'s
-    /// children laid out at `child`.
+    /// Everything after the `:` or `-` that introduces `n`, including the line break, with
+    /// `n`'s children laid out at `child`.
     fn after_marker(&mut self, n: &Node, child: usize, map_value: bool) {
-        // Gap `block-scalar-indent`: below the top level a block scalar swallows the *next*
-        // line's indentation, so anything after it is mis-indented. Written flat instead; the
-        // gap keeps its own minimal repro in `GAPS`.
+        // Below the top level a block scalar swallows the next line's indentation, so
+        // anything after it comes out mis-indented. Written flat here instead.
         if matches!(n.val, Val::Block(..)) && child > 2 {
             self.out.push(' ');
             let text = self.flow(n);
@@ -468,9 +472,9 @@ impl Render {
             if *strip {
                 self.out.push('-');
             }
-            // Gap `block-header-comment`: an end-of-line comment on a block-scalar header is
-            // re-emitted before the `-` that introduces the item, or swallows the header
-            // outright at the document root. As a mapping value it is written correctly.
+            // An end-of-line comment on a block-scalar header is re-emitted before the `-`
+            // that introduces the item, or swallows the header outright at the document root.
+            // As a mapping value it is written correctly, so only that case is generated.
             if map_value {
                 self.eol(n);
             }
@@ -521,16 +525,16 @@ impl Render {
         }
         let block = Self::is_block(&doc.root);
         let head = self.head(&doc.root);
-        // Gap `root-block-scalar-trivia`: a comment above a document root that is a block scalar
-        // is glued onto the header line, swallowing the `|`/`>`.
+        // A comment above a document root that is a block scalar is glued onto the header
+        // line, swallowing the `|`/`>`, so the root keeps no leading trivia here.
         let root_trivia: Vec<Triv> = if matches!(doc.root.val, Val::Block(..)) {
             Vec::new()
         } else {
             doc.root.before.clone()
         };
-        // Gap `anchor-own-line` / `tag-own-line`: `&a` or `!!str` on a line of its own above a
-        // block collection is rewritten by the emitter. On the `---` line it is not, so a root
-        // that carries one gets an explicit start.
+        // An `&a` or `!!str` on a line of its own above a block collection is rewritten by
+        // the emitter. On the `---` line it is not, so a root that carries one gets an
+        // explicit start.
         let explicit =
             doc.directives || doc.explicit_start || forced_start || (block && !head.is_empty());
 
@@ -545,8 +549,8 @@ impl Render {
                 self.out.push(' ');
                 self.body(&doc.root, 0);
             } else if block {
-                // Gap `marker-head-comment`: an anchor or tag on the `---` line is re-emitted
-                // *after* an end-of-line comment there, i.e. inside it.
+                // An anchor or tag on the `---` line is re-emitted after an end-of-line
+                // comment there, which puts it inside the comment.
                 if head.is_empty() {
                     self.eol(&doc.root);
                 }
@@ -585,7 +589,8 @@ impl Render {
             if *strip {
                 self.out.push('-');
             }
-            // Gap `block-header-comment`, at the document root.
+            // The block-scalar header comment problem again, at the document root: no
+            // end-of-line comment is written here.
             self.out.push('\n');
             for l in lines {
                 self.pad(indent + 2);
@@ -613,8 +618,8 @@ proptest! {
     #[test]
     fn generated_documents_round_trip(docs in prop::collection::vec(document(), 1..3)) {
         let src = render(&docs);
-        // A generated document that does not parse is a bug in the *generator*, not the library,
-        // and saying so here is what keeps a broken generator from passing silently.
+        // A generated document that does not parse is a bug in the generator rather than in
+        // the library, and saying so here keeps a broken generator from passing silently.
         let got = round_trip(&src)
             .map_err(|e| TestCaseError::fail(format!("generated source does not parse: {e}\n{src:?}")))?;
         prop_assert_eq!(&got, &src, "\n--- got ---\n{}\n--- want ---\n{}", got.escape_debug(), src.escape_debug());

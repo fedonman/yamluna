@@ -1,8 +1,11 @@
-"""Tests for the container object model (DESIGN.md 4.1 / 2.1).
+"""Tests for the container object model: the commented collections and their trivia.
 
-Runs with nothing but ``python/yamluna/comments.py`` importable::
+The file runs with nothing but `python/yamluna/comments.py` importable; the one test that
+needs the emitter skips itself until the Rust extension is built.
 
-    PYTHONPATH=python .venv/bin/pytest tests/test_comments.py
+```sh
+PYTHONPATH=python .venv/bin/pytest tests/test_comments.py
+```
 """
 
 from __future__ import annotations
@@ -38,6 +41,15 @@ from yamluna.comments import (
 
 
 def seq(*values: Any, comments: dict[int, str] | None = None) -> CommentedSeq:
+    """Returns a `CommentedSeq` of `values`.
+
+    Args:
+        values: The elements, in order.
+        comments: End-of-line comment text per element index.
+
+    Returns:
+        The new sequence.
+    """
     s = CommentedSeq(values)
     for idx, text in (comments or {}).items():
         s.yaml_add_eol_comment(text, idx)
@@ -45,6 +57,15 @@ def seq(*values: Any, comments: dict[int, str] | None = None) -> CommentedSeq:
 
 
 def cmap(comments: dict[str, str] | None = None, **items: Any) -> CommentedMap:
+    """Returns a `CommentedMap` of `items`.
+
+    Args:
+        comments: End-of-line comment text per key.
+        items: The entries, in keyword order.
+
+    Returns:
+        The new mapping.
+    """
     m = CommentedMap(items)
     for key, text in (comments or {}).items():
         m.yaml_add_eol_comment(text, key)
@@ -52,7 +73,7 @@ def cmap(comments: dict[str, str] | None = None, **items: Any) -> CommentedMap:
 
 
 def eol(node: Any, key: Any) -> str | None:
-    """The end-of-line comment text of one entry, or None."""
+    """Returns the end-of-line comment text of one entry, or `None` when it has none."""
     record = node.ca.items.get(key)
     if record is None:
         return None
@@ -61,6 +82,7 @@ def eol(node: Any, key: Any) -> str | None:
 
 
 def eols(node: Any) -> dict[Any, str | None]:
+    """Returns every end-of-line comment of `node`, keyed by key or index, in order."""
     return {k: eol(node, k) for k in node._ca_order() if eol(node, k) is not None}
 
 
@@ -436,7 +458,11 @@ def test_yaml_set_comment_before_after_key() -> None:
 
 
 def test_d4_after_on_a_scalar_valued_entry_is_emitted() -> None:
-    """DIVERGENCES D4: ruamel stores slot 3 and never writes it when the value is a scalar."""
+    """An `after` comment on a scalar-valued entry reaches the output.
+
+    ruamel stores the token in the same slot and then never emits it when the value is a
+    scalar, so the comment is lost without a word.
+    """
     import io
 
     pytest.importorskip('yamluna._yamluna', reason='extension not built yet: maturin develop')

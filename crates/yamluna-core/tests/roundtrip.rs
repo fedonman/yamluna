@@ -1,19 +1,23 @@
-//! The acceptance criterion of DESIGN §6.2: for every file in `tests/corpus/`, `load → dump` is
-//! byte-identical to the input.
+//! The acceptance criterion: for every file in `tests/corpus/`, loading and dumping with
+//! nothing mutated gives back the input byte for byte.
 //!
-//! This is the headline test of the project. For reference, `ruamel.yaml==0.19.1` round-trips 3
-//! of these 41 files byte-identically (`.venv/bin/python tests/differential.py`).
+//! This is the headline test of the project, and the corpus is its hand-written half: 41 files,
+//! one concern each, chosen for the bytes that go missing in a round trip. A failure here is a
+//! fact the source carried and the document model or the emitter did not.
+//!
+//! For reference, `ruamel.yaml==0.19.1` round-trips 3 of these 41 files byte-identically, as
+//! scored by `.venv/bin/python tests/differential.py`.
 
 use std::path::{Path, PathBuf};
 
 use yamluna_core::{EmitOptions, emit, parse};
 
-/// Corpus files that cannot round-trip, and why. Every one of them is a fact the source carries
-/// and the document model does not, so the emitter has to pick a spelling; the file names the
-/// other one.
+/// Corpus files that cannot round-trip, and why.
 ///
-/// The test fails if an entry starts passing, so a fix to the model never leaves a stale excuse
-/// behind.
+/// Empty: all 41 files come back byte-identical. An entry here would be a fact the source
+/// carries and the document model does not, leaving the emitter to pick a spelling while the
+/// file uses the other one. The test below fails if a listed entry starts passing, so a fix to
+/// the model never leaves a stale excuse behind.
 const KNOWN_FAILURES: &[(&str, &str)] = &[];
 
 fn corpus_dir() -> PathBuf {
@@ -82,13 +86,13 @@ fn known_failures_still_fail() {
         assert_ne!(
             round_trip(&src).ok().as_deref(),
             Some(src.as_str()),
-            "{name} now round-trips — drop it from KNOWN_FAILURES ({why})"
+            "{name} now round-trips: drop it from KNOWN_FAILURES ({why})"
         );
     }
 }
 
-/// Emitting twice gives the same bytes as emitting once: whatever the emitter writes, it can read
-/// back and write again. This is the one property the known failures still have to satisfy.
+/// Emitting twice gives the same bytes as emitting once: whatever the emitter writes, it can
+/// read back and write again. This is the one property a known failure still has to satisfy.
 #[test]
 fn emitting_is_idempotent() {
     for path in corpus_files() {
@@ -154,9 +158,9 @@ fn first_difference(got: &str, want: &str) -> String {
 /// Every corpus file, rebuilt: each node stripped of its lexeme and its position, exactly as a
 /// document the user constructed node by node arrives.
 ///
-/// Nothing about the *text* is asserted — the layout is free to differ. What must hold is that
-/// the text is still YAML, and still says the same thing. This is the check that catches a
-/// layout that runs two constructs into one line.
+/// Nothing about the text is asserted, so the layout is free to differ. What has to hold is
+/// that the text is still YAML and still says the same thing. This is the check that catches a
+/// layout running two constructs into one line.
 #[test]
 fn a_rebuilt_document_says_the_same_thing() {
     for path in corpus_files() {

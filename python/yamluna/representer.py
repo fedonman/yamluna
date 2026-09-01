@@ -1,66 +1,64 @@
-"""Python tree -> FFI records (DESIGN.md §3) — the inverse of :mod:`yamluna.constructor`.
+"""Turns a Python object tree into the flat node records the Rust emitter writes.
 
-``represent(data)`` returns one :class:`~yamluna._record.Doc`: a flat node arena the Rust
-emitter turns into text.  Nothing here formats YAML — the *choice* of scalar style is made
-here, the rendering is not (DESIGN.md §0).
+This module is the inverse of `yamluna.constructor`.  `represent(data)` returns one `Doc`:
+a node arena the emitter turns into text, plus the version, the tag directives and the
+trivia that live outside the root.  No YAML text is produced here.  The *choice* of scalar
+style is made in this module; the rendering is the emitter's.
 
-**Byte-exactness.**  Every scalar type in the package carries the lexeme it was loaded from
-(``ScalarString.lexeme()`` and friends).  When it is still there, it goes into ``Node.raw``
-and the emitter reproduces it verbatim; when the value was built or edited in Python the
-lexeme is gone, ``raw`` is ``None``, and the emitter formats from ``style`` + ``value``.
-That is the whole mechanism behind "an untouched load → dump is byte-identical".
+**Byte-exactness.** Every scalar type in the package carries the lexeme it was loaded from
+(`ScalarString.lexeme()` and friends).  While that lexeme is there it goes into `Node.raw`
+and the emitter reproduces it verbatim; once the value has been built or edited in Python
+the lexeme is gone, `raw` is `None`, and the emitter formats from `style` and `value`.  That
+is the whole mechanism behind an untouched load then dump being byte-identical.
 
-A plain scalar whose builtin re-renders its lexeme exactly (``hello``, ``12``, ``true``)
-comes back from the constructor as a bare ``str``/``int``/``bool`` with no lexeme to carry,
-so ``raw`` is ``None`` and the text is rebuilt from ``value`` — the same bytes.  Everything
-whose spelling a builtin *cannot* reproduce (``+12``, ``0X1F``, ``1_000.5``, ``yes``,
-``2002-1-4``) is a lexeme-carrying scalar type, which is what keeps the round trip exact.
+A plain scalar whose builtin re-renders its lexeme exactly (`hello`, `12`, `true`) comes
+back from the constructor as a bare `str`, `int` or `bool` with no lexeme to carry, so `raw`
+is `None` and the text is rebuilt from `value`, giving the same bytes.  Everything whose
+spelling a builtin cannot reproduce (`+12`, `0X1F`, `1_000.5`, `yes`, `2002-1-4`) is a
+lexeme-carrying scalar type, and that is what keeps the round trip exact.
 
-**Trivia.**  Read off ``.ca`` through the identity-keyed store, never by re-deriving from
-indices, and never by *touching* the object: a dump is a read (DIVERGENCES A8), so every
-access here is a ``getattr(obj, _attrib, None)`` that cannot create the attribute it looks
-for.  The slot mapping is the bridge table in :mod:`yamluna.comments`:
+**Trivia.** Comments are read off `.ca` through the identity-keyed store, never re-derived
+from indices, and never by touching the object: a dump is a read, so every access here is a
+`getattr(obj, _attrib, None)` that cannot create the attribute it looks for.  The slots line
+up with the bridge table in `yamluna.comments`:
 
-======  =====================================================================
-slot    source
-======  =====================================================================
-before  the parent's record for this entry, ``C_KEY_PRE`` / ``C_ELEM_PRE``;
-        for a mapping *value* and for the document root, the node's own
-        ``ca.comment[1]`` — that is where the constructor put both
-eol     the parent's record, ``C_VALUE_EOL`` (``C_ELEM_EOL`` in a sequence),
-        or the node's own ``ca.comment[0]`` when the parent has none
-inner   the node's own ``ca.comment[1]``, for every other position
-after   the node's own ``ca.end``, then the parent's ``C_VALUE_POST``
-======  =====================================================================
+* `before`: the parent's record for this entry, `C_KEY_PRE` or `C_ELEM_PRE`.  For a mapping
+  value and for the document root it is the node's own `ca.comment[1]`, which is where the
+  constructor put both.
+* `eol`: the parent's record, `C_VALUE_EOL` (`C_ELEM_EOL` in a sequence), or the node's own
+  `ca.comment[0]` when the parent has none.
+* `inner`: the node's own `ca.comment[1]`, for every other position.
+* `after`: the node's own `ca.end`, then the parent's `C_VALUE_POST`.
 
-``ca.comment[1]`` is one list holding what the records keep in two slots, so for the two
-positions where the constructor merges ``before`` into it the split cannot be recovered and
-resolves to ``before`` — the common case by far (a comment block above a nested mapping).
-Likewise ``C_VALUE_POST`` holds a scalar value's ``before`` *and* ``after``, and comes back
-as ``after``.  Both are properties of ``.ca``'s shape, not of this module.
+`ca.comment[1]` is one list holding what the records keep in two slots.  For the two
+positions where the constructor merges `before` into it the split cannot be recovered, and
+it resolves to `before`, the common case by far (a comment block above a nested mapping).
+`C_VALUE_POST` likewise holds a scalar value's `before` and its `after` together, and comes
+back as `after`.  Both are properties of `.ca`'s shape rather than of this module.
 
-**Anchors.**  ``&name`` at the first occurrence of an object, ``*name`` at every later one,
-by ``id()``.  An anchor that is *set* is always emitted, even if referenced once — it is
-source text, and deleting it is not a round trip (DIVERGENCES B1); ``always_dump`` is
-honoured but consequently redundant for loaded anchors.  A shared object with no anchor of
-its own gets a generated ``id001``.  Recursive structures terminate: the name is recorded
-before the subtree is walked, so a back-reference is an alias.
+**Anchors.** `&name` goes at the first occurrence of an object and `*name` at every later
+one, keyed on `id()`.  An anchor that is set is always emitted, even when it is referenced
+once: it is source text, and dropping it is not a round trip.  `always_dump` is never read
+here, because the behaviour it asks for is what every set anchor already gets.  A shared
+object with no anchor of its own gets a generated `id001`.  Recursive structures terminate
+because the name is recorded before the subtree is walked, which makes a back-reference an
+alias.
 
-**Merge keys** are re-emitted as ``<<: *base``, never expanded (``Node.merge`` marks them).
+**Merge keys** are re-emitted as `<<: *base` and never expanded; `Node.merge` marks them.
 
-**Tags** come from :meth:`~yamluna.registry.TagRegistry.plan`, called with the registered
-classes this document actually uses; its ``%TAG`` directives go on ``Doc.tag_directives``
-and the per-node string on ``Node.tag`` (DESIGN.md §5.3).  A class with a ``to_yaml``
-classmethod gets to build its own node through :meth:`_Representer.represent_scalar` /
-``represent_mapping`` / ``represent_sequence``, keeping ruamel's hook signature.
+**Tags** come from `TagRegistry.plan`, called with the registered classes this document
+actually uses.  Its `%TAG` directives go on `Doc.tag_directives` and the per-node string on
+`Node.tag`.  A class with a `to_yaml` classmethod builds its own node through
+`_Representer.represent_scalar`, `represent_mapping` or `represent_sequence`, which keep
+ruamel's hook signatures.
 
-**Positions.**  ``Node.line`` / ``Node.col`` are the source positions the emitter echoes an
-untouched node at, and they come from ``.lc``: a container's own, and for every scalar the
-parent's ``lc.key`` / ``lc.value`` / ``lc.item`` -- a bare ``str`` or ``int`` has nowhere to
-keep one.  An alias site is placed by its parent only, never by the object, which remembers
-where its *anchor* was written.  A tree the user built has no ``.lc`` and gets no positions,
-so it is laid out from ``EmitOptions`` instead; a tree that was edited has stale ones, and
-the emitter stops believing recorded lines at the first construct that misses.
+**Positions.** `Node.line` and `Node.col` are the source positions the emitter echoes an
+untouched node at, and they come from `.lc`: a container's own, and for every scalar the
+parent's `lc.key`, `lc.value` or `lc.item`, since a bare `str` or `int` has nowhere to keep
+one.  An alias site is placed by its parent only, never by the object, which remembers where
+its *anchor* was written.  A tree the user built has no `.lc` and gets no positions, so it is
+laid out from `EmitOptions` instead; a tree that was edited has stale ones, and the emitter
+stops believing recorded lines at the first construct that misses.
 """
 
 from __future__ import annotations
@@ -130,7 +128,7 @@ from yamluna.timestamp import TimeStamp
 
 __all__ = ['represent', 'represent_all']
 
-#: ruamel's style indicator -> the record's style constant.
+# ruamel's style indicator, mapped to the record's style constant.
 _STYLE_BY_INDICATOR: dict[str | None, int] = {
     '|': STYLE_LITERAL,
     '>': STYLE_FOLDED,
@@ -140,12 +138,12 @@ _STYLE_BY_INDICATOR: dict[str | None, int] = {
     None: STYLE_PLAIN,
 }
 
-#: `c-indicator`: a plain scalar may not start with one of these.  `-`, `?` and `:` only
-#: matter when a space follows, which :func:`_plain_ok` checks separately.
+# The `c-indicator` set: a plain scalar may not start with one of these.  `-`, `?` and `:`
+# only matter when a space follows, which `_plain_ok` checks separately.
 _INDICATOR_START = frozenset('-?:,[]{}#&*!|>\'"%@`')
 
-#: Anything a scalar can be.  Everything else is a container, an alias target, or an
-#: object for the tag registry.  `datetime.date` covers `datetime` and `TimeStamp`.
+# Anything a scalar can be.  Everything else is a container, an alias target, or an object
+# for the tag registry.  `datetime.date` covers `datetime` and `TimeStamp`.
 _ATOMS = (str, bytes, bytearray, int, float, complex, datetime.date, datetime.time, type(None))
 
 _SET_TAG = ('!!', 'set', 'tag:yaml.org,2002:set')
@@ -156,16 +154,24 @@ _BINARY_TAG = ('!!', 'binary', 'tag:yaml.org,2002:binary')
 
 
 def _plain_ok(text: str, version: tuple[int, int] | None = None) -> bool:
-    """Can `text` be written as a plain scalar in block context and mean the same thing?
+    """Reports whether `text` can be written plain and still load back as this string.
 
-    "Would it load back as this string" is answered by the loader's own
-    :func:`~yamluna.constructor.resolve`, so the two directions cannot drift apart: whatever
-    the constructor would turn into a bool, an int or a timestamp gets quoted here — and
-    `yes` under YAML 1.2, which resolves to a string, does not.
+    Whether it would load back is answered by the loader's own
+    `yamluna.constructor.resolve`, so the two directions cannot drift apart: whatever the
+    constructor would turn into a bool, an int or a timestamp gets quoted here, and `yes`
+    under YAML 1.2, which resolves to a string, does not.
 
-    The emitter has the final say per context — a value that is plain-safe in a block
-    mapping may still need quoting inside a flow collection — but it may only ever quote
-    *more* than this, never less.
+    The answer is for block context.  The emitter has the final say per context, since a
+    value that is plain-safe in a block mapping may still need quoting inside a flow
+    collection, and it may only ever quote *more* than this, never less.
+
+    Args:
+        text: The cooked scalar value.
+        version: The document's `%YAML` version.  `(1, 1)` puts `yes`, `on` and the rest of
+            the YAML 1.1 boolean spellings back among the lexemes that must be quoted.
+
+    Returns:
+        `True` when the text is safe to write with no quotes.
     """
     if not text:
         return False
@@ -190,6 +196,7 @@ def _quoted_style(text: str) -> int:
 
 
 def _float_text(value: float) -> str:
+    """The YAML spelling of a float, with `.nan` and `.inf` for the two special cases."""
     if math.isnan(value):
         return '.nan'
     if math.isinf(value):
@@ -198,7 +205,11 @@ def _float_text(value: float) -> str:
 
 
 def _scalar(obj: Any, version: tuple[int, int] | None = None) -> tuple[int, str, str | None]:
-    """``(style, cooked value, source lexeme or None)`` for one scalar object."""
+    """Returns `(style, cooked value, source lexeme or None)` for one scalar object.
+
+    Raises:
+        RepresenterError: `obj` is not a type this module can write as a scalar.
+    """
     if obj is None:
         # `null`'s lexeme is the empty one: `key:` with nothing after it.  It goes in as a
         # lexeme rather than as a bare empty value so the emitter writes nothing rather than
@@ -210,7 +221,8 @@ def _scalar(obj: Any, version: tuple[int, int] | None = None) -> tuple[int, str,
         raw, text = obj.lexeme(), str(obj)
         style = _STYLE_BY_INDICATOR[obj.style]
         if raw is None and style == STYLE_PLAIN and not _plain_ok(text, version):
-            style = _quoted_style(text)  # the value changed under the style; keep the value
+            # The text no longer loads back plain, so the value wins over the style.
+            style = _quoted_style(text)
         return style, text, raw
     if isinstance(obj, (ScalarInt, ScalarFloat, ScalarBoolean, TimeStamp)):
         return STYLE_PLAIN, obj.lexeme(), getattr(obj, '_lexeme', None)
@@ -225,7 +237,7 @@ def _scalar(obj: Any, version: tuple[int, int] | None = None) -> tuple[int, str,
     if isinstance(obj, (datetime.datetime, datetime.date, datetime.time)):
         return STYLE_PLAIN, obj.isoformat(), None
     if isinstance(obj, (bytes, bytearray)):
-        # `!!binary`; the tag comes from `_tag_of`, which reads `_BINARY_TAG` for bytes.
+        # `!!binary`.  The tag comes from `_tag_of`, which reads `_BINARY_TAG` for bytes.
         return STYLE_DOUBLE, base64.b64encode(bytes(obj)).decode('ascii'), None
     raise RepresenterError(f'cannot represent an object: {obj!r}')
 
@@ -234,25 +246,24 @@ def _scalar(obj: Any, version: tuple[int, int] | None = None) -> tuple[int, str,
 
 
 def _anchor_name(obj: Any) -> str | None:
+    """The anchor name set on `obj`, or `None` when it has none."""
     anchor = getattr(obj, anchor_attrib, None)
     return None if anchor is None else anchor.value
 
 
 def _trackable(obj: Any) -> bool:
-    """Can this object be aliased?  Containers always; scalars only once anchored.
-
-    Keying scalars on ``id()`` unconditionally would alias interned small ints and strings
-    to each other, which is why ruamel refuses to alias scalars at all.
-    """
+    """Whether `obj` can be aliased: containers always, scalars only once anchored."""
+    # Keying scalars on `id()` unconditionally would alias interned small ints and strings
+    # to each other, which is why ruamel refuses to alias scalars at all.
     return not isinstance(obj, _ATOMS) or _anchor_name(obj) is not None
 
 
 def _state(obj: Any) -> Mapping[Any, Any]:
-    """The attribute mapping a registered class is represented from (ruamel's rule).
+    """Returns the attribute mapping a registered class is represented from, as ruamel does.
 
-    Minus the record the object was loaded from: that is parked *on* the object
-    (:data:`~yamluna.constructor.NODE_ATTRIB`) and lands in its ``__dict__`` like anything
-    else, but it is this package's bookkeeping and not a field of the user's class.
+    The record the object was loaded from is left out.  It is parked on the object under
+    `NODE_ATTRIB` and lands in `__dict__` like anything else, but it is this package's
+    bookkeeping rather than a field of the user's class.
     """
     state = obj.__getstate__() if hasattr(obj, '__getstate__') else getattr(obj, '__dict__', None)
     if not isinstance(state, Mapping):
@@ -265,8 +276,8 @@ def _state(obj: Any) -> Mapping[Any, Any]:
 def _children(obj: Any) -> Iterator[Any]:
     """Everything reachable from `obj`, for the shared-object pre-pass."""
     if isinstance(obj, Mapping):
-        # merged-in keys are the merge target's, not this mapping's: walking them here
-        # would count the target's values twice and anchor them for no reason
+        # Merged-in keys belong to the mapping `<<` points at.  Walking them here would
+        # count that mapping's values twice and anchor them for no reason.
         items = obj.non_merged_items() if isinstance(obj, CommentedMap) else obj.items()
         for key, value in items:
             yield key
@@ -279,7 +290,7 @@ def _children(obj: Any) -> Iterator[Any]:
 
 
 def _lc(obj: Any) -> tuple[int, int] | None:
-    """`obj`'s own recorded source position, without creating a ``.lc`` (A8)."""
+    """`obj`'s own recorded source position, read without creating a `.lc` on it."""
     lc = getattr(obj, line_col_attrib, None)
     if lc is None or lc.line is None or lc.col is None:
         return None
@@ -287,11 +298,11 @@ def _lc(obj: Any) -> tuple[int, int] | None:
 
 
 def _lc_of(container: Any, key: Any, which: str) -> tuple[int, int] | None:
-    """The position `container` recorded for one of its children.
+    """Returns the position `container` recorded for one of its children.
 
-    A bare ``str``/``int`` has nowhere to hold its own position, so the parent's ``.lc`` is
+    A bare `str` or `int` has nowhere to hold its own position, so the parent's `.lc` is
     where most scalars get theirs back.  It is also the only right answer for an *alias*
-    site: the object knows where its anchor was written, not where the ``*name`` is.
+    site: the object knows where its anchor was written, not where the `*name` is.
     """
     lc = getattr(container, line_col_attrib, None)
     if lc is None:
@@ -304,7 +315,7 @@ def _lc_of(container: Any, key: Any, which: str) -> tuple[int, int] | None:
 
 
 def _in(keys: Any, key: Any) -> bool:
-    """``key in keys``, for a `key` that may not be hashable (and so cannot be in there)."""
+    """`key in keys`, for a `key` that may not be hashable (and so cannot be in there)."""
     try:
         return key in keys
     except TypeError:
@@ -312,14 +323,16 @@ def _in(keys: Any, key: Any) -> bool:
 
 
 def _flow_style(obj: Any, default: bool) -> int:
-    """``.fa`` wins over the caller's default -- that is ruamel's rule and it is correct."""
+    """The style constant for `obj`: its own `.fa` setting wins over the caller's default."""
+    # Ruamel's rule, and the right one: the constructor sets `.fa` from the source, so a
+    # collection loaded in flow style stays flow whatever default the caller passed.
     fa = getattr(obj, format_attrib, None)
     flow = default if fa is None else fa.flow_style(default)
     return STYLE_FLOW if flow else STYLE_BLOCK
 
 
 def _record_of(container: Any, key: Any) -> list[Any] | None:
-    """The 4-slot trivia record for one entry of `container`, or ``None``."""
+    """The four-slot trivia record for one entry of `container`, or `None`."""
     store = getattr(container, trivia_attrib, None)
     if not store:
         return None
@@ -333,7 +346,7 @@ def _record_of(container: Any, key: Any) -> list[Any] | None:
 
 
 def _null_lexeme(container: Any, key: Any) -> str | None:
-    """How `container` recorded its ``None`` child at `key` being spelled (:data:`NULL_ATTRIB`)."""
+    """How `container` recorded its `None` child at `key` being spelled (`NULL_ATTRIB`)."""
     store = getattr(container, NULL_ATTRIB, None)
     if not store:
         return None
@@ -345,7 +358,7 @@ def _null_lexeme(container: Any, key: Any) -> str | None:
 
 
 def _flow_seps(obj: Any) -> list[str]:
-    """What the source wrote between a flow collection's lexemes (:data:`FLOW_SEPS_ATTRIB`)."""
+    """What the source wrote between a flow collection's lexemes (`FLOW_SEPS_ATTRIB`)."""
     return list(getattr(obj, FLOW_SEPS_ATTRIB, None) or ())
 
 
@@ -358,34 +371,34 @@ def _loaded(value: Any, found: tuple[Any, Node, Node | None] | None) -> Node | N
 
 
 def _carry(node: Node, src: Node | None) -> None:
-    """Hand the emitter back everything the source said that this layer cannot keep itself.
+    """Hands the emitter back what the source said that this layer cannot keep itself.
 
-    `src` is the record the object was loaded from -- off the object
-    (:data:`~yamluna.constructor.NODE_ATTRIB`), or off its parent
-    (:data:`~yamluna.constructor.SOURCE_ATTRIB`) for the bare builtins that hold no attribute.
-    Either way it describes a node that has not been replaced, so nothing here has to
-    *understand* any of it: where the ``&anchor`` and the tag were written, where each entry's
-    ``:`` went, which of the tag and the anchor came first, the lexeme itself.  It is handed
-    back, and the emitter -- which believes a recorded position only while its output is still
-    on the line that position names -- decides what is still usable.
+    `src` is the record the object was loaded from, taken off the object (`NODE_ATTRIB`) or
+    off its parent (`SOURCE_ATTRIB`) for the bare builtins that hold no attribute.  Either
+    way it describes a node that has not been replaced, so nothing here has to *understand*
+    any of it: where the `&anchor` and the tag were written, where each entry's `:` went,
+    which of the tag and the anchor came first, the lexeme itself.  It is handed back, and
+    the emitter decides what is still usable, believing a recorded position only while its
+    output is still on the line that position names.
 
     Only what the node does not already supply is filled in: a `TaggedScalar` brings its own
-    tag, a `ScalarString` its own anchor.  Two staleness tests are made here because the
-    emitter cannot make them: ``colon`` has a slot per entry, so an insertion or a deletion
-    retires it (the rule :data:`~yamluna.constructor.FLOW_SEPS_ATTRIB` lives by), and a
-    position is taken only for a node that has none of its own.
+    tag, a `ScalarString` its own anchor.
     """
     if src is None:
         return
-    # `tag_first` is which of `!!str &a` and `&a !!str` the source wrote -- how the properties
-    # were laid out, like where they were laid out, and nothing the object model has a slot for
-    # even when the object brings its own tag.
+    # `tag_first` is which of `!!str &a` and `&a !!str` the source wrote.  How the properties
+    # were laid out, like where they were laid out, is nothing the object model has a slot
+    # for, even when the object brings its own tag.
     node.anchor_at, node.tag_at, node.tag_first = src.anchor_at, src.tag_at, src.tag_first
     if node.line == 0 and node.col == 0:
-        # A scalar has no `.lc` of its own and a *root* has no parent to place it, so without
-        # this the one document whose root is a scalar on the line below `---` loses that line.
+        # A position is taken only for a node that has none of its own.  A scalar has no
+        # `.lc` and a *root* has no parent to place it, so without this the one document
+        # whose root is a scalar on the line below `---` loses that line.
         node.line, node.col = src.line, src.col
     if len(src.colon) * 2 == len(node.children):
+        # `colon` has a slot per entry, so an insertion or a deletion retires the whole
+        # record.  The emitter cannot make that test, which is why it is made here; it is
+        # the same rule the recorded flow separators live by.
         node.colon = src.colon
     if node.kind != KIND_SCALAR or src.kind != KIND_SCALAR:
         return
@@ -395,10 +408,10 @@ def _carry(node: Node, src: Node | None) -> None:
         node.anchor = src.anchor
     if src.raw is not None:
         # The record is the authority, not what the value could reconstruct: a `ScalarFloat`
-        # built from `!!float "1.5"` remembers `1.5`, not the quotes, and re-encoding
-        # `!!binary` loses the line wrapping of the payload.  The three travel together --
-        # the emitter reads a block scalar's header off the lexeme, and the cooked value is
-        # what the lexeme meant.  A scalar with neither a lexeme nor a position is also the
+        # built from `!!float "1.5"` remembers `1.5` and not the quotes, and re-encoding
+        # `!!binary` loses the line wrapping of the payload.  The three travel together: the
+        # emitter reads a block scalar's header off the lexeme, and the cooked value is what
+        # the lexeme meant.  A scalar with neither a lexeme nor a position is also the
         # emitter's one signal for "the user built this", so a bare `str` that cannot keep
         # its own lexeme has to get it back from here or the document is laid out afresh.
         node.style, node.value, node.raw = src.style, src.value, src.raw
@@ -408,13 +421,12 @@ def _carry(node: Node, src: Node | None) -> None:
 
 
 def _unmerge_value_pre(node: Node, src: Node | None) -> None:
-    """Split a value's `after` back into the comments that came *before* it and the rest.
+    """Splits a value's `after` back into the comments that came *before* it and the rest.
 
-    ``.ca`` has one slot for both -- the comments between a ``key:`` and its value, and the
-    ones that follow the value -- so :meth:`Constructor._entry_trivia` merges them, and the
-    record is what tells them apart again: the head of the slot the record says was `before`.
-    A slot the user has edited no longer starts with it and stays whole, which is the safe way
-    to be wrong.
+    `.ca` has one slot for both the comments between a `key:` and its value and the ones
+    that follow the value, so the constructor merges them there.  The record is what tells
+    them apart again: the head of the slot the record says was `before`.  A slot the user
+    has edited no longer starts with it and stays whole, which is the safe way to be wrong.
     """
     if src is None or not src.before or node.before:
         return
@@ -424,9 +436,10 @@ def _unmerge_value_pre(node: Node, src: Node | None) -> None:
 
 
 def _source_of(container: Any, key: Any) -> tuple[Any, Node, Node | None] | None:
-    """The ``(value, value record, key record)`` `container` kept for one entry.
+    """Returns the `(value, value record, key record)` `container` kept for one entry.
 
-    See :data:`~yamluna.constructor.SOURCE_ATTRIB`.
+    A bare `str`, `int`, `bool`, `bytes` or `None` takes no attribute, so for those the
+    parent is the only place a record can live.
     """
     store = getattr(container, SOURCE_ATTRIB, None)
     if not store:
@@ -439,6 +452,7 @@ def _source_of(container: Any, key: Any) -> tuple[Any, Node, Node | None] | None
 
 
 def _tokens(value: Any) -> list[CommentToken]:
+    """The comment tokens in one `.ca` slot, which may hold one token, a list, or `None`."""
     if value is None:
         return []
     if isinstance(value, CommentToken):
@@ -447,7 +461,7 @@ def _tokens(value: Any) -> list[CommentToken]:
 
 
 def _trivia_list(value: Any) -> list[Trivia]:
-    """``CommentToken``s -> trivia records, collapsing blank tokens into ``BlankLines``."""
+    """Comment tokens as trivia records, collapsing runs of blank tokens into `blank_lines`."""
     out: list[Trivia] = []
     for token in _tokens(value):
         if token.is_blank_line:
@@ -460,27 +474,31 @@ def _trivia_list(value: Any) -> list[Trivia]:
         own_line = token.value.endswith('\n')
         text = token.value[:-1] if own_line else token.value
         if not text.startswith('#'):
-            text = text.lstrip(' \t')  # the record's text starts at the `#`; `col` positions it
+            # The record's text starts at the `#`; `col` is what positions it.
+            text = text.lstrip(' \t')
         out.append(Trivia(text, own_line, token.column))
     return out
 
 
 def _stream_trivia(carried: Doc | None, root: Node) -> tuple[list[Trivia], list[Trivia]]:
-    """Take the *stream*'s own trivia back off the root node.
+    """Takes the *stream*'s own trivia back off the root node.
 
-    A comment above `---` and one below `...` belong to the document, not to its root: the
-    emitter writes them outside the directives and the markers.  ``.ca`` has no slot for
-    them, so the constructor folds them into the root's own comments and the loaded document
-    record -- parked on the root by :data:`~yamluna.constructor.DOC_ATTRIB` -- is what says
-    how many of them there were.  A prefix or suffix the user has since edited no longer
-    matches and simply stays on the root, which is the safe way to be wrong -- but a root
-    that holds no comments at all never took them in the first place (the fold only happens
-    for a `CommentedBase`), and there the record is all there is.
+    A comment above `---` and one below `...` belong to the document rather than to its
+    root: the emitter writes them outside the directives and the markers.  `.ca` has no slot
+    for them, so the constructor folds them into the root's own comments, and the loaded
+    document record parked on the root is what says how many of them there were.  A prefix
+    or suffix the user has since edited no longer matches and stays on the root, which is
+    the safe way to be wrong.  A root that holds no comments at all never took them in the
+    first place, since the fold only happens for a `CommentedBase`, and there the record is
+    all there is.
 
-    The prefix comes back off ``before`` for a block root and off ``inner`` for a flow one:
-    :func:`_leading_is_before` must leave a flow collection's ``inner`` alone (a comment there
-    sits *after* the bracket), so that is where the fold is still parked.  Either way the
-    document's leading comments are outside the root, never inside it.
+    The prefix comes back off `before` for a block root and off `inner` for a flow one,
+    because a flow collection's `inner` is left alone (a comment there sits after the
+    bracket) and that is where the fold is still parked.  Either way the document's leading
+    comments end up outside the root.
+
+    Returns:
+        The document's leading and trailing trivia, removed from `root`.
     """
     if carried is None:
         return [], []
@@ -491,8 +509,8 @@ def _stream_trivia(carried: Doc | None, root: Node) -> tuple[list[Trivia], list[
             setattr(root, slot, run[len(leading) :])
             break
     else:
-        # Nothing folded in, and nothing to fold *out* of: a root that holds no comments at
-        # all -- a scalar -- never took the document's, so they stand exactly as recorded.
+        # Nothing folded in and nothing to fold *out* of: a root that holds no comments at
+        # all, a scalar, never took the document's, so they stand exactly as recorded.
         leading = leading if not (root.before or root.inner) else []
     if trailing and root.after[-len(trailing) :] == trailing:
         root.after = root.after[: -len(trailing)]
@@ -502,24 +520,27 @@ def _stream_trivia(carried: Doc | None, root: Node) -> tuple[list[Trivia], list[
 
 
 def _leading_is_before(node: Node, src: Node | None = None) -> None:
-    """Move ``inner`` to ``before``: ``.ca`` cannot tell the two apart (see the module doc).
+    """Moves `inner` to `before`, for a block collection where the two render identically.
 
-    Only for a *block* collection, where the two render identically -- it starts on the line
-    after its parent's ``:``, so a comment before it and a comment inside it both sit on their
-    own lines above the first child.  A flow collection opens with a bracket on the parent's
-    line, and there the distinction is the whole layout::
+    `.ca` has one slot for a comment written before a collection and one written inside it,
+    so the two arrive here indistinguishable.  A block collection starts on the line after
+    its parent's `:`, and both comments then sit on their own lines above the first child.
+    A flow collection opens with a bracket on the parent's line, and there the distinction
+    is the whole layout:
 
-        flow_map: {        # `inner`: the comment is after the `{`
-          # comment
-          x: 1, ... }
+    ```yaml
+    flow_map: {        # inner: the comment is after the `{`
+      # comment
+      x: 1, ... }
 
-        flow_map:          # `before`: the comment pushes the `{` onto the next line
-          # comment
-          {x: 1, ... }
+    flow_map:          # before: the comment pushes the `{` onto the next line
+      # comment
+      {x: 1, ... }
+    ```
 
-    so promoting `inner` there rewrites the source.  `.ca` keeps the slot for a flow
-    collection, so nothing is lost by leaving it alone -- except when the record says
-    otherwise, and then the head it says was `before` moves and the rest stays inside.
+    Promoting `inner` there would rewrite the source, so a flow collection is left alone.
+    `.ca` keeps the slot for one, so nothing is lost by that, except when the record says
+    otherwise: then the head it says was `before` moves and the rest stays inside.
     """
     if node.style == STYLE_FLOW:
         if src is not None and src.before and node.inner[: len(src.before)] == src.before:
@@ -529,16 +550,17 @@ def _leading_is_before(node: Node, src: Node | None = None) -> None:
 
 
 def _trivia_one(value: Any) -> Trivia | None:
+    """The first trivia record in one `.ca` slot, or `None` when the slot is empty."""
     found = _trivia_list(value)
     return found[0] if found else None
 
 
 def _entries(obj: Mapping[Any, Any]) -> list[tuple[Any, Any, bool]]:
-    """``(key, value, is_merge)`` in emission order.
+    """Returns the `(key, value, is_merge)` triples of `obj`, in emission order.
 
-    Merged-in keys are *not* entries: they belong to the mapping ``<<`` points at.  The
-    ``<<`` entry goes back where it was (``MergeList.merge_pos``) with its value left as an
-    alias, so the dump says ``<<: *base`` instead of expanding it.
+    Merged-in keys are not entries: they belong to the mapping `<<` points at.  The `<<`
+    entry goes back where it was, at `MergeList.merge_pos`, with its value left as an alias,
+    so the dump says `<<: *base` instead of expanding it.
     """
     if not isinstance(obj, CommentedMap):
         return [(k, v, False) for k, v in obj.items()]
@@ -547,7 +569,7 @@ def _entries(obj: Mapping[Any, Any]) -> list[tuple[Any, Any, bool]]:
     if not merged:
         return entries
     value: Any = merged[0]
-    if len(merged) > 1:  # `<<: [*a, *b]` -- a flow sequence of aliases
+    if len(merged) > 1:  # `<<: [*a, *b]`, a flow sequence of aliases
         value = CommentedSeq(merged)
         value.fa.set_flow_style()
     entries.insert(getattr(merged, 'merge_pos', 0), ('<<', value, True))
@@ -587,16 +609,37 @@ class _Representer:
         explicit_end: bool = False,
         carried: Doc | None = None,
     ) -> Doc:
+        """Builds the record for one document, rooted at `data`.
+
+        Args:
+            data: The document root.  `None` with no `carried` record gives a document
+                whose root is a plain `null`.
+            version: The `%YAML` version to write.  Defaults to the loaded document's.
+            explicit_start: Write `---` even when the source had none.
+            explicit_end: Write `...` even when the source had none.
+            carried: The loaded record for a document that has no root object to park one
+                on, which is a document that loaded as `None`.  With `data` of `None` this
+                record is the document and is re-emitted as it was read.
+
+        Returns:
+            The `Doc`: the node arena, the root index, the directives and the trivia that
+            sits outside the root.
+
+        Raises:
+            RepresenterError: The tree holds a value no scalar rule covers and no registered
+                class claims, or a `to_yaml` hook returned something that is not a node
+                index.
+        """
         # `%YAML`, `%TAG`, `---` and `...` belong to the document, not to the root object;
         # the constructor parks them on the root and this is where they come back.  An
-        # explicit argument still wins, and so does `YAML.explicit_start`, which `main.py`
-        # applies to the finished record.  `carried` is the record for a document that has
-        # no root object to park anything on -- `YAML._empty`, see that module's docstring.
+        # explicit argument still wins, and so does `YAML.explicit_start`, which the `YAML`
+        # object applies to the finished record.
         if carried is None:
             carried = getattr(data, DOC_ATTRIB, None)
         elif data is None:
             # An empty document has no content to re-represent: the record *is* the
-            # document, comments, `---` and all.  Copied, because a dump is a read (A8).
+            # document, comments, `---` and all.  Copied, because a dump is a read: the
+            # stored record has to survive it unchanged for the next dump.
             return Doc(
                 version=carried.version if version is None else version,
                 tag_directives=list(carried.tag_directives),
@@ -658,10 +701,10 @@ class _Representer:
         )
 
     def _directives(self, carried: Doc | None) -> list[tuple[str, str]]:
-        """The document's ``%TAG`` lines: the source's, in source order, plus the plan's.
+        """Returns the document's `%TAG` lines: the source's in source order, then the plan's.
 
-        A handle the source declared and the wire plan also wants keeps its place on the page
-        and takes the plan's prefix; a handle only the plan wants is appended (DESIGN 5.3).
+        A handle the source declared that the wire plan also wants keeps its place on the
+        page and takes the plan's prefix; a handle only the plan wants is appended.
         """
         planned = {d.handle: d.prefix for d in self.plan.directives}
         out = [
@@ -673,6 +716,7 @@ class _Representer:
     # -- pre-pass: which objects are shared, which registered classes are used -------------
 
     def _scan(self, obj: Any, seen: set[int]) -> None:
+        """Counts occurrences by identity, and collects the anchor names and classes in use."""
         if self.registry is not None and self.registry.registration_for(type(obj)) is not None:
             self.used.append(type(obj))
         name = _anchor_name(obj)
@@ -695,6 +739,7 @@ class _Representer:
         return len(self.nodes) - 1
 
     def _generate(self) -> str:
+        """The next unused generated anchor name: `id001`, `id002`, and so on."""
         while True:
             self._counter += 1
             name = f'id{self._counter:03d}'
@@ -703,13 +748,13 @@ class _Representer:
                 return name
 
     def _emit(self, obj: Any) -> int:
-        """Append `obj`'s subtree to the arena, pre-order; return its index.
+        """Appends `obj`'s subtree to the arena in pre-order and returns its index.
 
         The node also gets `obj`'s recorded source position, which is what lets the emitter
         reproduce the file's own indentation instead of laying the node out afresh.  A stale
-        position cannot open a hole in the output -- the emitter stops believing recorded
-        lines at the first construct that does not land on one -- so an edited tree degrades
-        to the layout path rather than to garbage.
+        position cannot open a hole in the output, because the emitter stops believing
+        recorded lines at the first construct that does not land on one, so an edited tree
+        degrades to the layout path rather than to garbage.
         """
         index = self._emit_node(obj)
         node = self.nodes[index]
@@ -721,12 +766,13 @@ class _Representer:
         return index
 
     def _at(self, index: int, pos: tuple[int, int] | None) -> None:
-        """Give a node the position its *parent* recorded, when it carries none itself."""
+        """Gives a node the position its *parent* recorded, when it carries none itself."""
         node = self.nodes[index]
         if pos is not None and node.line == 0 and node.col == 0:
             node.line, node.col = pos
 
     def _emit_node(self, obj: Any) -> int:
+        """Emits one node, as an alias when this object has already been written."""
         if not _trackable(obj):
             return self._add(self._scalar_node(obj))
         key = id(obj)
@@ -739,7 +785,7 @@ class _Representer:
             self.names[key] = anchor  # recorded *before* the walk: recursion becomes an alias
         return self._build(obj, anchor)
 
-    #: ruamel's hook name, kept so ported classes work unchanged.
+    # ruamel's hook name, kept so ported classes work unchanged.
     represent_data = _emit
 
     def _build(self, obj: Any, anchor: str | None) -> int:
@@ -782,7 +828,8 @@ class _Representer:
                 self._spell_null(value_index, _null_lexeme(obj, key))
             self._respell(value_index, value, source)
             src = _loaded(value, source)
-            _leading_is_before(self.nodes[value_index], src)  # a value has no `before` of its own
+            # A value has no `before` of its own.
+            _leading_is_before(self.nodes[value_index], src)
             self._entry_trivia(self.nodes[value_index], record, None, C_VALUE_EOL, C_VALUE_POST)
             _unmerge_value_pre(self.nodes[value_index], src)
             if is_merge:
@@ -809,7 +856,7 @@ class _Representer:
         return index
 
     def _set(self, obj: Any, anchor: str | None) -> int:
-        """A ``!!set``: a mapping whose values are all null."""
+        """Adds a `!!set` node: a mapping whose values are all null."""
         node = Node(KIND_MAPPING, _flow_style(obj, self.default_flow_style),
                     anchor=anchor, tag=self._tag_of(obj) or _SET_TAG, flow_seps=_flow_seps(obj))
         index = self._add(node)
@@ -822,13 +869,23 @@ class _Representer:
             self._entry_trivia(self.nodes[key_index], record, C_KEY_PRE, C_KEY_EOL, None)
             if _in(explicit, member):
                 node.explicit.append(len(node.children))
-            # `raw=''` is the *absent* value the emitter writes nothing for -- a set member
+            # `raw=''` is the *absent* value the emitter writes nothing for: a set member
             # is `? a`, not `a: ''`.  It is the same empty lexeme `_scalar(None)` returns.
             absent = self._add(Node(KIND_SCALAR, STYLE_PLAIN, value='', raw=''))
             node.children += [key_index, absent]
         return index
 
     def _custom(self, obj: Any, anchor: str | None) -> int:
+        """Represents one instance of a registered class.
+
+        A class with a `to_yaml` classmethod builds its own node and is given the anchor
+        this walk chose for it; any other class is written as a mapping of its attributes.
+
+        Raises:
+            RepresenterError: The class is not registered with `YAML.register_class()`, or
+                its `to_yaml` returned something other than the node index that
+                `represent_scalar`, `represent_mapping` and `represent_sequence` return.
+        """
         cls = type(obj)
         written = self.plan.tags.get(cls)
         if written is None:
@@ -855,17 +912,17 @@ class _Representer:
         return index
 
     def _spell_null(self, index: int, lexeme: str | None) -> None:
-        """Give a null node back the spelling it was loaded with (``~``, ``null``, ...).
+        """Gives a null node back the spelling it was loaded with: `~`, `null`, and so on.
 
-        ``_scalar(None)`` can only produce the empty lexeme -- ``key:`` with nothing after
-        it -- because ``None`` carries nothing; the parent remembers the rest.
+        `_scalar(None)` can only produce the empty lexeme, `key:` with nothing after it,
+        because `None` carries nothing.  The parent remembers the rest.
         """
         if lexeme:
             node = self.nodes[index]
             node.value = node.raw = lexeme
 
     def _respell(self, index: int, value: Any, found: tuple[Any, Node, Node | None] | None) -> None:
-        """Hand a value the record its parent kept for it (:data:`SOURCE_ATTRIB`).
+        """Hands a value the record its parent kept for it under `SOURCE_ATTRIB`.
 
         Applied only while the entry still holds the value that was loaded: an edited value
         is a new value and is written from scratch like any other.  That test is the whole
@@ -881,35 +938,34 @@ class _Representer:
         self._note_alias(index, src)
 
     def _respell_key(self, index: int, found: tuple[Any, Node, Node | None] | None) -> None:
-        """The same, for the key the record was looked up by -- which cannot have changed."""
+        """The same, for the key the record was looked up by, which cannot have changed."""
         if found is not None and found[2] is not None:
             _carry(self.nodes[index], found[2])
             self._note_alias(index, found[2])
 
     def _note_alias(self, index: int, src: Node) -> None:
-        """Note an entry whose parent recorded it as an ``*name`` site.
+        """Notes an entry whose parent recorded it as an `*name` site.
 
-        ``None`` and ``bytes`` are the two values that cannot hold an anchor, so an alias to
-        one of them constructs to a value with no identity to alias on -- ``a: &anchor`` /
-        ``b: *anchor`` gives both keys the one ``None`` singleton, and the record the parent
-        kept (:data:`~yamluna.constructor.SOURCE_ATTRIB`) is the only trace left of the
-        ``*name``.  Every other alias comes back from object identity in :meth:`_emit_node`.
-
-        Writing it back unconditionally would be wrong: an alias whose anchor has since left
-        the document is invalid YAML, which is worse than losing the alias.  So the site is
-        only noted here and settled in :meth:`_realias`, once the whole arena is there to say
-        whether the anchor was written.
+        `None` and `bytes` are the two values that cannot hold an anchor, so an alias to one
+        of them constructs to a value with no identity to alias on: `a: &anchor` with
+        `b: *anchor` gives both keys the one `None` singleton, and the record the parent
+        kept is the only trace left of the `*name`.  Every other alias comes back from
+        object identity in `_emit_node`.
         """
+        # Writing the alias back unconditionally would be wrong: an alias whose anchor has
+        # since left the document is invalid YAML, which is worse than losing the alias.  So
+        # the site is only noted here and settled in `_realias`, once the whole arena is
+        # there to say whether the anchor was written.
         if src.kind == KIND_ALIAS and src.anchor:
             self._aliases.append((index, src.anchor))
 
     def _realias(self) -> None:
-        """Turn the noted sites into aliases, but only where their anchor is really there.
+        """Turns the noted sites into aliases, but only where their anchor is really there.
 
         Arena order is document order, so an anchor at a lower index is one the reader will
-        have seen by the time it reaches the alias.  A name defined nowhere earlier -- the
-        anchored entry deleted, or its value replaced -- leaves the site as the plain null it
-        already is: an alias lost, never a dangling one emitted.
+        have seen by the time it reaches the alias.  A name defined nowhere earlier, because
+        the anchored entry was deleted or its value replaced, leaves the site as the plain
+        null it already is: an alias lost, never a dangling one emitted.
         """
         if not self._aliases:
             return
@@ -921,9 +977,9 @@ class _Representer:
             if first.get(name, index) < index:
                 node = self.nodes[index]
                 node.kind, node.anchor = KIND_ALIAS, name
-                # An alias is just the name: a `*x` standing in for a `bytes` must shed the
-                # `!!binary` its value would otherwise be written with, since a tag on an
-                # alias is not YAML at all.
+                # An alias is the name and nothing else: a `*x` standing in for a `bytes`
+                # must shed the `!!binary` its value would otherwise be written with, since
+                # a tag on an alias is not YAML at all.
                 node.value = node.raw = node.tag = None
 
     # -- trivia ---------------------------------------------------------------------------
@@ -932,7 +988,8 @@ class _Representer:
         """The node's own `.ca`: `ca.comment[1]` -> inner, `ca.end` -> after."""
         if not isinstance(obj, CommentedBase):
             return
-        ca = getattr(obj, comment_attrib, None)  # never `.ca`: that would create one (A8)
+        # Never `.ca` itself: reading it creates one, and a dump must not write to the tree.
+        ca = getattr(obj, comment_attrib, None)
         if ca is None:
             return
         if ca.comment is not None:
@@ -957,6 +1014,7 @@ class _Representer:
     # -- tags -----------------------------------------------------------------------------
 
     def _tag_of(self, obj: Any) -> tuple[str, str, str] | None:
+        """The tag to write for `obj`: the wire plan's, or the one it was loaded with."""
         if isinstance(obj, (bytes, bytearray)):
             return _BINARY_TAG
         written = self.plan.tags.get(type(obj))
@@ -965,12 +1023,14 @@ class _Representer:
         return self._tag_triple(getattr(obj, tag_attrib, None))
 
     def _triple(self, written: str, cls: type) -> tuple[str, str, str]:
+        """A registered class's tag as `(handle, suffix, resolved URI)`."""
         handle, suffix = _split_tag(written)
         registration = None if self.registry is None else self.registry.registration_for(cls)
         return handle or '!', suffix, registration.uri if registration else written
 
     @staticmethod
     def _tag_triple(tag: Tag | None) -> tuple[str, str, str] | None:
+        """A loaded `Tag` as the `(handle, suffix, resolved URI)` triple a node holds."""
         if tag is None or not tag:
             return None
         handle, suffix = tag.handle, tag.suffix
@@ -984,6 +1044,19 @@ class _Representer:
     def represent_scalar(
         self, tag: str | Tag, value: Any, style: str | None = None, anchor: str | None = None
     ) -> int:
+        """Adds a scalar node to the arena, for a class representing itself.
+
+        Args:
+            tag: The tag to write, as the text it should appear as (`!Circuit`) or as a
+                loaded `Tag`.
+            value: The scalar value.  It is written through `str()`.
+            style: ruamel's style indicator: `|`, `>`, `'`, `"`, or `''` and `None` for
+                plain.  An indicator this package does not know is written plain.
+            anchor: The anchor name to write, or `None` for no anchor.
+
+        Returns:
+            The index of the new node, which is what `to_yaml` must return.
+        """
         return self._add(Node(
             KIND_SCALAR,
             _STYLE_BY_INDICATOR.get(style, STYLE_PLAIN),
@@ -995,6 +1068,16 @@ class _Representer:
     def represent_mapping(
         self, tag: str | Tag, mapping: Mapping[Any, Any], flow_style: bool | None = None
     ) -> int:
+        """Adds a mapping node to the arena, for a class representing itself.
+
+        Args:
+            tag: The tag to write, as text or as a loaded `Tag`.
+            mapping: The entries, written in iteration order.
+            flow_style: `True` for `{a: 1}`; `False` or `None` for block style.
+
+        Returns:
+            The index of the new node, which is what `to_yaml` must return.
+        """
         node = Node(KIND_MAPPING, STYLE_FLOW if flow_style else STYLE_BLOCK,
                     tag=self._hook_tag(tag))
         index = self._add(node)
@@ -1005,6 +1088,16 @@ class _Representer:
     def represent_sequence(
         self, tag: str | Tag, sequence: Any, flow_style: bool | None = None
     ) -> int:
+        """Adds a sequence node to the arena, for a class representing itself.
+
+        Args:
+            tag: The tag to write, as text or as a loaded `Tag`.
+            sequence: The items, written in iteration order.
+            flow_style: `True` for `[1, 2]`; `False` or `None` for block style.
+
+        Returns:
+            The index of the new node, which is what `to_yaml` must return.
+        """
         node = Node(KIND_SEQUENCE, STYLE_FLOW if flow_style else STYLE_BLOCK,
                     tag=self._hook_tag(tag))
         index = self._add(node)
@@ -1012,6 +1105,7 @@ class _Representer:
         return index
 
     def _hook_tag(self, tag: str | Tag | None) -> tuple[str, str, str] | None:
+        """The tag a `to_yaml` hook passed, as the triple a node holds."""
         if tag is None:
             return None
         if isinstance(tag, Tag):
@@ -1024,11 +1118,23 @@ class _Representer:
 
 
 def represent(data: Any, yaml: Any = None, **options: Any) -> Doc:
-    """One Python object -> one document record.
+    """Turns one Python object into one document record.
 
-    `yaml` is an optional :class:`~yamluna.main.YAML` whose settings supply the defaults;
-    keyword arguments (`registry`, `default_flow_style`, `version`, `explicit_start`,
-    `explicit_end`) are :class:`_Representer`'s and override it.
+    Args:
+        data: The document root.  `None` gives a document whose root is a plain `null`,
+            unless the record of a document that loaded empty is passed as `carried`.
+        yaml: An optional `YAML` instance whose settings supply the defaults for
+            `registry`, `default_flow_style` and `version`.
+        **options: `registry`, `default_flow_style`, `version`, `explicit_start`,
+            `explicit_end` and `carried`, each overriding what `yaml` supplies.
+
+    Returns:
+        The `Doc` for the document: the node arena, the root index, the directives and the
+        trivia that sits outside the root.
+
+    Raises:
+        RepresenterError: The tree holds a value no scalar rule covers and no registered
+            class claims, or a `to_yaml` hook returned something that is not a node index.
     """
     settings = _settings(yaml, options)
     return _Representer(
@@ -1037,16 +1143,28 @@ def represent(data: Any, yaml: Any = None, **options: Any) -> Doc:
 
 
 def represent_all(documents: Iterable[Any], yaml: Any = None, **options: Any) -> list[Doc]:
-    """A stream of Python objects -> the record list ``emit`` takes.
+    """Turns a stream of Python objects into the record list `emit` takes.
 
-    Each document gets its own arena and its own ``%TAG`` directives: a class used in the
-    second document does not put a directive on the first (DESIGN.md §5.3).
+    Each document gets its own arena and its own `%TAG` directives, so a class used in the
+    second document puts no directive on the first.
+
+    Args:
+        documents: The document roots, in stream order.
+        yaml: An optional `YAML` instance whose settings supply the defaults, as for
+            `represent`.
+        **options: The keywords `represent` takes, applied to every document.
+
+    Returns:
+        One `Doc` per document, in the order the documents came in.
+
+    Raises:
+        RepresenterError: Any of the documents holds a value that cannot be represented.
     """
     return [represent(data, yaml, **options) for data in documents]
 
 
 def _settings(yaml: Any, overrides: dict[str, Any]) -> dict[str, Any]:
-    """`yaml`'s settings, overridden by explicit keywords -- ``Constructor.for_yaml``'s rule."""
+    """`yaml`'s settings, overridden by the explicit keywords: `Constructor.for_yaml`'s rule."""
     if yaml is None:
         return overrides
     return {

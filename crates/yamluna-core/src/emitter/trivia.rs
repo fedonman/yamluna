@@ -1,4 +1,4 @@
-//! Writing comments and blank lines back where their author put them (DESIGN §2.4, step 7).
+//! Writes comments and blank lines back where their author put them.
 //!
 //! The four slots of [`Trivia4`](crate::Trivia4) are written by the node emitter at four
 //! different moments; what happens to an individual trivium is the same everywhere and lives
@@ -8,19 +8,19 @@
 //! * an end-of-line comment is appended to the line the cursor is already on;
 //! * a blank-line run becomes that many empty lines.
 //!
-//! A comment's column is absolute and is honoured even when the rest of the document has stopped
-//! matching its source, because an author aligning a column of trailing comments is the one thing
-//! a re-indent must not silently undo.
+//! A comment's column is absolute and is honoured even when the rest of the document has
+//! stopped matching its source, because an author aligning a column of trailing comments is the
+//! one thing a re-indent must not silently undo.
 
 use crate::trivia::Trivia;
 
 use super::layout::Writer;
 
-/// Write a slot's trivia, in order.
+/// Writes a slot's trivia, in order.
 ///
-/// An end-of-line comment inside a run stays on the line the cursor is on — that is the comment
-/// that follows a `---` or a `?` indicator, which the loader puts in `leading` / `before` rather
-/// than in an `eol` slot because the node it precedes had not been created yet.
+/// An end-of-line comment inside a run stays on the line the cursor is on. That is the comment
+/// that follows a `---` or a `?` indicator, which the loader puts in `leading` or `before`
+/// rather than in an `eol` slot because the node it precedes had not been created yet.
 pub(super) fn run(w: &mut Writer, items: &[Trivia]) {
     for t in items {
         match t {
@@ -42,14 +42,14 @@ pub(super) fn run(w: &mut Writer, items: &[Trivia]) {
     }
 }
 
-/// Write the end-of-line comment of a node, if it has one.
+/// Writes the end-of-line comment of a node, if it has one.
 pub(super) fn eol(w: &mut Writer, t: Option<&Trivia>) {
     if let Some(t) = t {
         run(w, std::slice::from_ref(t));
     }
 }
 
-/// Split a run of trivia at its first end-of-line comment.
+/// Splits a run of trivia at its first end-of-line comment.
 ///
 /// Everything before the split gets a line of its own and belongs above whatever introduces the
 /// node; the rest belongs on the line the indicator is written on. That is the `? # comment`
@@ -70,8 +70,8 @@ pub(super) fn split_own_line(items: &[Trivia]) -> (&[Trivia], &[Trivia]) {
     items.split_at(at)
 }
 
-/// Split a document's `leading` run at its end-of-line comment — the one that follows `---` on
-/// the same line, which the loader guarantees is last (and is the only one there can be).
+/// Splits a document's `leading` run at its end-of-line comment: the one that follows `---` on
+/// the same line, which the loader guarantees is last and is the only one there can be.
 pub(super) fn split_marker_comment(items: &[Trivia]) -> (&[Trivia], Option<&Trivia>) {
     match items.split_last() {
         Some((
@@ -123,8 +123,8 @@ mod tests {
         );
     }
 
-    /// An end-of-line comment whose column has already gone past still gets its separating space,
-    /// which is the difference between a comment and a syntax error.
+    /// An end-of-line comment whose column has already gone past still gets its separating
+    /// space, which is the difference between a comment and a syntax error.
     #[test]
     fn an_end_of_line_comment_always_gets_one_space() {
         let mut w = Writer::new("\n");

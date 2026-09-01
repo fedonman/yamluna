@@ -29,3 +29,11 @@ check: build
 # how far are we from ruamel?
 diff:
     .venv/bin/python tests/differential.py
+
+# build the documentation site into site/
+docs:
+    .venv/bin/zensical build
+
+# serve the documentation site with live reload
+docs-serve:
+    .venv/bin/zensical serve

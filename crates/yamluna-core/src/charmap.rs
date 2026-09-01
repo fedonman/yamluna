@@ -1,10 +1,10 @@
-//! The char→byte table of DESIGN §1.5.
+//! The char offset to byte offset table.
 //!
-//! [`Marker::index`](yamluna_scanner::Marker::index) is a **char** offset. Every place that slices
-//! the source by a marker goes through [`CharMap`], which is built once per document in a single
-//! `O(n)` pass.
+//! [`Marker::index`](yamluna_scanner::Marker::index) counts characters, not bytes, so every
+//! place that slices the source by a marker goes through [`CharMap`]. One table is built per
+//! document, in a single `O(n)` pass over the source.
 
-/// A char-offset → byte-offset table for one source string.
+/// A char-offset to byte-offset table for one source string.
 ///
 /// `offsets[i]` is the byte offset of the `i`-th character; there is one extra entry at the end
 /// holding `src.len()`, so a half-open char range always maps to a half-open byte range.
@@ -14,9 +14,10 @@ pub struct CharMap {
 }
 
 impl CharMap {
-    /// Build the table for `src`.
+    /// Builds the table for `src`.
     ///
     /// # Panics
+    ///
     /// Panics if `src` is larger than 4 GiB.
     // ponytail: `u32` entries cap a document at 4 GiB; widen to `usize` if that ever bites.
     #[must_use]
@@ -31,30 +32,36 @@ impl CharMap {
         Self { offsets }
     }
 
-    /// The number of characters in the source.
+    /// Returns the number of characters in the source.
     #[must_use]
     pub fn len(&self) -> usize {
         self.offsets.len() - 1
     }
 
-    /// Whether the source is empty.
+    /// Returns whether the source is empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    /// The byte offset of character `index`, clamped to the end of the source.
+    /// Returns the byte offset of character `index`, clamped to the end of the source.
     ///
-    /// Clamping rather than panicking is deliberate: the parser emits synthetic events whose
-    /// markers sit one past the last character.
+    /// An index past the last character gives the length of the source rather than panicking.
     #[must_use]
     pub fn byte(&self, index: usize) -> usize {
+        // The parser emits synthetic events whose markers sit one past the last character, so
+        // an out-of-range index is ordinary input here, not a bug in the caller.
         self.offsets[index.min(self.offsets.len() - 1)] as usize
     }
 
-    /// The source text for the half-open char range `start..end`.
+    /// Returns the source text for the half-open char range `start..end`.
     ///
-    /// An inverted range yields `""` — the parser produces a few of those for synthetic tokens.
+    /// An inverted range gives `""`; the parser produces a few of those for synthetic tokens.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless `src` is the string [`CharMap::new`] was given: the recorded offsets can
+    /// run past the end of another string, or land inside one of its characters.
     #[must_use]
     pub fn slice<'a>(&self, src: &'a str, start: usize, end: usize) -> &'a str {
         let a = self.byte(start);

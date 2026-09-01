@@ -1,16 +1,15 @@
-"""Namespace-aware tag registry — DESIGN.md §5.
+"""The tag registry: which class a tag names, and what a document writes it as.
 
-Pure Python, no parser and no emitter. The module answers exactly two questions:
+Pure Python, with no parser and no emitter. It answers two questions:
 
-*  :meth:`TagRegistry.plan` — given the classes used in a document, which ``%TAG``
-   directives does it need and what tag string does each node get?
-*  :meth:`TagRegistry.resolve` — given a tag as written plus the ``%TAG`` directives
-   in scope, which registered class is it (if any)?
+* `TagRegistry.plan` takes the classes a document uses and returns the `%TAG` directives
+  the document needs, plus the tag string for each class.
+* `TagRegistry.resolve` takes a tag as written plus the `%TAG` directives in scope and
+  returns the class it names, or `None` when the tag is somebody else's.
 
-Both are pure functions of the registry contents, so registration order can never
-change the output. That is the ruamel bug this module exists to not have: ruamel keys
-its constructor table on ``'!' + cls.__name__``, so two ``Circuit`` classes overwrite
-each other and import order decides which one silently wins.
+Both are pure functions of what is registered, so registration order never changes the
+output. Two classes of the same name from different libraries both survive, and a tag that
+matches more than one of them raises with every candidate named rather than picking one.
 """
 
 import re
@@ -23,41 +22,56 @@ from .error import ConstructorError
 
 __all__ = ["ConstructorError", "Registration", "TagDirective", "TagRegistry", "WirePlan"]
 
-#: Everything outside this class is folded to ``-`` when deriving a ``%TAG`` handle.
+# Everything outside this character class is folded to `-` when deriving a `%TAG` handle.
 _ILLEGAL_IN_HANDLE: Final = re.compile(r"[^A-Za-z0-9-]+")
 
-#: The wire identity of a registered class: ``tag:{source}/{tag_name}`` where the source
-#: is a dotted module-ish path. Anything else is somebody else's tag and round-trips
-#: untouched (§5.4.3).
+# The wire identity of a registered class: `tag:{source}/{tag_name}`, where the source is a
+# dotted module-ish path. A tag of any other shape belongs to somebody else and round-trips
+# untouched.
 _NAMESPACE: Final = re.compile(
     r"tag:([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*)/([^/]+)"
 )
 
 
 class TagDirective(NamedTuple):
-    """One ``%TAG {handle} {prefix}`` line. Mirrors ``yamluna_core::TagDirective``."""
+    """One `%TAG {handle} {prefix}` line, the same pair `yamluna_core::TagDirective` holds."""
 
-    handle: str  # "!" or "!name!"
-    prefix: str  # "tag:libx/"
+    handle: str
+    """The handle as written: `!` for the primary handle, `!name!` for a named one."""
+
+    prefix: str
+    """The prefix the handle stands for, such as `tag:libx/`."""
 
     def __str__(self) -> str:
+        """The directive as a document writes it: `%TAG ! tag:libx/`."""
         return f"%TAG {self.handle} {self.prefix}"
 
 
 @dataclass(frozen=True, slots=True)
 class Registration:
-    """One registered class. ``path`` is the registry key, so nothing can overwrite."""
+    """One registered class and the wire identity the registry gives it."""
 
     cls: type
-    path: str  # "libx.circuits.Circuit"
-    tag_name: str  # "Circuit"
-    source: str  # effective source, after promotion (§5.2)
-    declared_source: str  # root package, or the pinned value
-    pinned: bool  # explicit source= / yaml_source: never promoted
+    """The class itself. Re-registering the same path replaces this with the new object."""
+
+    path: str
+    """The fully qualified class path, `libx.circuits.Circuit`, and the registry key."""
+
+    tag_name: str
+    """The name written after the handle, `Circuit`. A leading `!` is already stripped."""
+
+    source: str
+    """The namespace in effect, after any promotion to the full module path."""
+
+    declared_source: str
+    """The source as declared: the pinned value, or the root package of the module."""
+
+    pinned: bool
+    """The source came from `source=` or `yaml_source`, so it is never promoted."""
 
     @property
     def uri(self) -> str:
-        """The global tag this class is written as: ``tag:libx/Circuit``."""
+        """The global tag this class is written as, `tag:libx/Circuit`."""
         return f"tag:{self.source}/{self.tag_name}"
 
 
@@ -65,21 +79,29 @@ class Registration:
 class WirePlan:
     """What a document needs on the wire for the classes it uses."""
 
-    directives: tuple[TagDirective, ...]  # in emission order, primary "!" first
-    tags: dict[type, str]  # class -> tag exactly as written, e.g. "!liby!Circuit"
+    directives: tuple[TagDirective, ...]
+    """The `%TAG` lines to write, in emission order, the primary `!` handle first."""
+
+    tags: dict[type, str]
+    """The tag string per class, exactly as a node writes it, such as `!liby!Circuit`."""
 
 
 def _path_of(cls: type) -> str:
+    """The registry key for `cls`: its module path joined to its qualified name."""
     return f"{cls.__module__}.{cls.__qualname__}"
 
 
 def _sanitise(source: str) -> str:
-    """A source folded into a legal YAML handle body (``[A-Za-z0-9-]``)."""
+    """`source` folded into a legal YAML handle body, `[A-Za-z0-9-]`.
+
+    A source of pure punctuation folds to nothing and comes back as `tag`, so the handle
+    is always usable.
+    """
     return _ILLEGAL_IN_HANDLE.sub("-", source).strip("-") or "tag"
 
 
 def _alloc(base: str, taken: set[str]) -> str:
-    """`base`, or `base` with the first free digit suffix (§5.3 deduplication)."""
+    """`base`, or `base` with the first free digit suffix, added to `taken`."""
     handle, n = base, 1
     while handle in taken:
         n += 1
@@ -89,10 +111,14 @@ def _alloc(base: str, taken: set[str]) -> str:
 
 
 def _promote(regs: Iterable[Registration]) -> list[Registration]:
-    """§5.2: a ``(source, tag_name)`` collision promotes every *unpinned* member of the
-    colliding group to its full module path. Pure function of the records, recomputed on
-    every registration, so the result never depends on registration order.
+    """Every registration with `source` set to its effective value.
+
+    Two unpinned registrations that declare the same source and the same tag name both move
+    to their full module path, so neither can hide the other. A pinned source stays put.
     """
+    # Recomputed over the whole record set on every registration, so the result is a
+    # function of what is registered and not of the order it arrived in. Re-registering a
+    # class under a different source undoes the promotion its old source caused.
     regs = list(regs)
     clashes = Counter((r.declared_source, r.tag_name) for r in regs)
     return [
@@ -104,9 +130,9 @@ def _promote(regs: Iterable[Registration]) -> list[Registration]:
 
 
 def _split(tag: str) -> tuple[str | None, str]:
-    """Split a tag as written into ``(handle, suffix)``.
+    """Split a tag as written into `(handle, suffix)`.
 
-    The handle is ``None`` when no directive can apply — a verbatim ``!<uri>`` tag or an
+    The handle is `None` when no directive can apply, as for a verbatim `!<uri>` tag or an
     already-resolved absolute one; the suffix is then the whole URI.
     """
     if tag.startswith("!<") and tag.endswith(">"):
@@ -121,24 +147,57 @@ def _split(tag: str) -> tuple[str | None, str]:
 
 
 class TagRegistry:
-    """Registration keyed on the fully qualified class path (§5.2).
+    """Which class a tag names, keyed on the fully qualified class path.
 
-    One registry per :class:`~yamluna.YAML` instance.
+    Every `YAML` instance owns one. Because the key is `module.QualName`, registering a
+    class replaces only its own entry: two classes called `Circuit` from two libraries stay
+    registered side by side, and each is written in the namespace it came from.
+
+    Example:
+        ```python
+        registry = TagRegistry()
+        registry.register_class(Circuit)      # libx.circuits.Circuit
+        plan = registry.plan([Circuit])
+        plan.directives                       # (TagDirective('!', 'tag:libx/'),)
+        plan.tags[Circuit]                    # '!Circuit'
+        registry.resolve('!Circuit', plan.directives).cls is Circuit
+        ```
     """
 
     def __init__(self) -> None:
+        # Keyed on the qualified path, never on the tag name. ruamel keys its constructor
+        # table on `'!' + cls.__name__`, so two `Circuit` classes overwrite each other and
+        # import order decides which one wins. A path key cannot collide.
         self._by_path: dict[str, Registration] = {}
 
-    # -- registration (§5.2, §5.5) ------------------------------------------------
+    # -- registration -------------------------------------------------------------
 
     def register_class(
         self, cls: type, *, tag: str | None = None, source: str | None = None
     ) -> type:
-        """Register `cls`. Returns `cls`, so it also works as a decorator.
+        """Register `cls` so it is written with a tag and loaded back as itself.
 
-        `tag` overrides the tag name (default ``cls.yaml_tag`` or ``cls.__name__``);
-        `source` pins the namespace (default ``cls.yaml_source`` or the root package)
-        and a pinned source is never promoted.
+        Registering a class path twice replaces the earlier entry, so re-running a module
+        or reloading it leaves one registration rather than two.
+
+        Args:
+            cls: The class to register.
+            tag: The name written after the handle. Defaults to `cls.yaml_tag` when the
+                class sets one, otherwise `cls.__name__`. A leading `!` is stripped, since
+                ruamel spells the attribute `yaml_tag = '!Circuit'`.
+            source: The namespace to write the class in. Defaults to `cls.yaml_source` when
+                the class sets one, otherwise the root package of `cls.__module__`. A
+                source given here or through `yaml_source` is pinned: it keeps its spelling
+                even when another class collides with it.
+
+        Returns:
+            `cls` itself, so the method also works as a decorator.
+
+        Example:
+            ```python
+            @registry.register
+            class Circuit: ...
+            ```
         """
         declared = source or getattr(cls, "yaml_source", None)
         name = tag or getattr(cls, "yaml_tag", None) or cls.__name__
@@ -154,25 +213,47 @@ class TagRegistry:
         self._by_path = {r.path: r for r in _promote(self._by_path.values())}
         return cls
 
-    #: Bare decorator form: ``@yaml.register``.
     register = register_class
+    """Bare decorator form of `register_class`: `@yaml.register` above a class."""
 
     def registrations(self) -> list[Registration]:
-        """Every registration, sorted by qualified path."""
+        """Every registration, sorted by qualified class path.
+
+        Returns:
+            One `Registration` per registered class, each with `source` already promoted.
+        """
         return sorted(self._by_path.values(), key=lambda r: r.path)
 
     def registration_for(self, cls: type) -> Registration | None:
+        """The registration for `cls`.
+
+        Args:
+            cls: The class to look up. Matched on its qualified path, so a class object
+                replaced by a module reload still finds the current registration.
+
+        Returns:
+            The `Registration`, or `None` when nothing is registered under that path.
+        """
         return self._by_path.get(_path_of(cls))
 
-    # -- (a) emitting: classes -> %TAG directives + tag strings (§5.3) -------------
+    # -- emitting: classes to %TAG directives and tag strings ----------------------
 
     def plan(self, classes: Iterable[type]) -> WirePlan:
-        """The wire format for a document using `classes`.
+        """The `%TAG` directives and tag strings a document using `classes` needs.
 
-        Repeats count: pass one entry per node and the most-used source wins the primary
-        ``!`` handle; pass a set and the source with the most distinct classes wins.
-        Ties break on the source name, so the output is order-independent either way.
-        Unregistered classes are ignored — they get no directive and no tag.
+        Repeats count. Pass one entry per node and the most-used source wins the primary
+        `!` handle; pass a set and the source with the most distinct classes wins. Ties
+        break on the source name, so the output is the same whatever order `classes`
+        arrives in.
+
+        Args:
+            classes: The classes the document uses, one entry per node or one per class.
+                Classes that are not registered are ignored: they get no directive and
+                no tag.
+
+        Returns:
+            A `WirePlan`. Both of its fields are empty when none of `classes` is
+            registered, so a document of plain data gets no `%TAG` line at all.
         """
         used: dict[type, Registration] = {}
         counts: Counter[str] = Counter()
@@ -183,7 +264,7 @@ class TagRegistry:
             used[cls] = record
             counts[record.source] += 1
         if not counts:
-            return WirePlan((), {})  # no registered classes -> no %TAG line (§5.3)
+            return WirePlan((), {})  # nothing registered, so no %TAG line
 
         primary, *rest = sorted(counts, key=lambda s: (-counts[s], s))
         handles = {primary: "!"}
@@ -197,17 +278,32 @@ class TagRegistry:
             tags={cls: handles[r.source] + r.tag_name for cls, r in used.items()},
         )
 
-    # -- (b) loading: tag as written + directives -> class (§5.4) ------------------
+    # -- loading: tag as written plus directives, to a class -----------------------
 
     def resolve(
         self,
         tag: str,
         directives: Mapping[str, str] | Iterable[tuple[str, str]] = (),
     ) -> Registration | None:
-        """The class `tag` names, or ``None`` when it is not ours and round-trips as-is.
+        """The class `tag` names, given the `%TAG` directives in scope.
 
-        Raises :class:`ConstructorError` for a tag that claims our namespace but matches
-        no registration, and for an ambiguous bare tag — never guesses (§5.4).
+        Args:
+            tag: The tag exactly as the source wrote it: `!Circuit`, `!liby!Circuit`,
+                `!<tag:libx/Circuit>`, or an already-resolved absolute tag.
+            directives: The `%TAG` directives in scope, as a mapping of handle to prefix or
+                as `(handle, prefix)` pairs. Defaults to none in scope.
+
+        Returns:
+            The `Registration` the tag names, or `None` when the tag is not this
+            registry's and should round-trip exactly as written. A verbatim `!<uri>` tag,
+            an already-resolved tag, the secondary `!!` handle, a handle no directive
+            declares, and a source no registered class uses all give `None`.
+
+        Raises:
+            ConstructorError: The tag resolves into a source this registry has classes in
+                but names no class there, or it matches more than one registered class. The
+                message names every candidate by qualified path and wire identity and says
+                how to disambiguate. The registry never guesses.
         """
         handle, suffix = _split(tag)
         in_scope = dict(directives)
@@ -218,19 +314,23 @@ class TagRegistry:
         return None  # verbatim, absolute, !!secondary, or an undeclared handle
 
     def _by_uri(self, uri: str, written: str) -> Registration | None:
+        """The registration an absolute `uri` names.
+
+        `written` is the tag as the source wrote it, and is what any error quotes back.
+        """
         match = _NAMESPACE.fullmatch(uri)
         if match is None:
-            return None  # not our namespace (§5.4.3)
+            return None  # not the shape this registry writes
         source, name = match.groups()
         found = self._matching(lambda r: r.source == source and r.tag_name == name)
         if len(found) == 1:
             return found[0]
         if not found:
-            # A source this registry knows is a source whose spelling mistakes it can see:
-            # `!Ghost` next to a registered `tag:libx/Circuit` is a typo, not someone else's
-            # document, and guessing is what 5.4 forbids.  A source it has never heard of is
-            # simply not ours, and round-trips untouched (5.4.3) -- a `YAML()` with an empty
-            # registry must be able to load a file full of `!Circuit` without failing.
+            # A source this registry has classes in is a source whose spelling mistakes it
+            # can see: `!Ghost` beside a registered `tag:libx/Circuit` is a typo, so it is
+            # reported rather than guessed at. A source it has never heard of belongs to
+            # somebody else's document and round-trips untouched, which is what lets a
+            # `YAML()` with an empty registry load a file full of `!Circuit`.
             if any(r.source == source for r in self._by_path.values()):
                 raise ConstructorError(
                     f"unresolved tag {written!r} (= {uri!r}): no class is registered as "
@@ -240,18 +340,21 @@ class TagRegistry:
         raise self._ambiguous(written, found)
 
     def _by_name(self, name: str, written: str) -> Registration | None:
+        """The one registration whose tag name is `name`, across every source."""
         found = self._matching(lambda r: r.tag_name == name)
         if len(found) == 1:
             return found[0]
         if not found:
-            return None  # unregistered: round-trips untouched (§5.4.3)
+            return None  # nothing registered under that name, so it round-trips untouched
         raise self._ambiguous(written, found)
 
     def _matching(self, pred: Callable[[Registration], bool]) -> list[Registration]:
+        """Registrations satisfying `pred`, sorted by path so the order is stable."""
         return sorted((r for r in self._by_path.values() if pred(r)), key=lambda r: r.path)
 
     @staticmethod
     def _ambiguous(written: str, found: list[Registration]) -> ConstructorError:
+        """The error for a tag matching several registrations, naming every candidate."""
         candidates = ", ".join(f"{r.path} (= {r.uri})" for r in found)
         return ConstructorError(
             f"ambiguous tag {written!r}: {len(found)} registered candidates: "

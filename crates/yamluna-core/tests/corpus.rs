@@ -1,8 +1,12 @@
-//! The structural invariant of DESIGN §2.2, run over `tests/corpus/*.yaml`.
+//! Structural checks on the loaded tree, run over every file in `tests/corpus/`.
 //!
-//! There is no emitter yet, so `load → dump` cannot be checked. What *can* be checked is the
-//! property every attachment bug breaks: each comment of the source appears exactly once in the
-//! tree, in source order, and every blank-line run is a real run. Comment texts come from a second,
+//! This gates what the loader recorded, not the bytes an emitter writes; `tests/roundtrip.rs`
+//! owns the bytes. Every comment of the source appears exactly once in the tree, in source
+//! order, every blank-line run is a real run, and every node in the arena is reachable from the
+//! root exactly once. A failure here is a comment dropped, duplicated, or filed against the
+//! wrong node, which reaches a user as a comment that moves or disappears on a dump.
+//!
+//! The comment texts and blank-line counts the assertions compare against come from a second,
 //! independent pass over the raw event stream, so the two sides cannot agree by construction.
 
 use std::path::{Path, PathBuf};
@@ -14,8 +18,11 @@ fn corpus_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus")
 }
 
-/// Corpus files the *scanner* cannot load yet. Each entry is a defect in the fork, not in the
-/// loader, and is asserted to still fail exactly this way so the entry disappears when it is fixed.
+/// Corpus files the scanner cannot load yet, with the message each one fails with.
+///
+/// Every entry is a defect in the vendored scanner fork rather than in the loader. The test
+/// below asserts each one still fails with exactly this message, so an entry cannot outlive the
+/// defect it records.
 const KNOWN_SCANNER_DEFECTS: &[(&str, &str)] = &[];
 
 fn known_defect(path: &Path) -> Option<&'static str> {
@@ -110,8 +117,8 @@ fn blank_line_runs_are_never_empty() {
 
 /// Every blank line of the source that is not inside a scalar is accounted for, exactly once.
 ///
-/// Which lines are inside a scalar comes from an independent pass over the raw event stream, so
-/// this does not just restate what the loader believes.
+/// Which lines sit inside a scalar comes from an independent pass over the raw event stream, so
+/// this does not restate what the loader believes.
 #[test]
 fn blank_line_totals_match_the_source() {
     for path in corpus_files() {
@@ -128,7 +135,7 @@ fn blank_line_totals_match_the_source() {
     }
 }
 
-/// Blank source lines that no scalar covers, i.e. the ones that are trivia.
+/// Blank source lines that no scalar covers: the ones that count as trivia.
 fn free_blank_lines(src: &str) -> usize {
     let src = src.strip_prefix('\u{feff}').unwrap_or(src);
     let lines: Vec<&str> = src.lines().collect();
@@ -137,9 +144,9 @@ fn free_blank_lines(src: &str) -> usize {
     while let Some(ev) = parser.next_event() {
         match ev.expect("corpus file parses") {
             (Event::Scalar(_, style, ..), span) => {
-                // A block scalar's span starts at its *body*, but its lexeme starts at the
-                // `|`/`>` header, and every blank line in between is content — `|+` keeps it,
-                // and the cooked value begins with it. Walk back over those so they are not
+                // A block scalar's span starts at its body, while its lexeme starts at the
+                // `|`/`>` header. Every blank line in between is content: `|+` keeps it, and
+                // the cooked value begins with it. Walk back over those so they are not
                 // counted as trivia the tree failed to record.
                 let mut start = span.start.line();
                 if matches!(style, ScalarStyle::Literal | ScalarStyle::Folded) {
@@ -163,7 +170,10 @@ fn free_blank_lines(src: &str) -> usize {
         .count()
 }
 
-/// Comments and blank lines only ever land in a slot that belongs to a node of the same document.
+/// Every node in the arena is reachable from the root, and reached exactly once.
+///
+/// An orphan node holds trivia no emitter will ever visit; a node reached twice writes its
+/// trivia twice.
 #[test]
 fn every_node_is_reachable_from_the_root() {
     for path in corpus_files() {
@@ -197,15 +207,15 @@ fn known_scanner_defects_still_fail_the_same_way() {
         let path = corpus_dir().join(file);
         let src = std::fs::read_to_string(&path).expect("read");
         match yamluna_core::parse(&src) {
-            Ok(_) => panic!("{file}: now loads — drop it from KNOWN_SCANNER_DEFECTS"),
+            Ok(_) => panic!("{file}: now loads: drop it from KNOWN_SCANNER_DEFECTS"),
             Err(e) => assert_eq!(&e.message, message, "{file}: different failure"),
         }
     }
 }
 
 /// The shape `Document::leading` and `Document::trailing` promise the emitter: an end-of-line
-/// comment in `leading` sits on the `---` line and is therefore last; one in `trailing` sits on the
-/// `...` line and is therefore first.
+/// comment in `leading` sits on the `---` line and is therefore last, and one in `trailing`
+/// sits on the `...` line and is therefore first.
 #[test]
 fn document_trivia_keep_their_marker_comments_at_the_ends() {
     for path in corpus_files() {

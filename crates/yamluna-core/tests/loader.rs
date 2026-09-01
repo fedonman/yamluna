@@ -1,4 +1,11 @@
-//! The loader guarantees of DESIGN §2.3, and the model invariants of §2.
+//! What the loader records about one document, checked one guarantee at a time.
+//!
+//! These are the small hand-written cases behind the corpus and round-trip runs: the BOM, raw
+//! lexemes over astral and combining characters, duplicate and merge keys, explicit keys,
+//! scalar and collection styles, anchors, tags, directives, positions, scan errors, CRLF, and
+//! the degenerate inputs. A failure here names the single fact the document model stopped
+//! carrying, which is easier to read than the same defect arriving as a byte difference in
+//! `tests/roundtrip.rs`.
 
 use yamluna_core::{ErrorKind, NodeKind, ScalarStyle, Style};
 
@@ -28,8 +35,9 @@ fn the_bom_is_stripped_and_recorded() {
     assert_eq!(d.node(e[0].value).raw.as_deref(), Some("café"));
 }
 
-/// Every marker is a char offset (DESIGN §1.5); without the char→byte table these slices are
-/// garbage or a panic on a char boundary.
+/// Positions and spans are character offsets, so cutting a lexeme out of the source goes
+/// through the character-to-byte table. Without that table these slices come back as garbage,
+/// or panic on a character boundary.
 #[test]
 fn raw_lexemes_survive_astral_and_combining_characters() {
     let d = one("emoji: 🌍 🚀\ncombining: e\u{301}\u{302}\n🔑: an emoji key\nlast: end\n");

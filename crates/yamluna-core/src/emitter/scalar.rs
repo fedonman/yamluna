@@ -1,27 +1,29 @@
-//! Scalar analysis and scalar writing (DESIGN §2.4, steps 2, 3 and 5).
+//! Scalar analysis and scalar writing.
 //!
-//! Two clearly separated jobs live here:
+//! Two jobs live here, kept apart:
 //!
-//! * [`analyze`] and [`choose_style`] answer *which* styles a value may be written in. They are
-//!   consulted **only** for a node with no `raw` — one the user constructed or modified. A node
-//!   loaded and left alone is re-emitted from its `raw` lexeme and never reaches this module,
-//!   which is what makes an untouched round trip byte-exact (DESIGN §2.4, §6.2).
-//! * [`write`] renders a value in a style. It enforces only what is *syntactically* impossible,
-//!   not what would resolve as another type: a caller that knows the intended tag (an `int` node
-//!   whose text is `42`) writes it plain by calling [`write`] directly. [`analyze`] is the one
-//!   that refuses `42`, because for a *string* a plain `42` would come back as an integer.
+//! * [`analyze`] and [`choose_style`] answer which styles a value may be written in. They are
+//!   consulted only for a node with no `raw`, meaning one the user constructed or modified. A
+//!   node loaded and left alone is re-emitted from its `raw` lexeme and never reaches this
+//!   module, which is what makes an untouched round trip byte-exact.
+//! * [`write`] renders a value in a style. It enforces only what is syntactically impossible,
+//!   not what would resolve as another type: a caller that knows the intended tag (an `int`
+//!   node whose text is `42`) writes it plain by calling [`write`] directly. [`analyze`] is the
+//!   one that refuses `42`, because for a value known only as a string a plain `42` would come
+//!   back as an integer.
 //!
 //! ## Two deliberate refusals
 //!
-//! * **No multi-line plain or single-quoted scalars.** Both styles can span lines, but only by
-//!   encoding a line break as a blank line and losing every space adjacent to a fold. The gain is
-//!   cosmetic and the failure mode is a silently different value, so a value containing a line
-//!   break is written as a block scalar or double-quoted.
-//! * **No block indentation indicator.** `|2` means "the parent node's indentation level plus 2",
-//!   and a [`ScalarContext`] carries the *absolute* column its content must reach, not the
-//!   increment, so the digit cannot be computed here (and a wrong digit produces a document that
-//!   re-reads as empty). A value whose first non-empty line starts with white space therefore
-//!   cannot be written as a block scalar and falls back to double-quoted, which is lossless.
+//! * No multi-line plain or single-quoted scalars. Both styles can span lines, but only by
+//!   encoding a line break as a blank line and losing every space adjacent to a fold. The gain
+//!   is cosmetic and the failure mode is a silently different value, so a value containing a
+//!   line break is written as a block scalar or double-quoted.
+//! * No block indentation indicator. `|2` means "the parent node's indentation level plus 2",
+//!   and a [`ScalarContext`] carries the absolute column its content must reach rather than
+//!   the increment, so the digit cannot be computed here, and a wrong digit produces a document
+//!   that re-reads as empty. A value whose first non-empty line starts with white space
+//!   therefore cannot be written as a block scalar and falls back to double-quoted, which is
+//!   lossless.
 
 use crate::ScalarStyle;
 
@@ -42,6 +44,9 @@ pub enum EmitError {
 }
 
 /// Where a scalar is being written, which decides what styles are legal.
+///
+/// The default folds at column 80, writes `\n` for a line break, and leaves non-ASCII
+/// characters unescaped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ScalarContext {
     /// Column the scalar's continuation lines (and block-scalar content) must reach.
@@ -71,12 +76,17 @@ impl Default for ScalarContext {
     }
 }
 
-/// What styles are legal for a value, and why.
+/// What styles are legal for a value, and the shape of the value that decides it.
 // Seven independent facts about one string; grouping them into sub-structs would buy nothing.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ScalarAnalysis {
-    /// A plain scalar is legal *and* would not resolve as a bool, int, float, date or null.
+    /// A plain scalar is legal here, and the text would not resolve as a bool, int, float, date
+    /// or null.
+    ///
+    /// False for `42` and for `true`: a string carrying that text has to be quoted to come back
+    /// as a string. A node that carries an integer tag is a different case, and the emitter
+    /// writes it plainly without consulting this field.
     pub allow_plain: bool,
     /// A single-quoted scalar is legal.
     pub allow_single_quoted: bool,
@@ -101,7 +111,10 @@ const INDICATORS: &[char] = &[
     '-', '?', ':', ',', '[', ']', '{', '}', '#', '&', '*', '!', '|', '>', '\'', '"', '%', '@', '`',
 ];
 
-/// `c-printable` (YAML 1.2 §5.1). Note that `DEL` and the C1 controls are *not* printable.
+/// Whether `c` is `c-printable`, the set of characters a document may hold as written in
+/// section 5.1 of the YAML 1.2 spec.
+///
+/// `DEL` and the C1 controls are not printable.
 fn printable(c: char) -> bool {
     matches!(c,
         '\t' | '\n' | '\r'
@@ -112,8 +125,8 @@ fn printable(c: char) -> bool {
         | '\u{10000}'..='\u{10ffff}')
 }
 
-/// A character that a style with no escape mechanism cannot carry: not printable, or a line break
-/// in some YAML version, or a byte-order mark.
+/// Whether `c` is a character that a style with no escape mechanism can never carry: not
+/// printable, a line break in some YAML version, or a byte-order mark.
 fn needs_escape(c: char) -> bool {
     !printable(c) || matches!(c, '\r' | '\u{85}' | '\u{2028}' | '\u{2029}' | '\u{feff}')
 }
@@ -123,10 +136,9 @@ fn needs_escape(c: char) -> bool {
 // ---------------------------------------------------------------------------------------------
 
 /// Whether a plain scalar with this text would come back as something other than a string.
-///
-/// Deliberately the *union* of the YAML 1.1 and 1.2 core resolvers: over-quoting is invisible,
-/// under-quoting turns a string into a bool.
 fn resolves_as_non_string(v: &str) -> bool {
+    // The union of the YAML 1.1 and 1.2 core resolvers, on purpose: over-quoting is invisible,
+    // under-quoting turns a string into a bool.
     if v.is_empty() {
         return true;
     }
@@ -161,7 +173,8 @@ fn resolves_as_non_string(v: &str) -> bool {
     is_number(v) || is_timestamp(v)
 }
 
-/// `[0-9_]*` with at least one digit, an optional `.` fraction and an optional exponent.
+/// Whether `s` is `[0-9_]*` with at least one digit, an optional `.` fraction and an optional
+/// exponent.
 fn is_decimal_or_float(s: &str) -> bool {
     let (mantissa, exponent) = match s.find(['e', 'E']) {
         Some(i) => (&s[..i], Some(&s[i + 1..])),
@@ -189,7 +202,8 @@ fn is_decimal_or_float(s: &str) -> bool {
     seen_digit
 }
 
-/// Every int and float spelling of the 1.1 and 1.2 resolvers, sexagesimals included.
+/// Whether `v` is an int or a float in any spelling the 1.1 and 1.2 resolvers accept,
+/// sexagesimals included.
 fn is_number(v: &str) -> bool {
     if matches!(v, ".nan" | ".NaN" | ".NAN") {
         return true;
@@ -218,7 +232,8 @@ fn is_number(v: &str) -> bool {
     is_decimal_or_float(body)
 }
 
-/// The 1.1 timestamp resolver, loosely: `yyyy-` followed by nothing but date/time punctuation.
+/// Whether `v` satisfies the 1.1 timestamp resolver, loosely: `yyyy-` followed by nothing but
+/// digits and date or time punctuation.
 fn is_timestamp(v: &str) -> bool {
     let b = v.as_bytes();
     b.len() >= 8
@@ -238,7 +253,8 @@ fn is_timestamp(v: &str) -> bool {
 // legality
 // ---------------------------------------------------------------------------------------------
 
-/// Why a plain scalar would not *parse back* as this value here, ignoring type resolution.
+/// Returns the reason a plain scalar would not parse back as this value here, ignoring type
+/// resolution, and `None` when one would.
 fn plain_syntax_reason(v: &str, ctx: &ScalarContext) -> Option<&'static str> {
     if v.is_empty() {
         return Some("a plain scalar cannot be empty");
@@ -248,8 +264,9 @@ fn plain_syntax_reason(v: &str, ctx: &ScalarContext) -> Option<&'static str> {
     {
         return Some("a plain scalar carries no escapes and is kept to one line");
     }
-    // `-`, `?` and `:` only end the scalar when white space follows (`ns-plain-first`, YAML
-    // 1.2 §7.3.3): `-42` and `-not-a-sequence` are plain scalars, `- x` is a sequence entry.
+    // `-`, `?` and `:` only end the scalar when white space follows, per the `ns-plain-first`
+    // production in section 7.3.3 of YAML 1.2: `-42` and `-not-a-sequence` are plain scalars,
+    // while `- x` is a sequence entry.
     if v.starts_with(INDICATORS)
         && (!v.starts_with(['-', '?', ':'])
             || v.chars().nth(1).is_none_or(|c| c == ' ' || c == '\t'))
@@ -274,7 +291,8 @@ fn plain_syntax_reason(v: &str, ctx: &ScalarContext) -> Option<&'static str> {
     None
 }
 
-/// Why a single-quoted scalar could not carry this value.
+/// Returns the reason a single-quoted scalar could not carry this value, and `None` when it
+/// can.
 fn single_syntax_reason(v: &str) -> Option<&'static str> {
     if v.chars().any(|c| needs_escape(c) || c == '\n') {
         return Some("a single-quoted scalar carries no escapes and is kept to one line");
@@ -282,12 +300,13 @@ fn single_syntax_reason(v: &str) -> Option<&'static str> {
     None
 }
 
-/// How many line breaks the value ends with; the chomping indicator is a function of this.
+/// Returns how many line breaks the value ends with. The chomping indicator is a function of
+/// that count.
 fn trailing_breaks(v: &str) -> usize {
     v.chars().rev().take_while(|c| *c == '\n').count()
 }
 
-/// Why a block scalar could not carry this value here.
+/// Returns the reason a block scalar could not carry this value here, and `None` when it can.
 fn block_syntax_reason(v: &str, ctx: &ScalarContext, folded: bool) -> Option<&'static str> {
     if ctx.in_flow {
         return Some("a block scalar is not legal in flow context");
@@ -327,7 +346,25 @@ fn block_syntax_reason(v: &str, ctx: &ScalarContext, folded: bool) -> Option<&'s
     None
 }
 
-/// What styles are legal for `value` at this point, and why.
+/// Reports which styles are legal for `value` at this point, and the shape of the value behind
+/// that answer.
+///
+/// `allow_plain` is the strict field: it is false for text that would read back as another
+/// type. `analyze("42", ..).allow_plain` is false, because a string whose text is `42` has to
+/// be quoted to survive a round trip. Emitting `42` plainly is still correct for a node that
+/// means the integer, and the emitter takes that path from the node's own requested style
+/// rather than from this analysis.
+///
+/// # Examples
+///
+/// ```
+/// use yamluna_core::{ScalarContext, analyze};
+///
+/// let ctx = ScalarContext::default();
+/// assert!(analyze("hello", &ctx).allow_plain);
+/// assert!(!analyze("42", &ctx).allow_plain);
+/// assert!(analyze("42", &ctx).allow_single_quoted);
+/// ```
 #[must_use]
 pub fn analyze(value: &str, ctx: &ScalarContext) -> ScalarAnalysis {
     ScalarAnalysis {
@@ -341,21 +378,42 @@ pub fn analyze(value: &str, ctx: &ScalarContext) -> ScalarAnalysis {
     }
 }
 
-/// Whether a plain scalar can *carry* this value here, ignoring what it would resolve as.
+/// Whether a plain scalar can carry this value here, ignoring what it would resolve as.
 ///
 /// [`analyze`] refuses `42` because, for a value that is known only as a string, a plain `42`
 /// reads back as an integer. A node that explicitly asks for [`ScalarStyle::Plain`] has already
-/// made that judgement — it is how a typed value (an `int` whose text is `42`) says so — and
+/// made that judgement, which is how a typed value (an `int` whose text is `42`) says so, so it
 /// needs only the syntactic half.
 pub(super) fn plain_writable(value: &str, ctx: &ScalarContext) -> bool {
     plain_syntax_reason(value, ctx).is_none()
 }
 
-/// Pick a style for a value that has no source lexeme (user-constructed or modified).
+/// Picks a style for a value that has no source lexeme, meaning one the user built or modified.
 ///
-/// `requested` is the style the node asks for; it is honoured when it is legal here. The fallback
-/// ladder is plain → single-quoted → double-quoted, and never reaches for a block style on its
-/// own — a block scalar changes the shape of the line, so it is only ever used when asked for.
+/// `requested` is honoured when it is legal here. Otherwise the fallback ladder runs plain,
+/// then single-quoted, then double-quoted. It never reaches for a block style on its own,
+/// because a block scalar changes the shape of the line; a block style is used only when asked
+/// for.
+///
+/// A requested plain style is refused for text that would read back as another type, `42`
+/// included. The emitter deals with a node that explicitly asks to be plain before it gets
+/// here, so an integer node still emits as `42`.
+///
+/// # Arguments
+///
+/// * `value`: the text to be written.
+/// * `requested`: the style the node asks for, if it asks for one.
+/// * `ctx`: where the scalar lands, which decides what is legal there.
+///
+/// # Examples
+///
+/// ```
+/// use yamluna_core::{ScalarContext, ScalarStyle, choose_style};
+///
+/// let ctx = ScalarContext::default();
+/// assert_eq!(choose_style("hello", None, &ctx), ScalarStyle::Plain);
+/// assert_eq!(choose_style("true", None, &ctx), ScalarStyle::SingleQuoted);
+/// ```
 #[must_use]
 pub fn choose_style(
     value: &str,
@@ -387,10 +445,9 @@ pub fn choose_style(
 // ---------------------------------------------------------------------------------------------
 
 /// Whether a line break may replace `atoms[i]`, which the caller has checked is a lone space.
-///
-/// The break folds back into exactly one space, so the space must be the only one there; and a
-/// continuation line starting with `#` would be read as a comment.
 fn breakable(atoms: &[String], i: usize) -> bool {
+    // The break folds back into exactly one space, so the space must be the only one there, and
+    // a continuation line starting with `#` would be read as a comment.
     i > 0
         && atoms[i - 1] != " "
         && atoms
@@ -398,10 +455,10 @@ fn breakable(atoms: &[String], i: usize) -> bool {
             .is_some_and(|n| n != " " && !n.starts_with('#'))
 }
 
-/// Write indivisible output chunks, folding at spaces to keep lines under `ctx.width`.
+/// Writes indivisible output chunks, folding at spaces to keep lines under `ctx.width`.
 fn write_atoms(atoms: &[String], ctx: &ScalarContext, out: &mut String) {
-    // A continuation line at column 0 would be read as a document marker or a block indicator; one
-    // extra column of indentation is always stripped back off by folding, so it is free.
+    // A continuation line at column 0 would be read as a document marker or a block indicator.
+    // One extra column of indentation is always stripped back off by folding, so it is free.
     let continuation = " ".repeat(ctx.indent.max(1));
     let folding = ctx.width > 0 && !ctx.is_key;
     let mut col = ctx.indent;
@@ -417,7 +474,9 @@ fn write_atoms(atoms: &[String], ctx: &ScalarContext, out: &mut String) {
     }
 }
 
-/// The double-quoted rendering of one character: the shortest escape that is unambiguous.
+/// Returns the double-quoted rendering of one character: the shortest unambiguous escape.
+///
+/// A character that needs no escape comes back as itself.
 fn double_quoted_atom(c: char, allow_unicode: bool) -> String {
     let named = match c {
         '"' => Some("\\\""),
@@ -456,7 +515,7 @@ fn double_quoted_atom(c: char, allow_unicode: bool) -> String {
     }
 }
 
-/// Break one block-scalar line at spaces so that re-folding restores it exactly.
+/// Breaks one block-scalar line at spaces so that re-folding restores it exactly.
 fn fold_at_spaces(text: &str, ctx: &ScalarContext) -> Vec<String> {
     if ctx.width == 0 {
         return vec![text.to_owned()];
@@ -478,10 +537,7 @@ fn fold_at_spaces(text: &str, ctx: &ScalarContext) -> Vec<String> {
     lines
 }
 
-/// The body lines of a folded (`>`) block that re-folds back to `body`.
-///
-/// A run of `j` line breaks in the value is written as `j` blank lines, which is `j + 1` breaks in
-/// the block; a single break with no blank line would fold back into a space instead.
+/// Returns the body lines of a folded (`>`) block that re-folds back to `body`.
 fn folded_lines(body: &str, ctx: &ScalarContext) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut empties = 0usize;
@@ -490,6 +546,9 @@ fn folded_lines(body: &str, ctx: &ScalarContext) -> Vec<String> {
             empties += 1;
             continue;
         }
+        // A run of `j` line breaks in the value is written as `j` blank lines, which is
+        // `j + 1` breaks in the block. A single break with no blank line would fold back into a
+        // space instead.
         if !lines.is_empty() {
             for _ in 0..=empties {
                 lines.push(String::new());
@@ -501,9 +560,9 @@ fn folded_lines(body: &str, ctx: &ScalarContext) -> Vec<String> {
     lines
 }
 
-/// Write a literal or folded block scalar: header, chomping indicator, then the indented body.
+/// Writes a literal or folded block scalar: header, chomping indicator, then the indented body.
 ///
-/// The line break that terminates the last body line is *not* written, matching `Node::raw`.
+/// The line break that terminates the last body line is not written, matching `Node::raw`.
 fn write_block(
     value: &str,
     style: ScalarStyle,
@@ -518,8 +577,8 @@ fn write_block(
     match trailing_breaks(value) {
         0 => out.push('-'),
         1 => {}
-        // DIVERGENCES B6: `|+` at end of stream is complete on its own; no `...` is written here
-        // or by the caller.
+        // A `|+` block at the end of a stream is complete on its own, so no `...` document-end
+        // marker is written here or by the caller.
         _ => out.push('+'),
     }
     // One trailing break belongs to the caller, exactly as for any other scalar.
@@ -540,14 +599,15 @@ fn write_block(
     Ok(())
 }
 
-/// Write `value` in `style` into `out`.
+/// Writes `value` in `style` into `out`.
 ///
-/// Only *syntactic* legality is enforced: `write(.., Plain, ..)` happily writes `42`, because a
+/// Only syntactic legality is enforced: `write(.., Plain, ..)` writes `42` happily, because a
 /// caller emitting an integer node needs it to. [`analyze`] is where the type-resolution guard
-/// lives, so a plain *string* never comes back as a number.
+/// lives, so a plain string never comes back as a number.
 ///
 /// # Errors
-/// [`EmitError::Scalar`] if the style cannot express the value at this point.
+///
+/// Returns [`EmitError::Scalar`] when the style cannot express the value at this point.
 pub fn write(
     value: &str,
     style: ScalarStyle,
@@ -871,7 +931,7 @@ mod tests {
         }
     }
 
-    /// Write `value` in `style`, drop it into `case`, re-read it and check nothing changed.
+    /// Writes `value` in `style`, drops it into `case`, re-reads it and checks nothing changed.
     fn check(value: &str, style: ScalarStyle, case: &Case) {
         let mut scalar = String::new();
         write(value, style, &case.ctx, &mut scalar).unwrap_or_else(|e| {
@@ -1116,7 +1176,8 @@ mod tests {
         );
     }
 
-    /// DIVERGENCES B6: ruamel writes a spurious `...` after `|+` at end of stream.
+    /// ruamel writes a spurious `...` after a `|+` block at the end of a stream. This one does
+    /// not, and the value still re-reads unchanged.
     #[test]
     fn keep_chomping_does_not_gain_a_document_end_marker() {
         let ctx = ScalarContext {
@@ -1225,7 +1286,7 @@ mod tests {
     }
 
     /// `-`, `?` and `:` only close a plain scalar when white space follows, so `-42` and
-    /// `-not-a-sequence` are plain — quoting them would be a divergence from the source.
+    /// `-not-a-sequence` are plain. Quoting them would differ from what the source wrote.
     #[test]
     fn a_leading_dash_only_ends_a_plain_scalar_before_white_space() {
         let ctx = ScalarContext::default();

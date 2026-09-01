@@ -1,40 +1,48 @@
 //! The output cursor, and the block-layout arithmetic that decides a column when the source
-//! cannot (DESIGN §2.4, step 1).
+//! cannot.
 //!
-//! Everything here is deliberately dumb: [`Writer`] knows where it is on the page and can only
-//! move forward, and the free functions below answer "which column" for the two constructs whose
-//! indicator has no recorded position of its own — a block sequence's `-` and a nested
-//! collection's content.
+//! [`Writer`] knows where it is on the page and can only move forward. The free functions below
+//! answer "which column" for the two constructs whose indicator has no recorded position of its
+//! own: a block sequence's `-`, and a nested collection's content.
 //!
-//! **The cursor never jumps more than one line.** Every blank line of the source is recorded as
+//! The cursor never jumps more than one line. Every blank line of the source is recorded as
 //! [`Trivia::BlankLines`](crate::Trivia::BlankLines), so in the round-trip path the trivia
-//! already move the cursor down; a node's recorded line then either matches (and its recorded
-//! column is used verbatim) or does not (and the computed column is used). That is what keeps a
-//! deleted entry from leaving a blank line behind, and it is why a stale position can never open
-//! a hole in the output.
+//! already move the cursor down; a node's recorded line then either matches, and its recorded
+//! column is used verbatim, or does not, and the computed column is used. That is what keeps a
+//! deleted entry from leaving a blank line behind, and why a stale position can never open a
+//! hole in the output.
 
 use std::collections::HashMap;
 
 use crate::node::Position;
 
-/// A position a node actually carries, as opposed to the default one a constructed node has.
-///
-/// `Position::default()` is a real coordinate — the first character of a document — but a node
-/// there is also the only node whose layout it cannot mis-drive, so treating it as "unplaced" is
-/// free.
+/// Whether `pos` is a position a node actually carries, rather than the default one a
+/// constructed node has.
 #[must_use]
 pub(super) fn placed(pos: Position) -> bool {
+    // `Position::default()` is a real coordinate, the first character of a document, but a node
+    // sitting there is the only node whose layout it cannot mis-drive, so counting it as
+    // unplaced costs nothing.
     pos != Position::default()
 }
 
-/// The column a block sequence's `-` indicators sit at.
+/// Returns the column a block sequence's `-` indicators sit at.
 ///
-/// The scanner reports a block sequence at its first `-` *unless* the sequence sits at the
-/// indentation of the mapping that holds it (`key:` on one line, `- item` at column 0 on the
-/// next), where no new indentation level is opened and the reported position is the first item's.
-/// That is exactly the case where the dash belongs at the enclosing indent.
+/// That is the sequence's own recorded column when it has one distinct from its first item's,
+/// and `fallback` otherwise.
+///
+/// # Arguments
+///
+/// * `seq`: the position recorded for the sequence node.
+/// * `first`: the position recorded for its first item.
+/// * `fallback`: the column to use when the source records nothing usable.
 #[must_use]
 pub(super) fn dash_col(seq: Position, first: Position, fallback: u32) -> u32 {
+    // The scanner reports a block sequence at its first `-` except when the sequence sits at
+    // the indentation of the mapping that holds it (`key:` on one line, `- item` at column 0 on
+    // the next). No new indentation level is opened there, so the position reported for the
+    // sequence is the first item's, which is exactly the case where the dash belongs at the
+    // enclosing indent.
     if placed(seq) && seq != first {
         seq.col
     } else {
@@ -42,7 +50,8 @@ pub(super) fn dash_col(seq: Position, first: Position, fallback: u32) -> u32 {
     }
 }
 
-/// The column the children of a block collection are laid out at when the source cannot say.
+/// Returns the column the children of a block collection are laid out at when the source cannot
+/// say.
 #[must_use]
 pub(super) fn child_col(first_child: Position, fallback: u32) -> u32 {
     if placed(first_child) {
@@ -57,8 +66,8 @@ pub(super) fn child_col(first_child: Position, fallback: u32) -> u32 {
 pub(super) enum Place {
     /// On the current line, unless the node's recorded line is further down.
     ///
-    /// `sep` requires at least one space of separation — what a `:` or a `-` needs and what a
-    /// `[` or a `,` does not.
+    /// `sep` requires at least one space of separation, which is what a `:` or a `-` needs and
+    /// what a `[` or a `,` does not.
     Same {
         /// Whether a space must separate the node from what precedes it.
         sep: bool,
@@ -68,8 +77,9 @@ pub(super) enum Place {
 }
 
 impl Place {
-    /// The same place, but with separation required — what an anchor or a tag written just now
-    /// leaves behind.
+    /// Returns the same place, with separation required when `yes` is true.
+    ///
+    /// An anchor or a tag written just before the node is what leaves separation owed.
     #[must_use]
     pub(super) fn separated(self, yes: bool) -> Self {
         let Self::Same { sep, fallback } = self;
@@ -82,7 +92,7 @@ impl Place {
 
 /// The output buffer, and where on the page it is.
 ///
-/// Columns are counted in **characters**, like [`Position`], so an emoji is one column wide.
+/// Columns are counted in characters, like [`Position`], so an emoji is one column wide.
 pub(super) struct Writer {
     out: String,
     line: u32,
@@ -102,6 +112,7 @@ pub(super) struct Writer {
     /// The source lines whose white space cannot be reproduced from a column alone. See
     /// `Document::line_space`.
     space: HashMap<u32, String>,
+    /// The line break written for every new line.
     brk: &'static str,
 }
 
@@ -121,7 +132,7 @@ impl Writer {
         }
     }
 
-    /// Give the writer the source's own white space, so the round-trip path can put it back.
+    /// Records the source's own white space, so the round-trip path can put it back.
     pub(super) fn keep_line_space(&mut self, space: HashMap<u32, String>) {
         self.space = space;
     }
@@ -130,8 +141,7 @@ impl Writer {
     /// still matches the page and that text is nothing but white space.
     ///
     /// `None` for every line the writer can reproduce itself, which is almost all of them: only
-    /// the lines holding a TAB or a trailing run are recorded at all. The all-white-space test is
-    /// what keeps this honest — a range the emitter has put its own content in never matches.
+    /// the lines holding a TAB or a trailing run are recorded at all.
     fn source_space(&self, a: u32, b: u32) -> Option<String> {
         if !self.synced || b <= a {
             return None;
@@ -144,12 +154,14 @@ impl Writer {
             .skip(a as usize)
             .take(want)
             .collect();
+        // The all-white-space test is what keeps this honest: a range the emitter has already
+        // put its own content in never matches.
         (text.chars().count() == want && text.chars().all(|c| c == ' ' || c == '\t'))
             .then_some(text)
     }
 
-    /// Write the padding owed to `col`: the source's own characters where they are recorded, and
-    /// spaces otherwise.
+    /// Writes the padding owed to `col`: the source's own characters where they are recorded,
+    /// and spaces otherwise.
     fn flush_pending(&mut self) {
         match self.source_space(self.col - self.pending, self.col) {
             Some(text) => self.out.push_str(&text),
@@ -162,12 +174,9 @@ impl Writer {
         self.pending = 0;
     }
 
-    /// Write back the white space this source line ended with. Padding no content followed is
-    /// dropped, as always — the line's own tail replaces it.
+    /// Writes back the white space this source line ended with.
     ///
-    /// A block scalar's lines carry their tails inside the lexeme, and a line whose content the
-    /// emitter has changed ends somewhere else; neither leaves an all-white-space remainder here,
-    /// so neither collects a tail.
+    /// Padding that no content followed is dropped, as always: the line's own tail replaces it.
     fn line_tail(&mut self) {
         let from = self.col - self.pending;
         let Some(line) = self.space.get(&self.line) else {
@@ -177,6 +186,9 @@ impl Writer {
             return;
         }
         let tail: String = line.chars().skip(from as usize).collect();
+        // A block scalar's lines carry their tails inside the lexeme, and a line whose content
+        // the emitter has changed ends somewhere else. Neither leaves an all-white-space
+        // remainder here, so neither collects a tail.
         if tail.is_empty() || !tail.chars().all(|c| c == ' ' || c == '\t') {
             return;
         }
@@ -194,7 +206,7 @@ impl Writer {
         self.commented
     }
 
-    /// Append a comment, and with it the rest of the line.
+    /// Appends a comment, which takes the rest of the line with it.
     pub(super) fn comment(&mut self, text: &str) {
         self.push(text);
         self.commented = true;
@@ -205,19 +217,20 @@ impl Writer {
         self.synced
     }
 
-    /// Stop believing recorded lines, for good.
+    /// Stops believing recorded lines, for good.
     ///
-    /// The first construct that does not land on the line the model gives it proves the model no
-    /// longer describes this text — an entry was inserted, deleted or rebuilt. Recorded *columns*
-    /// stay useful (they are the file's indentation, which did not move), but recorded lines
-    /// would from here on open holes, so from this point the layout decides where lines break.
+    /// The first construct that does not land on the line the model gives it proves the model
+    /// no longer describes this text: an entry was inserted, deleted or rebuilt. Recorded
+    /// columns stay useful, since they are the file's indentation and it did not move, but
+    /// recorded lines would from here on open holes, so the layout decides where lines break
+    /// from this point on.
     pub(super) fn desync(&mut self) {
         self.synced = false;
     }
 
-    /// The indentation of the line the cursor is on: where its first content went.
+    /// Returns the indentation of the line the cursor is on: where its first content went.
     ///
-    /// This is what a flow collection's closing bracket lines up with — the start of the line
+    /// This is what a flow collection's closing bracket lines up with: the start of the line
     /// that opened it, not the bracket's own column.
     pub(super) fn home(&self) -> u32 {
         self.home
@@ -227,12 +240,12 @@ impl Writer {
         self.out
     }
 
-    /// Write a byte-order mark. It is not part of any line, so the cursor does not move.
+    /// Writes a byte-order mark. It is not part of any line, so the cursor does not move.
     pub(super) fn bom(&mut self) {
         self.out.push('\u{feff}');
     }
 
-    /// Append text and follow the cursor through it.
+    /// Appends text and follows the cursor through it.
     pub(super) fn push(&mut self, s: &str) {
         if s.is_empty() {
             return;
@@ -266,7 +279,7 @@ impl Writer {
         self.push(c.encode_utf8(&mut [0; 4]));
     }
 
-    /// Pad forward to `col`. Never moves backwards, and never writes the padding on its own.
+    /// Pads forward to `col`. Never moves backwards, and never writes the padding on its own.
     pub(super) fn pad_to(&mut self, col: u32) {
         if col > self.col {
             self.pending += col - self.col;
@@ -274,14 +287,14 @@ impl Writer {
         }
     }
 
-    /// At least one space of separation from whatever is already on this line.
+    /// Leaves at least one space of separation from whatever is already on this line.
     pub(super) fn space(&mut self) {
         if self.dirty {
             self.pad_to(self.col + 1);
         }
     }
 
-    /// Start a line, unless this one is still empty.
+    /// Starts a line, unless this one is still empty.
     pub(super) fn fresh_line(&mut self) {
         if self.dirty {
             self.line_tail();
@@ -295,7 +308,7 @@ impl Writer {
         self.home = 0;
     }
 
-    /// Write a line break whether or not this line has content.
+    /// Writes a line break whether or not this line has content.
     pub(super) fn hard_break(&mut self) {
         self.break_with(self.brk);
     }
@@ -311,12 +324,13 @@ impl Writer {
         self.commented = false;
     }
 
-    /// Append recorded separation — the white space and punctuation the source wrote between two
-    /// lexemes — following the cursor through it the way writing it a piece at a time would.
+    /// Appends recorded separation, the white space and punctuation the source wrote between
+    /// two lexemes, following the cursor through it the way writing it a piece at a time would.
     ///
-    /// [`Writer::push`] treats its argument as one lexeme, so a `|+` block scalar that ends in a
-    /// break still owns the line below it. Separation is the opposite: a break in it ends the
-    /// line for good, leaving the one below empty, free, and no longer spoken for by a comment.
+    /// [`Writer::push`] treats its argument as one lexeme, so a `|+` block scalar ending in a
+    /// break still owns the line below it. Separation behaves the other way round: a break in
+    /// it ends the line for good, leaving the one below empty, free, and no longer spoken for
+    /// by a comment.
     pub(super) fn push_separation(&mut self, s: &str) {
         let mut rest = s;
         while let Some(i) = rest.find(['\n', '\r']) {
@@ -331,7 +345,7 @@ impl Writer {
         self.push(rest);
     }
 
-    /// Write `n` empty lines.
+    /// Writes `n` empty lines.
     pub(super) fn blank_lines(&mut self, n: u32) {
         self.fresh_line();
         for _ in 0..n {
@@ -339,10 +353,17 @@ impl Writer {
         }
     }
 
-    /// Move to where a node goes.
+    /// Moves to where a node goes.
     ///
-    /// The recorded column is honoured only when the cursor is on the recorded line, which is the
-    /// definition of "the model still matches its source" used throughout the emitter.
+    /// The recorded column is honoured only when the cursor is on the recorded line, which is
+    /// the definition of "the model still matches its source" used throughout the emitter.
+    ///
+    /// # Arguments
+    ///
+    /// * `pos`: the position recorded for the node.
+    /// * `place`: the separation the syntax needs, and the column to fall back on.
+    /// * `echo`: whether recorded positions are believed at all. The layout path passes `false`
+    ///   and gets the computed column every time.
     pub(super) fn place(&mut self, pos: Position, place: Place, echo: bool) {
         let Place::Same { sep, fallback } = place;
         if self.commented || (echo && self.synced && pos.line > self.line) {
@@ -353,12 +374,12 @@ impl Writer {
         self.column(pos, fallback, echo);
     }
 
-    /// Put the cursor where a recorded lexeme was written: the gap before a `:`, before an
+    /// Puts the cursor where a recorded lexeme was written: the gap before a `:`, before an
     /// `&anchor`, before a node.
     ///
-    /// This is "echo the white space instead of reconstructing it". A recorded column is believed
-    /// only while the cursor is still on the recorded line; `sep` is the separation the *syntax*
-    /// needs when it is not, and is `false` only where the source itself wrote none (`"a":b`).
+    /// The white space is echoed rather than reconstructed. A recorded column is believed only
+    /// while the cursor is still on the recorded line; `sep` is the separation the syntax needs
+    /// when it is not, and is `false` only where the source itself wrote none (`"a":b`).
     pub(super) fn at(&mut self, pos: Option<Position>, sep: bool, echo: bool) {
         if sep {
             self.space();
@@ -368,9 +389,11 @@ impl Writer {
         }
     }
 
-    /// Put the cursor in the node's column: the recorded one while the model still matches the
-    /// page, the computed one otherwise — and the computed one only at the start of a line,
-    /// because a column is where a *line* puts a node, not something to pad to mid-line.
+    /// Puts the cursor in the node's column: the recorded one while the model still matches the
+    /// page, the computed one otherwise.
+    ///
+    /// The computed column is applied only at the start of a line, because a column is where a
+    /// line puts a node and not something to pad to mid-line.
     fn column(&mut self, pos: Position, fallback: u32, echo: bool) {
         if echo {
             if self.line == pos.line {
@@ -384,7 +407,7 @@ impl Writer {
         }
     }
 
-    /// A mark of where the output ends, for [`Writer::rewind`].
+    /// Returns a mark of where the output ends, for [`Writer::rewind`].
     pub(super) fn mark(&mut self) -> Mark {
         Mark {
             len: self.out.len(),
@@ -397,12 +420,17 @@ impl Writer {
         }
     }
 
-    /// Everything written since `mark`.
+    /// Returns everything written since `mark`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `mark` came from another writer, or if the output has already been rewound to
+    /// before it.
     pub(super) fn since(&self, mark: &Mark) -> &str {
         &self.out[mark.len..]
     }
 
-    /// Throw away everything written since `mark`.
+    /// Throws away everything written since `mark`.
     pub(super) fn rewind(&mut self, mark: &Mark) {
         self.out.truncate(mark.len);
         self.line = mark.line;
@@ -426,7 +454,7 @@ pub(super) struct Mark {
 }
 
 impl Mark {
-    /// The column the cursor was in when the mark was taken.
+    /// Returns the column the cursor was in when the mark was taken.
     pub(super) fn col(&self) -> u32 {
         self.col
     }
@@ -509,7 +537,7 @@ mod tests {
 
         let mut w = Writer::new("\n");
         w.push("key:");
-        // A stale line: the computed column wins, and the cursor stops believing recorded lines.
+        // A stale line: the computed column wins, and recorded lines stop being believed.
         w.place(
             pos(9, 40),
             Place::Same {

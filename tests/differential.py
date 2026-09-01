@@ -1,39 +1,39 @@
-"""ruamel.yaml oracle -- and yamluna's own score -- for the acceptance corpus.
+"""The ruamel.yaml oracle, and yamluna's own score, for the acceptance corpus.
 
-Importable (pytest uses the helpers) and runnable::
+Importable, since pytest uses the helpers, and runnable:
 
-    python tests/differential.py               # the whole corpus, as a table
-    python tests/differential.py --diff        # ... plus a unified diff per failure
-    python tests/differential.py comment-eol   # one file, with its diff
-    python tests/differential.py --ruamel      # what ruamel changed, not yamluna
+```bash
+python tests/differential.py               # the whole corpus, as a table
+python tests/differential.py --diff        # the same, plus a unified diff per failure
+python tests/differential.py comment-eol   # one file, with its diff
+python tests/differential.py --ruamel      # what ruamel changed, rather than yamluna
+```
 
-What this measures: whether a round-trip YAML library reads a corpus file and
-writes back the exact same bytes.  Both libraries are measured the same way and
-the table prints one column each.  DESIGN 6.2 holds yamluna to byte-identity on
-every one of these files, which is *stricter* than ruamel;
-DESIGN 6.3 says every divergence from ruamel must be a deliberate fix recorded
-in ``docs/DIVERGENCES.md``.  The rows below that say "no" are the list of
-places where being bug-compatible with ruamel is the wrong goal -- measured
-rather than assumed, which is the whole point of running this before writing
-any of the library.
+What this measures is whether a round-trip YAML library reads a corpus file and writes
+back the exact same bytes. Both libraries are measured the same way and the table prints
+one column each. yamluna is held to byte-identity on every one of these files, a stricter
+bar than ruamel meets, and each place the two disagree is a deliberate fix rather than an
+accident. The rows that say "no" are where being bug-compatible with ruamel is the wrong
+goal, measured rather than assumed.
 
-The ruamel configuration is the ordinary round-trip recipe::
+The ruamel configuration is the ordinary round-trip recipe:
 
-    yaml = YAML()            # typ='rt'
-    yaml.preserve_quotes = True
+```python
+yaml = YAML()            # typ='rt'
+yaml.preserve_quotes = True
+```
 
-and yamluna is given exactly the same two lines.  Everything else is left at its
-default in both, including ``width = 80`` (so refolded long lines show up as a
-failure -- that is a real default-configuration behaviour, not a rigged one).
+and yamluna is given exactly the same two lines. Everything else is left at its default
+in both, including `width = 80`, so a refolded long line shows up as a failure. That is a
+real default-configuration behaviour rather than a rigged one.
 
-``corpus/key-duplicate.yaml`` is the one file scored on something else.  It
-deliberately holds ``a: 1 ... a: 3``, and a mapping keeps one of two equal keys,
-so *no* dict-backed API can write those bytes back -- "does it round-trip" is a
-question neither library can answer yes to, and counting it as a round-trip
-failure marked a correct refusal as a defect.  What the file actually specifies
-is behaviour, so :func:`check_duplicate_keys` measures that instead
-(:data:`BEHAVIOUR_ONLY`), it gets its own row, and the byte-identity headline is
-over the other 40 files.
+The byte-identity headline is over 40 round-trippable files.
+`tests/corpus/key-duplicate.yaml` is the forty-first and is scored on something else: it
+writes `a: 1` and later `a: 3`, a mapping keeps one of two equal keys, so no dict-backed
+API can write those bytes back. "Does it round-trip" is a question neither library can
+answer yes to, and counting it as a round-trip failure marked a correct refusal as a
+defect. What the file specifies is behaviour, so `check_duplicate_keys` measures that
+instead, the stem is listed in `BEHAVIOUR_ONLY`, and it gets a row of its own.
 """
 
 from __future__ import annotations
@@ -60,11 +60,17 @@ RUAMEL_VERSION = ".".join(str(part) for part in version_info[:3])
 
 
 def ruamel_rt(sequence: int = 2, offset: int = 0) -> YAML:
-    """A round-trip ``YAML`` configured the way this harness measures it.
+    """Builds a round-trip `YAML` configured the way this harness measures it.
 
-    ``sequence``/``offset`` are ruamel's own defaults; pass ``4, 2`` to give
-    ruamel the indentation style most of this corpus is written in, which is
-    how the "indentation only" figure in tests/README.md was measured.
+    Args:
+        sequence: Block-sequence indent. The default is ruamel's own. Pass 4 with an
+            offset of 2 to give ruamel the indentation style most of this corpus is
+            written in, which is what `--seq-indent` does.
+        offset: Where the `-` sits inside that indent, again ruamel's own default.
+
+    Returns:
+        A ruamel `YAML` in round-trip mode with `preserve_quotes` on and the requested
+        indentation.
     """
     yaml = YAML()  # typ='rt'
     yaml.preserve_quotes = True
@@ -73,12 +79,35 @@ def ruamel_rt(sequence: int = 2, offset: int = 0) -> YAML:
 
 
 def load_with_ruamel(text: str, yaml: YAML | None = None) -> list[Any]:
-    """Load every document in *text*.  Always a list, even for one document."""
+    """Loads every document in the source.
+
+    Args:
+        text: The YAML source.
+        yaml: The instance to load through. A fresh `ruamel_rt()` when omitted.
+
+    Returns:
+        The documents, always as a list, even for a source holding one document.
+
+    Raises:
+        YAMLError: ruamel refused the source. A duplicate key raises unless the caller
+            set `allow_duplicate_keys` on the instance it passed in.
+    """
     return list((yaml or ruamel_rt()).load_all(text))
 
 
 def dump_with_ruamel(data: list[Any], yaml: YAML | None = None) -> str:
-    """Dump a list of documents back to a string."""
+    """Dumps a list of documents back to a string.
+
+    Args:
+        data: One entry per document, in stream order.
+        yaml: The instance to dump through. A fresh `ruamel_rt()` when omitted.
+
+    Returns:
+        The emitted stream.
+
+    Raises:
+        YAMLError: ruamel could not represent one of the objects.
+    """
     buf = io.StringIO()
     (yaml or ruamel_rt()).dump_all(data, buf)
     return buf.getvalue()
@@ -91,7 +120,20 @@ def roundtrip_with_ruamel(
     *,
     allow_duplicate_keys: bool = False,
 ) -> str:
-    """``load`` then ``dump`` through one ruamel instance, as users do."""
+    """Loads then dumps through one ruamel instance, the way a user would.
+
+    Args:
+        text: The YAML source.
+        sequence: Block-sequence indent, passed to `ruamel_rt`.
+        offset: Dash offset inside that indent, passed to `ruamel_rt`.
+        allow_duplicate_keys: Accept a mapping with two equal keys instead of raising.
+
+    Returns:
+        What ruamel writes back for that source.
+
+    Raises:
+        YAMLError: ruamel refused the source or could not represent what it loaded.
+    """
     yaml = ruamel_rt(sequence, offset)
     yaml.allow_duplicate_keys = allow_duplicate_keys
     return dump_with_ruamel(load_with_ruamel(text, yaml), yaml)
@@ -103,7 +145,19 @@ def roundtrip_with_ruamel(
 
 
 def roundtrip_with_yamluna(text: str, *, allow_duplicate_keys: bool = False) -> str:
-    """``load_all`` then ``dump_all`` through one ``yamluna.YAML``, as users do."""
+    """Loads then dumps through one `yamluna.YAML`, the way a user would.
+
+    Args:
+        text: The YAML source.
+        allow_duplicate_keys: Accept a mapping with two equal keys instead of raising.
+
+    Returns:
+        What yamluna writes back for that source.
+
+    Raises:
+        YAMLError: yamluna refused the source or could not represent what it loaded.
+        ImportError: The Rust extension is not built.
+    """
     import yamluna
 
     yaml = yamluna.YAML()  # typ='rt'
@@ -115,7 +169,19 @@ def roundtrip_with_yamluna(text: str, *, allow_duplicate_keys: bool = False) -> 
 
 
 def load_with_yamluna(text: str, *, allow_duplicate_keys: bool = False) -> Any:
-    """One document, loaded the way :func:`roundtrip_with_yamluna` loads it."""
+    """Loads one document the way `roundtrip_with_yamluna` loads it.
+
+    Args:
+        text: The YAML source.
+        allow_duplicate_keys: Accept a mapping with two equal keys instead of raising.
+
+    Returns:
+        The first document's root object, or `None` for a document with no content.
+
+    Raises:
+        YAMLError: yamluna refused the source.
+        ImportError: The Rust extension is not built.
+    """
     import yamluna
 
     yaml = yamluna.YAML()  # typ='rt'
@@ -125,31 +191,53 @@ def load_with_yamluna(text: str, *, allow_duplicate_keys: bool = False) -> Any:
 
 
 def load_one_with_ruamel(text: str, *, allow_duplicate_keys: bool = False) -> Any:
-    """The same, through ruamel: one document, the ordinary round-trip recipe."""
+    """Loads one document through ruamel, on the ordinary round-trip recipe.
+
+    Args:
+        text: The YAML source.
+        allow_duplicate_keys: Accept a mapping with two equal keys instead of raising.
+
+    Returns:
+        The first document's root object, or `None` for a document with no content.
+
+    Raises:
+        YAMLError: ruamel refused the source.
+    """
     yaml = ruamel_rt()
     yaml.allow_duplicate_keys = allow_duplicate_keys
     return yaml.load(text)
 
 
 def read_corpus_file(path: Path) -> str:
-    """Read a corpus file as text without touching newlines or the BOM."""
+    """Reads a corpus file as text without touching its newlines or its BOM.
+
+    Args:
+        path: The file to read.
+
+    Returns:
+        The bytes decoded as UTF-8, with CRLF and a leading BOM left in place.
+
+    Raises:
+        UnicodeDecodeError: The file is not valid UTF-8.
+        OSError: The file cannot be read.
+    """
     return path.read_bytes().decode("utf-8")
 
 
 def corpus_files() -> list[Path]:
+    """Every `tests/corpus/*.yaml` path, sorted, so runs are comparable."""
     return sorted(CORPUS_DIR.glob("*.yaml"))
 
 
-#: Corpus files scored on behaviour rather than on bytes, and left out of the
-#: byte-identity headline.
-#:
-#: Only ``key-duplicate``, and only because byte-identity is not a question that
-#: file *has* an answer to: it holds ``a: 1 ... a: 3``, and a mapping keeps one
-#: of two equal keys, so every dict-backed library writes back fewer lines than
-#: it read.  The file's subject is what a library does about that -- refuse by
-#: default, and when told to allow duplicates, say so and let the last one win
-#: (DESIGN 2.3) -- which is what :func:`check_duplicate_keys` measures.
 BEHAVIOUR_ONLY: set[str] = {"key-duplicate"}
+"""Corpus stems scored on behaviour rather than on bytes, and left out of the headline.
+
+Only `key-duplicate`, and only because byte-identity is not a question that file has an
+answer to: it writes `a: 1` and later `a: 3`, a mapping keeps one of two equal keys, so
+every dict-backed library writes back fewer lines than it read. The file's subject is
+what a library does about that: refuse by default, and when told to allow duplicates,
+say so and let the last one win. `check_duplicate_keys` measures those three things.
+"""
 
 
 # --------------------------------------------------------------------------
@@ -159,20 +247,21 @@ BEHAVIOUR_ONLY: set[str] = {"key-duplicate"}
 
 @dataclass(frozen=True, slots=True)
 class Result:
-    """What ruamel did to one corpus file."""
+    """What one library did to one corpus file."""
 
     path: Path
     ok: bool
-    """True when ruamel's load -> dump is byte-identical to the input."""
+    """True when the library's load followed by dump is byte-identical to the input."""
     summary: str
-    """One line naming what changed (empty when ``ok``)."""
+    """One line naming what changed. Empty when `ok`."""
     diff: str
-    """Unified diff, input -> ruamel's output (empty when ``ok``)."""
+    """Unified diff from the input to the library's output. Empty when `ok`."""
     error: str | None = None
-    """Exception type and message, when ruamel refused the file outright."""
+    """Exception type and message, when the library refused the file outright."""
 
     @property
     def name(self) -> str:
+        """The corpus file's stem, which is the id it is reported under."""
         return self.path.stem
 
 
@@ -183,7 +272,27 @@ def check_file(
     roundtrip: Callable[..., str] | None = None,
     label: str = "ruamel",
 ) -> Result:
-    """Round-trip one corpus file through a library and report what changed."""
+    """Round-trips one corpus file through a library and reports what changed.
+
+    An exception from the library is a result rather than a failure here: it becomes a
+    `Result` that is not `ok`, carrying the exception type and message in `error`.
+
+    Args:
+        path: The corpus file to measure.
+        sequence: Block-sequence indent, used only by the default ruamel round trip.
+        offset: Dash offset inside that indent, same.
+        roundtrip: The round trip to measure. Takes the source and the keyword options,
+            and returns what the library writes back. ruamel's when omitted.
+        label: The name to put on the right-hand side of the diff.
+
+    Returns:
+        A `Result` for that file, with `ok` set when the output is the input byte for
+        byte, and `summary` naming what changed when it is not.
+
+    Raises:
+        UnicodeDecodeError: The corpus file is not valid UTF-8.
+        OSError: The corpus file cannot be read.
+    """
     if roundtrip is None:
 
         def roundtrip(text: str, **options: bool) -> str:
@@ -209,12 +318,10 @@ def check_file(
 
 
 def _last_key_won(data: Any) -> bool:
-    """Did every duplicate in ``corpus/key-duplicate.yaml`` resolve to its *last* value?
-
-    Spelled out rather than derived: "is this key a duplicate" is a parser's job, not a
-    regex's.  ``seq_items_are_not_keys`` holds two ``dup:`` lines in two *different*
-    mappings, which are not duplicates at all, so both items have to survive.
-    """
+    """True when every duplicate in `tests/corpus/key-duplicate.yaml` kept its last value."""
+    # Each key is spelled out rather than derived, because "is this key a duplicate" is a
+    # parser's job and not a regex's: `seq_items_are_not_keys` holds two `dup:` lines in
+    # two different mappings, which are not duplicates at all, so both items survive.
     try:
         return (
             data["a"] == 3
@@ -228,13 +335,23 @@ def _last_key_won(data: Any) -> bool:
 
 
 def check_duplicate_keys(load: Callable[..., Any]) -> Result:
-    """Score ``corpus/key-duplicate.yaml`` on behaviour instead of on bytes.
+    """Scores `tests/corpus/key-duplicate.yaml` on behaviour instead of on bytes.
 
     The three things that file specifies, in order: refuse duplicates by default; when
-    told to allow them, *say so* rather than losing data silently; and keep the last of
-    each duplicated pair, which is the resolution DESIGN 2.3 fixes.  All three, or the
-    row is a ``no`` -- the point of the row is that "cannot round-trip" is not a verdict
-    on any of them.
+    told to allow them, say so rather than losing data silently; and keep the last of
+    each duplicated pair. All three, or the row is a `no`. The point of the row is that
+    "cannot round-trip" is a verdict on none of them.
+
+    Args:
+        load: Loads one document. Takes the source and an `allow_duplicate_keys` keyword.
+
+    Returns:
+        A `Result` whose `ok` is True only when all three hold, and whose `summary` says
+        what the library did in each of the two runs.
+
+    Raises:
+        UnicodeDecodeError: The corpus file is not valid UTF-8.
+        OSError: The corpus file cannot be read.
     """
     path = CORPUS_DIR / "key-duplicate.yaml"
     source = read_corpus_file(path)
@@ -260,7 +377,16 @@ def check_duplicate_keys(load: Callable[..., Any]) -> Result:
 
 
 def unified(source: str, output: str, label: str = "ruamel") -> str:
-    """Unified diff with the invisible characters made visible."""
+    """Builds a unified diff with the invisible characters made visible.
+
+    Args:
+        source: The corpus file's text.
+        output: What the library wrote back.
+        label: The name for the right-hand file in the diff header.
+
+    Returns:
+        The diff as one string, empty when the two texts are equal.
+    """
     return "".join(
         difflib.unified_diff(
             [_visible(line) + "\n" for line in source.split("\n")],
@@ -273,7 +399,9 @@ def unified(source: str, output: str, label: str = "ruamel") -> str:
 
 
 def _visible(line: str) -> str:
-    """Markers, not backslash escapes: a literal TAB must not look like `\\t`."""
+    """One line with its invisible characters replaced by named markers."""
+    # Markers rather than backslash escapes, so a literal TAB in the file cannot be read
+    # as the two characters someone typed.
     return (
         line.replace("\r", "<CR>")
         .replace("\t", "<TAB>")
@@ -288,10 +416,12 @@ def _visible(line: str) -> str:
 
 
 def _comment_lines(text: str) -> int:
+    """Counts the lines that are nothing but a comment."""
     return sum(1 for line in text.split("\n") if line.lstrip().startswith("#"))
 
 
 def _eol_comments(text: str) -> int:
+    """Counts the lines that hold a `#` after something else."""
     return sum(
         1
         for line in text.split("\n")
@@ -300,10 +430,12 @@ def _eol_comments(text: str) -> int:
 
 
 def _blank_lines(text: str) -> int:
+    """Counts the blank lines, ignoring what follows the final line break."""
     return sum(1 for line in text.split("\n")[:-1] if not line.strip())
 
 
 def _blank_runs(text: str) -> int:
+    """Counts the runs of consecutive blank lines, so a moved gap is visible."""
     runs, in_run = 0, False
     for line in text.split("\n")[:-1]:
         blank = not line.strip()
@@ -313,7 +445,17 @@ def _blank_runs(text: str) -> int:
 
 
 def summarize(source: str, output: str) -> str:
-    """A one-line description of how *output* differs from *source*."""
+    """Describes in one line how the library's output differs from the source.
+
+    Args:
+        source: The corpus file's text.
+        output: What the library wrote back.
+
+    Returns:
+        Semicolon-separated notes: lost or moved comments, blank-line counts, document
+        markers, directives, anchors and aliases, re-indented sequences, line counts.
+        When fewer than two of those fire, the first differing line is quoted instead.
+    """
     notes: list[str] = []
 
     if source.startswith("\ufeff") and not output.startswith("\ufeff"):
@@ -389,7 +531,7 @@ def summarize(source: str, output: str) -> str:
 
 
 def _seq_indents(text: str) -> set[int]:
-    """The columns block-sequence dashes appear at."""
+    """The set of columns that block-sequence dashes appear at."""
     return {
         len(line) - len(line.lstrip(" "))
         for line in text.split("\n")
@@ -398,7 +540,7 @@ def _seq_indents(text: str) -> set[int]:
 
 
 def _first_change(src_lines: list[str], out_lines: list[str]) -> str:
-    """`-old / +new` for the first line that differs."""
+    """The old and the new text of the first line that differs."""
     for n, (old, new) in enumerate(zip(src_lines, out_lines, strict=False), start=1):
         if old != new:
             shared = len(os.path.commonprefix([_visible(old), _visible(new)]))
@@ -411,7 +553,7 @@ def _first_change(src_lines: list[str], out_lines: list[str]) -> str:
 
 
 def _clip(shown: str, start: int = 0, width: int = 44) -> str:
-    """A ``width``-wide window of *shown* around the first difference."""
+    """A window of `width` characters onto `shown`, with ellipses on the cut sides."""
     head = "..." if start else ""
     tail = "..." if len(shown) - start > width else ""
     return head + shown[start : start + width] + tail
@@ -423,7 +565,13 @@ def _clip(shown: str, start: int = 0, width: int = 44) -> str:
 
 
 def lint_corpus() -> list[str]:
-    """Problems with the corpus itself, independent of any YAML library."""
+    """Checks the corpus itself, independently of any YAML library.
+
+    Returns:
+        One line per problem: a file that is not valid UTF-8, a file whose first line is
+        not a `# covers:` comment, and the case of no corpus files at all. Empty when
+        the corpus is sound.
+    """
     problems = []
     for path in corpus_files():
         raw = path.read_bytes()
@@ -446,12 +594,13 @@ def lint_corpus() -> list[str]:
 
 
 def _mark(ok: bool) -> str:
+    """A table cell for one verdict, bolded when the answer is no."""
     return "yes" if ok else "**no**"
 
 
 def _table(rows: list[tuple[Result, Result]], notes_from: str = "yamluna") -> str:
-    """One row per corpus file: does ruamel round-trip it, does yamluna."""
-    width = max(len(r.name) for r, _ in rows) + 2  # the backticks around the name
+    """A markdown table, one row per corpus file: does ruamel round-trip it, does yamluna."""
+    width = max(len(r.name) for r, _ in rows) + 2  # room for the backticks around the name
     lines = [
         f"| {'corpus file':<{width}} | ruamel | yamluna | what {notes_from} changed |",
         f"| {'-' * width} | ------ | ------- | {'-' * (len(notes_from) + 13)} |",
@@ -467,7 +616,7 @@ def _table(rows: list[tuple[Result, Result]], notes_from: str = "yamluna") -> st
 
 
 def _behaviour_table(rows: list[tuple[Result, Result]]) -> str:
-    """The behaviour-scored files: what each library does, spelled out per library."""
+    """A markdown table for the behaviour-scored files, one row per library per file."""
     lines = [
         "| corpus file       | library | as specified | what it does |",
         "| ----------------- | ------- | ------------ | ------------ |",
@@ -483,20 +632,32 @@ def _behaviour_table(rows: list[tuple[Result, Result]]) -> str:
 
 
 def _yamluna_version() -> str:
+    """The installed yamluna version, or a note saying why there is none to report."""
     try:
         import yamluna
 
         return getattr(yamluna, "__version__", "(unknown version)")
-    except ImportError as exc:  # pragma: no cover -- only when the wheel is missing
+    except ImportError as exc:  # pragma: no cover: only when the wheel is missing
         return f"(not importable: {exc})"
 
 
 def main(argv: list[str]) -> int:
+    """Runs the corpus comparison and prints the tables.
+
+    Args:
+        argv: The command-line arguments after the script name. Flags are `--diff`,
+            `--ruamel` and `--seq-indent`; anything else is a corpus stem to measure on
+            its own, which turns diffs on.
+
+    Returns:
+        0 when the corpus itself is sound, 1 when `lint_corpus` found a problem, and 2
+        when a named corpus file does not exist. The score is printed, not returned.
+    """
     show_diffs = "--diff" in argv
     show_ruamel = "--ruamel" in argv
-    # ruamel emits one global indentation; `--seq-indent` measures the corpus
-    # again with the style most of it is written in, to separate "ruamel cannot
-    # keep this file's layout" from "ruamel was pointed at the other layout".
+    # ruamel emits one global indentation, so `--seq-indent` measures the corpus again
+    # with the style most of it is written in. That separates "ruamel cannot keep this
+    # file's layout" from "ruamel was pointed at the other layout".
     sequence, offset = (4, 2) if "--seq-indent" in argv else (2, 0)
     wanted = [a for a in argv if not a.startswith("-")]
 

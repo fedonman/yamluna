@@ -1,5 +1,11 @@
-//! One test per attachment rule of DESIGN §2.2, plus the ways they interact, plus the loader
-//! guarantees of DESIGN §2.3.
+//! One test per attachment rule, plus the ways the rules interact.
+//!
+//! The attachment rules decide which node a comment or a blank-line run hangs off, and that
+//! choice is what puts it back where it was on a dump. Each `rN_` test pins one rule:
+//! end-of-line comments (1), own-line comments and the column that picks the collection they
+//! close (2), blank-line runs (3), document leading and trailing trivia (4), anchors and
+//! aliases (5). The `x_` tests pin the cases where two rules meet. A failure here is a comment
+//! that will move in a dump, and the assertion names the slot it moved to.
 
 use yamluna_core::{Document, Node, NodeKind, Style, Trivia};
 
@@ -40,7 +46,7 @@ fn item<'a>(d: &'a Document, n: &Node, i: usize) -> &'a Node {
     d.node(items[i])
 }
 
-/// `own@4:# text`, `eol@4:# text` or `blank:2` — short enough to write out in an assertion.
+/// `own@4:# text`, `eol@4:# text` or `blank:2`, short enough to write out in an assertion.
 fn tv(t: &Trivia) -> String {
     match t {
         Trivia::Comment {
@@ -74,8 +80,9 @@ fn r1_an_eol_comment_belongs_to_the_value_not_the_key() {
 
 #[test]
 fn r1_an_eol_comment_after_a_key_whose_value_is_a_block_collection_is_the_values() {
-    // The comment follows the `:`, so it is the value's — even though the value's first child is
-    // on the next line. That is what lets the emitter write `k:` then the comment then the block.
+    // The comment follows the `:`, so it belongs to the value even though the value's first
+    // child is on the next line. That is what lets the emitter write `k:`, then the comment,
+    // then the block.
     let d = one("k:  # c\n  a: 1\n");
     let r = root(&d);
     assert_eq!(eol(key(&d, r, 0)), None);
@@ -143,9 +150,10 @@ fn r2_an_own_line_comment_leads_the_next_sibling() {
 fn r2_a_comment_before_a_collection_leads_the_collection() {
     let d = one("k:\n  # c\n  - a\n");
     let seq = val(&d, root(&d), 0);
-    // `inner`, not the first item's `before` that DESIGN 2.2 rule 2 asks for: the slots are
-    // written one after another so the bytes match either way. The gap is pinned by the
-    // `take_before()` xfails in `tests/test_mutation.py`.
+    // The comment lands in the collection's `inner` slot rather than the first item's
+    // `before`, where rule 2 puts it. The emitter writes the two slots one after the other, so
+    // the bytes match either way; the difference is pinned by the `take_before()` xfails in
+    // `tests/test_mutation.py`.
     assert_eq!(slot(&seq.trivia.inner), ["own@2:# c"]);
     assert!(seq.trivia.before.is_empty());
     assert!(item(&d, seq, 0).trivia.is_empty());

@@ -1,8 +1,8 @@
-"""The public API -- ``yamluna.YAML`` (DESIGN.md §4.2) and the package surface.
+"""Tests for the public API: the `yamluna.YAML` class and the names the package exports.
 
-Everything reachable without the Rust extension is tested unconditionally; the handful of
-cases that need the real pipeline take the ``pipeline`` fixture, which skips until
-``yamluna._yamluna``, ``yamluna.constructor`` and ``yamluna.representer`` all exist.
+Everything reachable without the Rust extension is tested unconditionally. The cases that
+need the real load and dump pipeline take the `pipeline` fixture, which skips until
+`yamluna._yamluna`, `yamluna.constructor` and `yamluna.representer` all exist.
 """
 
 from __future__ import annotations
@@ -22,13 +22,22 @@ EXTENSION_BUILT = importlib.util.find_spec('yamluna._yamluna') is not None
 
 @pytest.fixture
 def pipeline() -> None:
-    """Skip unless the whole load/dump path exists."""
+    """Skips the test unless the whole load and dump path exists."""
     for module in ('yamluna._yamluna', 'yamluna.constructor', 'yamluna.representer'):
         pytest.importorskip(module, reason=f'{module} does not exist yet: maturin develop')
 
 
 def klass(name: str, module: str) -> type:
-    """A class with a chosen ``__module__``, so registry paths are predictable."""
+    """Returns a new class with a chosen `__module__`, so registry paths are predictable.
+
+    Args:
+        name: The class name, which is also the default tag name.
+        module: The value for `__module__`, which is where the registry reads the source
+            from.
+
+    Returns:
+        The new class.
+    """
     return type(name, (), {'__module__': module})
 
 
@@ -59,7 +68,7 @@ def test_a_fresh_instance_decides_nothing() -> None:
     assert yaml.preserve_quotes is None
     assert yaml.default_flow_style is False
     assert yaml.width is None
-    assert yaml.explicit_start is None  # None = keep what the source had (DIVERGENCES B2)
+    assert yaml.explicit_start is None  # None keeps whatever the source document had
     assert yaml.explicit_end is None
     assert yaml.allow_duplicate_keys is False
     assert yaml.version is None
@@ -123,7 +132,7 @@ def test_a_version_that_is_not_major_minor_is_rejected(given: Any) -> None:
         YAML().version = given
 
 
-# -- the registry is per instance (DIVERGENCES C2) --------------------------------------
+# -- the registry is per instance ------------------------------------------------------
 
 
 def test_two_instances_register_the_same_tag_name_without_interfering() -> None:
@@ -212,8 +221,8 @@ def test_a_stream_that_cannot_be_read_says_so() -> None:
 
 
 def test_the_bom_survives_decoding() -> None:
-    # It is source text the round trip has to reproduce (corpus/text-bom.yaml); the
-    # loader is what strips it before scanning (DESIGN.md §2.3).
+    # The BOM is source text the round trip has to reproduce (tests/corpus/text-bom.yaml).
+    # Stripping it before the scanner sees it is the loader's job, not the decoder's.
     assert _decode(b'\xef\xbb\xbfa: 1\n') == '\ufeffa: 1\n'
     assert _decode(b'a: 1\n') == 'a: 1\n'
 
@@ -274,8 +283,8 @@ def test_the_context_manager_needs_an_output() -> None:
 
 
 def test_documents_are_collected_inside_the_block() -> None:
-    # Driven by hand rather than with a `with`, so the assertions land before __exit__
-    # reaches the emitter -- which is not built yet.
+    # Driven by hand rather than with a `with` block, so the assertions land before
+    # __exit__ reaches the emitter, which is not built yet.
     yaml = YAML(output=io.StringIO())
     yaml.__enter__()
     assert yaml.dump({'a': 1}) is None
@@ -390,12 +399,12 @@ def test_setting_version_forces_the_directive_and_the_marker() -> None:
     assert yaml.dump(yaml.load('a: 1\n')) == '%YAML 1.2\n---\na: 1\n'
 
 
-# -- documents with no root object (main.py, "Empty documents") -------------------------
+# -- documents with no root object -----------------------------------------------------
 
 
 @pytest.mark.usefixtures('pipeline')
 def test_a_comment_only_file_still_loads_as_none() -> None:
-    """`load` keeps ruamel's contract: no root node means `None`, carrier or not."""
+    """A document with no root node loads as `None`, whether or not it carries comments."""
     assert YAML().load('# nothing but this\n') is None
 
 
@@ -439,7 +448,7 @@ def test_a_none_with_no_record_is_still_a_null_document() -> None:
 
 @pytest.mark.usefixtures('pipeline')
 def test_dumping_an_empty_document_twice_is_a_fixed_point() -> None:
-    """A dump is a read: the record must not be consumed or mutated by emitting it (A8)."""
+    """A dump is a read: emitting the record must neither consume nor mutate it."""
     yaml = YAML()
     source = '---\n# the whole document\n'
     document = yaml.load(source)

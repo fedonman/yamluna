@@ -1,4 +1,4 @@
-//! The emitter (DESIGN §2.4): documents in, YAML text out.
+//! Writes a stream of documents back out as YAML text.
 //!
 //! # Two paths, kept apart
 //!
@@ -7,26 +7,27 @@
 //! source order. Emitting it is then bookkeeping rather than judgement: write the lexeme
 //! verbatim, at the recorded column, with the trivia back in their slots. Nothing in this path
 //! consults a style rule, a width or an indent option, which is what makes `load` → `dump`
-//! byte-identical (DESIGN §6.2) — a file that is never asked about is never reformatted.
+//! byte-identical. A file that is never asked about is never reformatted.
 //!
 //! **The layout path.** A node the user built or modified has no `raw` and no useful position.
 //! Only then do [`EmitOptions`] and [`mod@scalar`] decide anything: which quoting style a value
 //! can take, which column a key lands in, whether a flow collection is too wide for one line.
 //!
-//! The switch between them is one rule, applied per construct: *a recorded position is used only
-//! while the cursor is still on the line it names.* A model that matches its source never leaves
-//! that line, so the round trip is exact; a model that has been edited falls off it at the edit
-//! and the layout path takes over from there. The cursor also never jumps more than one line
-//! ([`layout`]), so a deleted entry closes up instead of leaving a hole.
+//! The switch between them is one rule, applied per construct: *a recorded position is used
+//! only while the cursor is still on the line it names.* A model that matches its source never
+//! leaves that line, so the round trip is exact; a model that has been edited falls off it at
+//! the edit and the layout path takes over from there. The cursor also never jumps more than
+//! one line ([`layout`]), so a deleted entry closes up instead of leaving a hole.
 //!
 //! # White space
 //!
 //! White space between two lexemes belongs to neither of them, and white space at the end of a
-//! line belongs to nothing at all, so the model records it beside the tree rather than on a node:
-//! `Document::line_space` holds every source line the writer cannot reproduce from a column alone
-//! — the ones with a TAB in them, and the ones with a trailing run — and
-//! [`Writer`](layout::Writer) echoes those verbatim while the model still matches the page. Every
-//! other line is plain spaces to a recorded column, which is what the writer produces anyway.
+//! line belongs to nothing at all, so the model records it beside the tree, on the document
+//! itself. `Document::line_space` holds every source line the writer cannot reproduce from a
+//! column alone: the ones with a TAB in them, and the ones with a trailing run.
+//! [`Writer`](layout::Writer) echoes those verbatim while the model still matches the page.
+//! Every other line is plain spaces to a recorded column, which is what the writer produces
+//! anyway.
 //!
 //! The gaps *inside* a construct are recorded on the construct: `Entry::colon` for a key's `:`,
 //! `Node::anchor_at` and `Node::tag_at` for the properties that sit ahead of a node, and
@@ -47,14 +48,15 @@ pub use scalar::{EmitError, ScalarAnalysis, ScalarContext, analyze, choose_style
 /// The line break an emitted stream is written with.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LineBreak {
-    /// Take it from the documents: `\r\n` if any lexeme spans lines with it, `\n` otherwise.
+    /// Taken from the documents: `\r\n` if any lexeme spans lines with it, `\n` otherwise.
     ///
-    /// The break between two lines is not a fact the model records, so this can only see the
-    /// breaks *inside* a lexeme — a block scalar, a folded quoted scalar, a multi-line plain
-    /// scalar. A CRLF file with no multi-line scalar in it therefore comes back with `\n`; set
-    /// [`LineBreak::CrLf`] explicitly for those.
-    // ponytail: inference from lexemes only, exact if the loader ever records the document's own
-    // break.
+    /// Only the breaks *inside* a lexeme are visible here: a block scalar, a folded quoted
+    /// scalar, a multi-line plain scalar. A CRLF file with no multi-line scalar in it therefore
+    /// comes back with `\n`; set [`LineBreak::CrLf`] explicitly for those.
+    // The break between two lines is not a fact the model records, so a lexeme is the only
+    // place one can be read off.
+    // ponytail: inference from lexemes only, exact if the loader ever records the document's
+    // own break.
     #[default]
     Auto,
     /// `\n`.
@@ -86,8 +88,8 @@ impl LineBreak {
 /// How to write a stream.
 ///
 /// Every one of these is consulted **only** where the source cannot answer: they lay out nodes
-/// the user built, and leave nodes the user did not touch exactly as they were found. The two
-/// exceptions are deliberate overrides — [`EmitOptions::explicit_start`],
+/// the user built, and leave nodes the user did not touch exactly as they were found. The
+/// exceptions are the three deliberate overrides. [`EmitOptions::explicit_start`],
 /// [`EmitOptions::explicit_end`] and [`EmitOptions::default_flow_style`] replace what the
 /// document had when they are `Some`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,13 +134,27 @@ impl Default for EmitOptions {
     }
 }
 
-/// Write a stream of documents.
+/// Writes a stream of documents as YAML text.
 ///
-/// For documents loaded and not modified this reproduces the source byte for byte, including its
-/// comments, blank lines, indentation, quoting, directives and byte-order mark (DESIGN §6.2).
+/// For documents loaded and not modified this reproduces the source byte for byte, including
+/// its comments, blank lines, indentation, quoting, directives and byte-order mark.
 ///
 /// # Errors
-/// [`EmitError`] if a scalar the user built cannot be written in the style it asks for.
+///
+/// Returns [`EmitError`] if a scalar the user built cannot be written in the style it asks for.
+///
+/// # Panics
+///
+/// Panics if a document refers to a [`NodeId`] that is not one of its own nodes.
+///
+/// # Examples
+///
+/// ```
+/// let docs = yamluna_core::parse("a: 1  # kept\n")?;
+/// let opts = yamluna_core::EmitOptions::default();
+/// assert_eq!(yamluna_core::emit(&docs, &opts)?, "a: 1  # kept\n");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn emit(docs: &[Document], opts: &EmitOptions) -> Result<String, EmitError> {
     let brk = opts.line_break.resolve(docs);
     let mut e = Emitter {
@@ -191,8 +207,8 @@ fn step(v: usize, fallback: u32) -> u32 {
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy, Debug)]
 struct Site {
-    /// The column this node's own lines begin at: a block sequence's `-`, a block mapping's keys.
-    /// Only a fallback for a node whose position the source still steers.
+    /// The column this node's own lines begin at: a block sequence's `-`, a block mapping's
+    /// keys. Only a fallback for a node whose position the source still steers.
     ind: u32,
     /// What introduces the node.
     lead: Lead,
@@ -209,7 +225,7 @@ struct Site {
 /// What comes immediately before a node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Lead {
-    /// Whatever the caller just wrote — a `:`, a `[`, a `,`.
+    /// Whatever the caller has just written: a `:`, a `[`, a `,`.
     Follows {
         /// The column to start a fresh line at, when one has to be started.
         at: u32,
@@ -257,8 +273,8 @@ struct Emitter<'a> {
     /// The node whose `&anchor` and tag [`Emitter::document`] has written already, because the
     /// source put them on the `---` line, ahead of the comment that ends it.
     headed: Option<NodeId>,
-    /// The node whose own run of trivia [`Emitter::flow_items`] has written already, because the
-    /// flow separation in front of it went back verbatim and that run was inside it.
+    /// The node whose own run of trivia [`Emitter::flow_items`] has written already, because
+    /// the flow separation in front of it went back verbatim and that run was inside it.
     ahead: Option<NodeId>,
 }
 
@@ -276,8 +292,8 @@ impl Emitter<'_> {
             self.w.fresh_line();
             self.w.push(raw);
         } else {
-            // `%TAG` lines sit on both sides of the `%YAML` line, and `tags_before_version` says
-            // how many of them were above it.
+            // `%TAG` lines sit on both sides of the `%YAML` line, and `tags_before_version`
+            // says how many of them were above it.
             let split = d.tags_before_version.min(d.tag_directives.len());
             let tag_line = |w: &mut Writer, t: &crate::node::TagDirective| {
                 w.fresh_line();
@@ -294,9 +310,10 @@ impl Emitter<'_> {
                 tag_line(&mut self.w, t);
             }
         }
-        // A directive line, or a second document that the one before it did not close, has to be
-        // introduced: `---` is not decoration there, it is what keeps the stream parseable. A
-        // region that holds nothing but `...` markers introduces nothing, so it forces no `---`.
+        // A directive line, or a second document that the one before it did not close, has to
+        // be introduced: `---` is not decoration there, it is what keeps the stream parseable.
+        // A region that holds nothing but `...` markers introduces nothing, so it forces no
+        // `---`.
         let start = self.o.explicit_start.unwrap_or(d.explicit_start)
             || force_start
             || d.version.is_some()
@@ -311,8 +328,8 @@ impl Emitter<'_> {
             }
         }
         // A comment ends its line, so a tag or an anchor the source wrote on the `---` line was
-        // written before it. Those go down here, ahead of the comment; `node` is told so it does
-        // not write them a second time.
+        // written before it. Those go down here, ahead of the comment; `node` is told so it
+        // does not write them a second time.
         let marker_line = self.w.line();
         self.headed = d.root.filter(|&r| {
             marker_comment.is_some()
@@ -357,7 +374,7 @@ impl Emitter<'_> {
 
     // ------------------------------------------------------------------ nodes
 
-    /// Write one node. Returns whether its end-of-line comment has been written, which only a
+    /// Writes one node. Returns whether its end-of-line comment has been written, which only a
     /// caller that passed `defer_eol` needs to know.
     fn node(&mut self, d: &Document, id: NodeId, site: Site) -> Result<bool, EmitError> {
         let n = d.node(id);
@@ -371,14 +388,14 @@ impl Emitter<'_> {
             n.style,
             Style::Scalar(ScalarStyle::Literal | ScalarStyle::Folded)
         ) && n.raw.is_some();
-        // A node the source never wrote stands at whatever token came next, so its position must
-        // not drag an anchor or a tag down a line with it.
+        // A node the source never wrote stands at whatever token came next, so its position
+        // must not drag an anchor or a tag down a line with it.
         let synthetic = is_empty_scalar(n);
         let is_value = matches!(site.lead, Lead::Follows { value: true, .. });
         let follows = matches!(site.lead, Lead::Follows { .. });
-        // A node with neither a lexeme nor a recorded position is one the user built. It is also
-        // the only way to tell a constructed document from a loaded one at line 0 column 0, where
-        // the two coincide.
+        // A node with neither a lexeme nor a recorded position is one the user built. It is
+        // also the only way to tell a constructed document from a loaded one at line 0 column
+        // 0, where the two coincide.
         if echo && !n.is_collection() && n.raw.is_none() && !placed(n.pos) {
             self.w.desync();
         }
@@ -387,9 +404,9 @@ impl Emitter<'_> {
         let compact = matches!(site.lead, Lead::Line { mark: Some(_), .. });
 
         let place = site.lead.place();
-        // The end-of-line comment of a node whose content starts further down belongs to the line
-        // the cursor is on now — the `key:` line. A block scalar's belongs on its header line,
-        // which `scalar` writes, because the `|` has to come first.
+        // The end-of-line comment of a node whose content starts further down belongs to the
+        // line the cursor is on now, the `key:` line. A block scalar's belongs on its header
+        // line, which `scalar` writes, because the `|` has to come first.
         let opening = |w: &Writer| {
             !block_scalar
                 && (block_coll || (is_value && echo && w.synced() && n.pos.line > w.line()))
@@ -430,7 +447,8 @@ impl Emitter<'_> {
                 self.w.push_char(ch);
                 // A comment ends its line, so an anchor or a tag the source wrote on the
                 // indicator's line came before it. A block collection's properties are written
-                // right here; every other node's are written below, so its trivia wait for them.
+                // right here; every other node's are written below, so its trivia wait for
+                // them.
                 if block_coll {
                     headed |= !pre_headed && self.head(n, place, echo, true);
                     trivia::run(&mut self.w, beside);
@@ -480,19 +498,19 @@ impl Emitter<'_> {
             trivia::eol(&mut self.w, n.trivia.eol.as_ref());
             eol_written = true;
         }
-        // A collection writes its own `after` once its children are done. A scalar's is only ever
-        // filled from the Python side -- `C_VALUE_POST` on a scalar-valued entry (DIVERGENCES D4)
-        // -- and was going nowhere, which is the store-then-silently-discard path this library
-        // exists to not have. Inside a flow collection there is no line below the value to put it
-        // on, so it stays with the collection.
+        // A collection writes its own `after` once its children are done. A scalar's is only
+        // ever filled from the Python side, by `C_VALUE_POST` on a scalar-valued entry, and in
+        // ruamel that comment is stored and then never written: the store-then-silently-discard
+        // path this library exists to not have. Inside a flow collection there is no line below
+        // the value to put it on, so it stays with the collection.
         if !n.is_collection() && !site.flow && !n.trivia.after.is_empty() {
             trivia::run(&mut self.w, &n.trivia.after);
         }
         Ok(eol_written)
     }
 
-    /// The `&anchor` and the tag, which sit ahead of the node — each at the line and column the
-    /// source put it at, which need be neither the node's nor each other's.
+    /// The `&anchor` and the tag, which sit ahead of the node, each at the line and column the
+    /// source put it at. Those need be neither the node's nor each other's.
     fn head(&mut self, n: &Node, place: Place, echo: bool, stay: bool) -> bool {
         if n.anchor.is_none() && n.tag.is_none() {
             return false;
@@ -501,11 +519,11 @@ impl Emitter<'_> {
         let mut first = true;
         let mut write = |w: &mut Writer, at: Option<Position>, text: String| {
             let at = at.filter(|_| echo && w.synced());
-            // A property travels down to the node's own line — except where the node's first line
-            // is the one the cursor is on already: a block collection opens on the `key:` line,
-            // and a block scalar's `|` header is about to be written here. A recorded line
-            // answers that question outright, and is the only thing that can say the source put
-            // the property on a line of its own (`key: &a` / ` !!map` / `  a: b`).
+            // A property travels down to the node's own line, except where the node's first
+            // line is the one the cursor is on already: a block collection opens on the `key:`
+            // line, and a block scalar's `|` header is about to be written here. A recorded
+            // line answers that question outright, and is the only thing that can say the
+            // source put the property on a line of its own (`key: &a` / ` !!map` / `  a: b`).
             let down = w.commented()
                 || match at {
                     Some(p) => p.line > w.line(),
@@ -555,8 +573,8 @@ impl Emitter<'_> {
             n.style,
             Style::Scalar(ScalarStyle::Literal | ScalarStyle::Folded)
         ) {
-            // `raw` is the header, the break that followed it and the body from column zero: the
-            // header goes where the cursor is, the body carries its own indentation.
+            // `raw` is the header, the break that followed it and the body from column zero:
+            // the header goes where the cursor is, the body carries its own indentation.
             self.block_scalar(n, raw, leading_blanks, echo);
             return Ok(true);
         }
@@ -571,12 +589,13 @@ impl Emitter<'_> {
         Ok(false)
     }
 
-    /// A block scalar, from its own lexeme or from freshly rendered text. Its end-of-line comment
-    /// belongs on the header line, which is why this is not just a `push`.
+    /// A block scalar, from its own lexeme or from freshly rendered text. Its end-of-line
+    /// comment belongs on the header line, which is why this is not a plain `push`.
     fn block_scalar(&mut self, n: &Node, text: &str, leading_blanks: &[Trivia], echo: bool) {
         let (header, body) = split_first_break(text);
-        // The header sits where the source put it, which need not be where the node's properties
-        // ended: `!foo` on one line and `>1` on the next is two lexemes, not one run.
+        // The header sits where the source put it, which need not be where the node's
+        // properties ended: `!foo` on one line and `>1` on the next is two lexemes, not one
+        // run.
         let at = n.header_at.filter(|_| echo && self.w.synced());
         // A comment owns the rest of its line: a header written onto it would be swallowed, and
         // the body below would then be read as a document of its own.
@@ -586,9 +605,9 @@ impl Emitter<'_> {
         self.w.at(at, true, echo);
         self.w.push(header);
         trivia::eol(&mut self.w, n.trivia.eol.as_ref());
-        // Empty lines between the header and the first content line are the scalar's own leading
-        // content; the loader sees only the lines the span covers and files them as trivia, so
-        // they go back inside here.
+        // Empty lines between the header and the first content line are the scalar's own
+        // leading content; the loader sees only the lines the span covers and files them as
+        // trivia, so they go back inside here.
         for t in leading_blanks {
             if let Trivia::BlankLines(k) = t {
                 for _ in 0..*k {
@@ -599,7 +618,7 @@ impl Emitter<'_> {
         self.w.push(body);
     }
 
-    /// A scalar the user built: the only place a style is chosen (DESIGN §2.4).
+    /// A scalar the user built: the only place a style is chosen.
     fn new_scalar(
         &mut self,
         n: &Node,
@@ -620,16 +639,17 @@ impl Emitter<'_> {
             line_break: self.brk,
             allow_unicode: self.o.allow_unicode,
         };
-        // A block style is what the value *is* (`LiteralScalarString`), not how it is quoted, so
-        // it is asked for either way; a quoting style is only asked for under `preserve_quotes`.
+        // A block style is what the value *is* (`LiteralScalarString`), not how it is quoted,
+        // so it is asked for either way; a quoting style is only asked for under
+        // `preserve_quotes`.
         let requested = match n.style {
             Style::Scalar(s @ (ScalarStyle::Literal | ScalarStyle::Folded)) => Some(s),
             Style::Scalar(s) if self.o.preserve_quotes => Some(s),
             _ => None,
         };
         // An explicit plain style is a statement about the value's *type*: a node holding the
-        // integer 1 asks for `1`, not `'1'`. `choose_style` cannot know that — it refuses a
-        // plain `1` because for a string that would read back as an integer — so an asked-for
+        // integer 1 asks for `1`, not `'1'`. `choose_style` cannot know that; it refuses a
+        // plain `1` because for a string that would read back as an integer. So an asked-for
         // plain style is honoured whenever it is syntactically writable here, and falls back to
         // the ladder when it is not.
         let style = if matches!(n.style, Style::Scalar(ScalarStyle::Plain))
@@ -789,8 +809,9 @@ impl Emitter<'_> {
         Ok(())
     }
 
-    /// The `:` of an entry, in the column the source put it in. An alias key needs a space of its
-    /// own when the source did not record one: `*a:` would scan the `:` as part of the anchor.
+    /// The `:` of an entry, in the column the source put it in. An alias key needs a space of
+    /// its own when the source did not record one: `*a:` would scan the `:` as part of the
+    /// anchor.
     fn colon(&mut self, key: &Node, at: Option<Position>, echo: bool) {
         let usable = at.filter(|_| echo && self.w.synced());
         if self.w.commented() || usable.is_some_and(|p| p.line > self.w.line()) {
@@ -801,7 +822,8 @@ impl Emitter<'_> {
         self.w.push_char(':');
     }
 
-    /// A `,` between two of a flow collection's lexemes. Nothing may share a line with a comment.
+    /// A `,` between two of a flow collection's lexemes. Nothing may share a line with a
+    /// comment.
     fn comma(&mut self) {
         if self.w.commented() {
             self.w.fresh_line();
@@ -809,19 +831,19 @@ impl Emitter<'_> {
         self.w.push_char(',');
     }
 
-    /// Echo verbatim what the source put between two of a flow collection's lexemes, with the
+    /// Echoes verbatim what the source put between two of a flow collection's lexemes, with the
     /// comments it held written back into the places it marked for them.
     ///
-    /// A run goes back as written -- punctuation, white space and all -- which is what tells
+    /// A run goes back as written, punctuation and white space and all, which is what tells
     /// `[1, 2]` from `[1, 2, ]` from `[ 1 , 2 ]` and remembers that the gap in `[a\t, b]` was a
     /// TAB. Its comments are not in it: their text lives in the trivia slots, where the Python
-    /// side can edit it, and the run carries a bare `#` where each one stood. Writing the run in
-    /// the pieces between those marks puts a comment back at the exact column the source gave it
-    /// and leaves the `,` on whichever side of it the source wrote it.
+    /// side can edit it, and the run carries a bare `#` where each one stood. Writing the run
+    /// in the pieces between those marks puts a comment back at the exact column the source
+    /// gave it and leaves the `,` on whichever side of it the source wrote it.
     ///
-    /// `head` is a comment that may or may not belong to this gap -- a flow collection's
-    /// end-of-line comment sits either after its `[` or after its `]`, one slot for two places --
-    /// and `rest` are the ones that certainly do, in source order. The marks settle it: a run
+    /// `head` is a comment that may or may not belong to this gap, because a flow collection's
+    /// end-of-line comment sits either after its `[` or after its `]`, one slot for two places.
+    /// `rest` are the ones that certainly do, in source order. The marks settle it: a run
     /// records one per comment it really held, so a count that does not add up either way means
     /// the run no longer describes this gap and nothing is echoed. Returns `None` then, and
     /// otherwise whether `head` was used.
@@ -838,15 +860,15 @@ impl Emitter<'_> {
         let r = run.filter(|_| !spread)?;
         // A run is the source's own text, and the source stops describing this page the moment
         // something does not land where the model said it would: a document rebuilt from nodes
-        // the user made still carries the runs it was loaded with, and echoing them there writes
-        // punctuation for lexemes that are no longer being written.
+        // the user made still carries the runs it was loaded with, and echoing them there
+        // writes punctuation for lexemes that are no longer being written.
         if self.w.commented() || !self.w.synced() {
             return None;
         }
         let marks = r.matches('#').count();
-        // A comment owns the rest of its line, so the source's own break follows every mark. One
-        // that does not is a run some edit has been through, and echoing it would put a lexeme
-        // inside a comment.
+        // A comment owns the rest of its line, so the source's own break follows every mark.
+        // One that does not is a run some edit has been through, and echoing it would put a
+        // lexeme inside a comment.
         if !r.split('#').skip(1).all(|p| p.starts_with(['\n', '\r'])) {
             return None;
         }
@@ -902,10 +924,10 @@ impl Emitter<'_> {
     /// The run the source wrote in the `i`-th gap of a flow collection, while the source is
     /// still steering.
     ///
-    /// A run stops describing this page the moment the emitter stops landing where the model says
-    /// it should -- a document rebuilt from nodes the user made carries the runs it was loaded
-    /// with, and the lexemes those runs punctuate are no longer the ones being written. From the
-    /// first thing that does not land, the layout answers for every gap.
+    /// A run stops describing this page the moment the emitter stops landing where the model
+    /// says it should. A document rebuilt from nodes the user made carries the runs it was
+    /// loaded with, and the lexemes those runs punctuate are no longer the ones being written.
+    /// From the first thing that does not land, the layout answers for every gap.
     fn recorded<'s>(&self, seps: Option<&'s [String]>, i: usize) -> Option<&'s str> {
         seps.filter(|_| self.w.synced())
             .and_then(|s| s.get(i))
@@ -926,13 +948,13 @@ impl Emitter<'_> {
     ) -> Result<bool, EmitError> {
         let map = matches!(n.kind, NodeKind::Mapping { .. });
         // What the source wrote between the lexemes, while the source is still steering. A
-        // collection the user built recorded nothing, and one an insertion or a deletion has been
-        // through no longer has one run per gap; the layout answers for both.
-        // `[a: 1]`, `[? a : b]`, `[&c c: d]`: a single pair written with no brackets of its own.
-        // The loader records one run per child for it and one *more* than that for everything
-        // else, because a bracket-less pair has no closing bracket to separate from -- the `,`
-        // after it belongs to the collection that holds it. A mapping's children always come in
-        // pairs, so a braced collection whose runs went stale cannot pass for one.
+        // collection the user built recorded nothing, and one an insertion or a deletion has
+        // been through no longer has one run per gap; the layout answers for both. `[a: 1]`,
+        // `[? a : b]`, `[&c c: d]`: a single pair written with no brackets of its own. The
+        // loader records one run per child for it and one *more* than that for everything else,
+        // because a bracket-less pair has no closing bracket to separate from: the `,` after it
+        // belongs to the collection that holds it. A mapping's children always come in pairs,
+        // so a braced collection whose runs went stale cannot pass for one.
         let unbraced = map && !children.is_empty() && n.flow_seps.len() == children.len();
         let seps = (echo && (unbraced || n.flow_seps.len() == children.len() + 1))
             .then_some(&n.flow_seps[..]);
@@ -944,12 +966,12 @@ impl Emitter<'_> {
         let open = self.w.line();
         let content = ind.max(home + self.map_ind);
         // Whether the collection's own end-of-line comment turned out to be the one the source
-        // wrote after its `[`, and has gone down there. The other thing that slot can hold is the
-        // comment after the `]`, which is not this collection's business but its caller's.
+        // wrote after its `[`, and has gone down there. The other thing that slot can hold is
+        // the comment after the `]`, which is not this collection's business but its caller's.
         let mut opened = false;
 
-        // `chunks(2)` walks the same pairs `entries` holds, in the same order, so the `:` of the
-        // n-th chunk is the `:` of the n-th entry.
+        // `chunks(2)` walks the same pairs `entries` holds, in the same order, so the `:` of
+        // the n-th chunk is the `:` of the n-th entry.
         let entries: &[Entry] = match &n.kind {
             NodeKind::Mapping { entries } => entries,
             _ => &[],
@@ -957,11 +979,11 @@ impl Emitter<'_> {
         let step = if map { 2 } else { 1 };
         // The lexeme whose end-of-line comment is waiting for the `,` that follows it.
         let mut pending: Option<NodeId> = None;
-        // Whether the last thing written left the cursor short of where the source is: a run that
-        // could not be echoed still owes its line break, and the node after it normally pays that
-        // by placing itself -- but a value the parser supplied writes nothing and places nothing.
-        // The run in front of the closing bracket is then no longer measured from where the cursor
-        // is, and the layout has to answer for the bracket instead.
+        // Whether the last thing written left the cursor short of where the source is: a run
+        // that could not be echoed still owes its line break, and the node after it normally
+        // pays that by placing itself. A value the parser supplied writes nothing and places
+        // nothing. The run in front of the closing bracket is then no longer measured from
+        // where the cursor is, and the layout has to answer for the bracket instead.
         let mut stale = false;
         for (chunk, pair) in children.chunks(step).enumerate() {
             let i = chunk * step;
@@ -969,7 +991,7 @@ impl Emitter<'_> {
             // before.
             let mut spaced = false;
             // Everything the source wrote in this gap: the end-of-line comment of the lexeme
-            // before it, then -- for the first gap -- what stands between the `[` and the first
+            // before it, then, for the first gap, what stands between the `[` and the first
             // child, then the run of own-line trivia the child itself carries.
             let first = *pair.first().expect("chunks are never empty");
             let gap: Vec<&Trivia> = pending
@@ -1031,10 +1053,10 @@ impl Emitter<'_> {
                 continue;
             }
             let key = pair[0];
-            // `{a: 1, b}`: a key the source wrote with no `:` and no value -- the run where the
-            // `:` would be holds none. The parser supplied the value, and writing it back would
-            // invent a `:` — unless it has picked up trivia of its own, which must not be dropped
-            // to save the two characters.
+            // `{a: 1, b}`: a key the source wrote with no `:` and no value, so the run where
+            // the `:` would be holds none. The parser supplied the value, and writing it back
+            // would invent a `:`, unless it has picked up trivia of its own, which must not be
+            // dropped to save the two characters.
             let bare = pair.len() == 1
                 || (self.recorded(seps, i + 1).is_some_and(|r| !r.contains(':'))
                     && is_absent(d.node(last))
@@ -1046,14 +1068,14 @@ impl Emitter<'_> {
             if pair.len() == 1 {
                 continue;
             }
-            // Where the `:` goes — or, for a bare key, the separation the source wrote in its
+            // Where the `:` goes, or, for a bare key, the separation the source wrote in its
             // place, which is where the `,` of the next entry lives.
             let colon = entries.get(chunk).and_then(|e| e.colon);
             let mut value_sep = false;
             // The key's end-of-line comment, then the value's own run. The value's *own*
-            // end-of-line comment can also be in here -- `{k: # c` over `  v}` puts it on the
-            // key's line -- but the caller writes that one from `pending` in the gap after the
-            // value, so a run that holds it will not add up here and is left alone.
+            // end-of-line comment can also be in here, since `{k: # c` over `  v}` puts it on
+            // the key's line, but the caller writes that one from `pending` in the gap after
+            // the value, so a run that holds it will not add up here and is left alone.
             let gap: Vec<&Trivia> = pending
                 .and_then(|p| d.node(p).trivia.eol.as_ref())
                 .into_iter()
@@ -1112,8 +1134,8 @@ impl Emitter<'_> {
 
         // The gap in front of the closing bracket. A trailing `,` is the source's business, not
         // the layout's: whether one was written is part of the run. Only a collection with no
-        // recorded separation falls back to the spelling most files use — a comma when the closing
-        // bracket takes a line of its own.
+        // recorded separation falls back to the spelling most files use, which is a comma when
+        // the closing bracket takes a line of its own.
         let tail = children.len();
         let gap: Vec<&Trivia> = pending
             .and_then(|p| d.node(p).trivia.eol.as_ref())
@@ -1146,11 +1168,11 @@ impl Emitter<'_> {
         Ok(opened)
     }
 
-    /// Move the cursor to where a flow collection's closing bracket goes, when the separation in
-    /// front of it was not echoed verbatim.
+    /// Moves the cursor to where a flow collection's closing bracket goes, when the separation
+    /// in front of it was not echoed verbatim.
     ///
     /// A collection whose content took more than one line closes on a line of its own, whatever
-    /// else is known — that is what keeps the bracket off the end of the last item, and it holds
+    /// else is known. That is what keeps the bracket off the end of the last item, and it holds
     /// even for a tree that has stopped matching its source. The column is then whatever the
     /// recorded run left after its last break, or the indentation of the line that opened the
     /// collection.
@@ -1189,8 +1211,10 @@ fn render_tag(t: &NodeTag) -> String {
     }
 }
 
-/// Percent-escape the characters a tag suffix may not spell literally. The scanner decodes `%21`
-/// to `!` on the way in, so writing the decoded text back produces a tag that does not re-parse.
+/// Percent-escapes the characters a tag suffix may not spell literally.
+///
+/// The scanner decodes `%21` to `!` on the way in, so writing the decoded text back would
+/// produce a tag that does not re-parse.
 fn escape_tag(suffix: &str) -> String {
     let mut out = String::with_capacity(suffix.len());
     for c in suffix.chars() {
@@ -1204,25 +1228,26 @@ fn escape_tag(suffix: &str) -> String {
     out
 }
 
-/// Whether the source wrote its value hard against the `:` (`"a":b`), which is the one place the
-/// separation a `:` normally needs is not written.
+/// Whether the source wrote its value hard against the `:` (`"a":b`), which is the one place
+/// the separation a `:` normally needs is not written.
 fn adjacent(colon: Option<Position>, value: Position, echo: bool) -> bool {
     echo && colon.is_some_and(|c| c.line == value.line && c.col + 1 == value.col)
 }
 
-/// A scalar with no text: `key:` with nothing after it. The parser gives it the span of whatever
-/// token came next, so its position says where the *document* goes on, not where it goes.
+/// A scalar with no text: `key:` with nothing after it. The parser gives it the span of
+/// whatever token came next, so its position says where the *document* goes on, not where it
+/// goes.
 fn is_empty_scalar(n: &Node) -> bool {
     matches!(n.kind, NodeKind::Scalar) && n.raw.as_deref() == Some("")
 }
 
-/// A node that stands for something the source did not write at all: the value of a `? key` with
-/// no `: value` line under it. An anchor or a tag means the source did write something.
+/// A node that stands for something the source did not write at all: the value of a `? key`
+/// with no `: value` line under it. An anchor or a tag means the source did write something.
 fn is_absent(n: &Node) -> bool {
     is_empty_scalar(n) && n.anchor.is_none() && n.tag.is_none()
 }
 
-/// Split a block scalar's lexeme into its header and everything from the break onwards.
+/// Splits a block scalar's lexeme into its header and everything from the break onwards.
 fn split_first_break(raw: &str) -> (&str, &str) {
     match raw.find(['\r', '\n']) {
         Some(i) => raw.split_at(i),
@@ -1235,7 +1260,7 @@ mod tests {
     use super::{EmitOptions, LineBreak, ScalarStyle, emit};
     use crate::parse;
 
-    /// Load and dump with the defaults.
+    /// Loads and dumps with the defaults.
     fn round(src: &str) -> String {
         let docs = parse(src).unwrap_or_else(|e| panic!("{src:?}: {e}"));
         emit(&docs, &EmitOptions::default()).expect("emit")
@@ -1277,8 +1302,8 @@ mod tests {
     }
 
     /// A single pair inside a flow sequence writes no brackets of its own, and whatever
-    /// introduces it -- a `?`, its own anchor or tag, a bracketed key -- must not be mistaken
-    /// for one. The pair records one separation run per child where everything else records one
+    /// introduces it (a `?`, its own anchor or tag, a bracketed key) must not be mistaken for
+    /// one. The pair records one separation run per child where everything else records one
     /// more, and that length is what the emitter reads it back from.
     #[test]
     fn a_flow_pair_that_wrote_no_brackets_gets_none_back() {
@@ -1308,9 +1333,9 @@ mod tests {
         exact("a: [\n  one,\n  two,\n]\n");
     }
 
-    /// Where a flow collection's commas, brackets and `:` went is recorded, not guessed: each of
-    /// these has a sibling that spells the same thing the other way, and only a recorded fact can
-    /// tell the two apart.
+    /// Where a flow collection's commas, brackets and `:` went is recorded, not guessed: each
+    /// of these has a sibling that spells the same thing the other way, and only a recorded
+    /// fact can tell the two apart.
     #[test]
     fn flow_punctuation_is_reproduced() {
         exact("a: [1, 2, 3, ]\n");

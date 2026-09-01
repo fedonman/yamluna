@@ -1,0 +1,56 @@
+name: docs
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+# One deploy at a time, and never cancel one that is already publishing.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    name: zensical build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/configure-pages@v5
+      - run: uv venv --python 3.13
+      # `mkdocstrings[python]` is not optional: docs/api/*.md are `:::` directives, and
+      # without the handler every page under "API reference" renders as an empty page.
+      - run: uv pip install zensical 'mkdocstrings[python]'
+      # The site does not import yamluna; the handler reads `python/` statically, per
+      # `handlers.python.paths` in zensical.toml. So no Rust toolchain and no build here.
+      - run: .venv/bin/zensical build --clean 2>&1 | tee build.log
+        shell: bash
+      # `zensical build` exits 0 even when it reports a broken internal link, and a clean
+      # build prints "No issues found", so match the counted form rather than the bare word.
+      # (`zensical build --strict` aborts on the first warning; this reports the whole list.)
+      - name: fail on build issues
+        run: |
+          if grep -qE '[0-9]+ issues? found' build.log; then
+            grep -E 'Warning|issues? found' build.log
+            exit 1
+          fi
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

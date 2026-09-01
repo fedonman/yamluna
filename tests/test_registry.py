@@ -1,6 +1,10 @@
-"""Tag registry — DESIGN.md §5.
+"""Tests for the tag registry: registration, source promotion, wire format and loading.
 
-Run: PYTHONPATH=python .venv/bin/pytest tests/test_registry.py
+Nothing here needs the Rust extension.
+
+```sh
+PYTHONPATH=python .venv/bin/pytest tests/test_registry.py
+```
 """
 
 import re
@@ -10,7 +14,17 @@ from yamluna.registry import ConstructorError, TagDirective, TagRegistry
 
 
 def cls_in(module: str, name: str, qualname: str | None = None, **attrs: object) -> type:
-    """A class that claims to live in `module` — no fixture packages on disk."""
+    """Returns a class that claims to live in `module`, with no package on disk.
+
+    Args:
+        module: The value for `__module__`. The registry takes the source from it.
+        name: The class name, which is also the default tag name.
+        qualname: The value for `__qualname__`. Defaults to `name`.
+        attrs: Class attributes, such as `yaml_tag` or `yaml_source`.
+
+    Returns:
+        The new class.
+    """
     made = type(name, (), dict(attrs))
     made.__module__ = module
     made.__qualname__ = qualname or name
@@ -20,7 +34,7 @@ def cls_in(module: str, name: str, qualname: str | None = None, **attrs: object)
 HANDLE = re.compile(r"^!([A-Za-z0-9-]+!)?$")  # what YAML actually allows
 
 
-# -- §5.3 wire format ------------------------------------------------------------
+# -- wire format -----------------------------------------------------------------
 
 
 def test_single_source_gets_the_bare_primary_handle():
@@ -78,7 +92,7 @@ def test_most_used_source_wins_the_primary_handle():
     assert plan.tags == {x: "!libx!Circuit", y: "!Circuit"}
 
 
-# -- §5.2 promotion --------------------------------------------------------------
+# -- source promotion ------------------------------------------------------------
 
 
 def test_two_modules_of_one_library_promote_to_full_module_paths():
@@ -144,7 +158,7 @@ def test_explicit_tag_overrides_the_class_name():
     assert reg.resolve("!Circuit") is None
 
 
-# -- §5.4 loading ----------------------------------------------------------------
+# -- loading ---------------------------------------------------------------------
 
 
 def test_bare_tag_with_one_candidate_resolves():
@@ -199,10 +213,10 @@ def test_tag_in_our_namespace_with_no_registration_is_an_error():
 def test_a_namespace_nothing_is_registered_in_is_not_ours():
     """A `%TAG ! tag:libx/` file loaded by a `YAML()` that has never heard of `libx`.
 
-    5.4.1 refuses to guess *within* a source this registry knows -- `!Ghost` beside a
-    registered `tag:libx/Circuit` is a typo, and the test above pins that.  A source it has
-    never heard of is somebody else's document, and 5.4.3 says that round-trips untouched;
-    `corpus/tag-unregistered.yaml` is the file this exists for.
+    Within a source this registry does know, an unmatched name is a typo and raises, which
+    is what the test above pins: `!Ghost` sits beside a registered `tag:libx/Circuit`. A
+    source it has never heard of is somebody else's document, so the tag round-trips
+    untouched. The file this exists for is `tests/corpus/tag-unregistered.yaml`.
     """
     empty = TagRegistry()
     assert empty.resolve("!Circuit", [("!", "tag:libx/")]) is None
@@ -317,7 +331,7 @@ def test_decorator_form_returns_the_class():
     assert reg.resolve("!Circuit").cls is Circuit
 
 
-# -- §5.3 handle sanitisation ----------------------------------------------------
+# -- handle sanitisation ---------------------------------------------------------
 
 
 def test_handles_are_sanitised_to_legal_yaml():

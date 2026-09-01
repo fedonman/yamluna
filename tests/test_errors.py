@@ -1,6 +1,14 @@
-"""yamluna.error: hierarchy, char-offset marks, snippets.
+"""`yamluna.error`: the exception hierarchy, char-offset marks, and snippets.
 
-Run: PYTHONPATH=python .venv/bin/pytest tests/test_errors.py
+The mark tests are written against ruamel's own `StringMark` wherever the rendering is
+meant to match, so a drift in the snippet or in `str(error)` shows up here rather than in
+a user's traceback.
+
+Run:
+
+```bash
+PYTHONPATH=python .venv/bin/pytest tests/test_errors.py
+```
 """
 
 import warnings
@@ -27,11 +35,12 @@ from yamluna.error import (
 )
 
 ASCII = 'first: 1\nsecond: two\nthird: 3\n'
-# 'é' is 2 bytes, '☕' 3, '😀' 4: any byte-offset arithmetic goes wrong from line 0 on.
+# 'é' is 2 bytes, '☕' 3 and '😀' 4, so byte-offset arithmetic goes wrong from line 0 on.
 UNICODE = 'café: ☕\nemoji: 😀 tail\nlast: ok\n'
 
 
 def test_hierarchy():
+    """Every error class sits where ruamel puts its namesake."""
     for cls in (
         ScannerError,
         ParserError,
@@ -43,7 +52,7 @@ def test_hierarchy():
     ):
         assert issubclass(cls, MarkedYAMLError)
         assert issubclass(cls, YAMLError)
-    # ruamel puts YAMLStreamError beside YAMLError, not under it.
+    # ruamel puts YAMLStreamError beside YAMLError rather than under it.
     assert not issubclass(YAMLStreamError, YAMLError)
     assert issubclass(DuplicateKeyFutureWarning, Warning)
     assert issubclass(YAMLWarning, Warning)
@@ -51,7 +60,8 @@ def test_hierarchy():
 
 
 def test_snippet_ascii():
-    #                       line 1, column 8 -> the 'w' of "two"
+    """The caret lands under the character the line and column name."""
+    # Line 1, column 8 is the `w` of "two".
     m = Mark('doc.yaml', None, 1, 8, ASCII)
     assert m.index == ASCII.index('two')
     assert m.get_snippet() == '    second: two\n            ^ (line: 2)'
@@ -73,36 +83,40 @@ def test_matches_ruamel_mark(text, line, column):
 
 
 def test_snippet_multibyte_is_char_indexed():
-    # column 7 on line 1 is the emoji itself.
+    """A line holding multi-byte characters still points at the character asked for."""
+    # Column 7 on line 1 is the emoji itself.
     m = Mark('u.yaml', None, 1, 7, UNICODE)
     assert UNICODE[m.pointer] == '😀'
     first, caret = m.get_snippet().split('\n')
     assert first == '    emoji: 😀 tail'
     assert caret == ' ' * 11 + '^ (line: 2)'
-    # the same position expressed in bytes points somewhere else entirely
+    # The same position expressed in bytes points somewhere else entirely.
     assert len(UNICODE[: m.index].encode()) != m.index
 
 
 def test_explicit_index_must_be_char_offset():
-    # what the Rust side sends: a char offset. Byte offsets slice mid-character.
+    """An index handed in has to be a char offset, which is what the Rust side sends."""
+    # A byte offset slices mid-character, so the snippet and the caret both go wrong.
     char_index = UNICODE.index('😀')
     byte_index = len(UNICODE[:char_index].encode())
     assert byte_index > char_index
     good = Mark('u.yaml', char_index, 1, 7, UNICODE)
     assert good.get_snippet().splitlines()[0] == '    emoji: 😀 tail'
-    # a byte offset points at a different character, and the caret lands off target
+    # A byte offset points at a different character, and the caret lands off target.
     bad = Mark('u.yaml', byte_index, 1, 7, UNICODE)
     assert UNICODE[bad.pointer] != '😀'
     assert bad.get_snippet() != good.get_snippet()
 
 
 def test_first_line():
+    """Line 0, column 0 is index 0, and the snippet is the first line."""
     m = Mark('u.yaml', None, 0, 0, UNICODE)
     assert m.index == 0
     assert m.get_snippet() == '    café: ☕\n    ^ (line: 1)'
 
 
 def test_last_line():
+    """A mark on the last line works, and so does one character past the last."""
     text = 'a: 1\nb: 2'  # no trailing newline
     m = Mark('u.yaml', None, 1, 3, text)
     assert m.index == len(text) - 1

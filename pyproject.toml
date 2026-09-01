@@ -24,6 +24,9 @@ Repository = "https://github.com/qilimanjaro-tech/yamluna"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruamel.yaml==0.19.1", "maturin>=1.7,<2", "ruff", "mypy"]
+# The documentation site. `mkdocstrings[python]` is what renders docs/api/*.md;
+# without it those pages build clean and come out empty.
+docs = ["zensical", "mkdocstrings[python]"]
 
 [tool.maturin]
 manifest-path = "crates/yamluna-py/Cargo.toml"
@@ -41,8 +44,8 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
-# `__slots__` order is load-bearing: `_record.py` is the FFI record layout (DESIGN.md §3)
-# and `Mark`/`Anchor` slots are read positionally.  Sorting them alphabetically is wrong.
+# `__slots__` order is the FFI record layout and is read positionally, so sorting the slots
+# of `_record.py`'s classes alphabetically is wrong.
 ignore = ["RUF023"]
 
 [tool.ruff.lint.per-file-ignores]

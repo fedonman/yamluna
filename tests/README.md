@@ -1,14 +1,15 @@
 # yamluna acceptance harness
 
-This directory is the adjudicator. `docs/DESIGN.md` §6 defines acceptance; everything here
-measures it. When a design question comes up ("should the emitter normalise this?"), the answer
-is whichever choice keeps the corpus byte-identical.
+This directory is the adjudicator. The
+[design contract](https://qilimanjaro-tech.github.io/yamluna/internals/) §6 defines acceptance;
+everything here measures it. When a design question comes up ("should the emitter normalise
+this?"), the answer is whichever choice keeps the corpus byte-identical.
 
 ```
 corpus/                  41 hand-written YAML files, one concern each
 conftest.py              corpus discovery + the single yamluna seam
 differential.py          ruamel.yaml 0.19.1 and yamluna, scored side by side
-test_roundtrip.py        DESIGN 6.2 end to end: dump(load(text)) == text
+test_roundtrip.py        §6.2 end to end: dump(load(text)) == text
 test_suite_roundtrip.py  the same, over yaml-test-suite, through the Python API
 suite_roundtrip.py       that score interactively, with a diff per failing case
 ```
@@ -20,9 +21,9 @@ stack, so quoting one of them as "the" score is quoting the wrong thing:
 
 | what round-trips | over | score | command |
 |---|---|---|---|
-| the Python API — `YAML().load` → `.dump` | `tests/corpus/` | **40 / 40** (of 41 files; `key-duplicate` is scored on behaviour, below) | `python tests/differential.py` |
-| the Rust core — `parse` → `emit` | `yaml-test-suite` | **308 / 308** | `cargo test -p yamluna-core --test proptest_roundtrip` |
-| the Python API — `YAML().load_all` → `.dump_all` | `yaml-test-suite` | **306 / 308** | `python tests/suite_roundtrip.py` |
+| the Python API, `YAML().load` → `.dump` | `tests/corpus/` | **40 / 40** (of 41 files; `key-duplicate` is scored on behaviour, below) | `python tests/differential.py` |
+| the Rust core, `parse` → `emit` | `yaml-test-suite` | **308 / 308** | `cargo test -p yamluna-core --test proptest_roundtrip` |
+| the Python API, `YAML().load_all` → `.dump_all` | `yaml-test-suite` | **306 / 308** | `python tests/suite_roundtrip.py` |
 
 The corpus is what the library is *for*; the suite is what YAML *is*. The second row is
 **every case the suite has**: the Rust core lost six of them until this commit and loses none
@@ -30,8 +31,8 @@ now. The gap between the second and third rows is **two cases**, and both are th
 object model (`2JQS`, `X38W` below) rather than the FFI seam: the seam carries every
 recorded fact, and `test_the_record_seam_loses_nothing_over_the_suite` is the gate that keeps
 it that way over all 308. When a recorded fact stops crossing, that gate fails first and names
-the case — which is the failure DESIGN §2.5 is about, and the one that cost 100 cases at
-`8b05b39`.
+the case, which is the failure the design contract §2.5 is about, and the one that cost 100
+cases at `8b05b39`.
 
 ## Running things
 
@@ -65,7 +66,7 @@ PYTHONPATH=python .venv/bin/python tests/suite_roundtrip.py --rust
 PYTHONPATH=python .venv/bin/pytest tests -q
 
 # the Rust side
-cargo test --workspace                          # everything: 720 tests
+cargo test --workspace                          # everything: 726 tests
 cargo test -p yamluna-scanner --test yaml-test-suite   # the fork's 402 conformance cases
 cargo test -p yamluna-core --test proptest_roundtrip -- --nocapture   # the suite round trip
 ```
@@ -78,21 +79,22 @@ first line is not a `# covers:` comment), so it doubles as the corpus lint.
 | layer | assertion | where |
 |---|---|---|
 | `yamluna-scanner` | the upstream unit tests and all 402 `yaml-test-suite` cases stay green after every patch; `keep_comments(false)` is byte-identical to upstream | `cargo test -p yamluna-scanner` (585 tests, of which `--test yaml-test-suite` is the 402) |
-| `yamluna-core` | for every corpus file, `load -> dump` with nothing mutated is **byte-identical to the input** (DESIGN 6.2) | Rust integration test over `tests/corpus` |
+| `yamluna-core` | for every corpus file, `load -> dump` with nothing mutated is **byte-identical to the input** (design contract 6.2) | Rust integration test over `tests/corpus` |
 | `yamluna-py` | `emit(parse(text))` through the `_record` classes is byte-identical to `parse`-then-`emit` inside Rust: every record gap is named in `KNOWN_RECORD_GAPS`, with the field it needs | `tests/test_bindings.py` |
-| `python/yamluna` | the object model, registry and error hierarchy, tested against hand-built record lists — no extension needed | `pytest tests` |
+| `python/yamluna` | the object model, registry and error hierarchy, tested against hand-built record lists, with no extension needed | `pytest tests` |
 | end to end | `YAML().dump(YAML().load(text)) == text` for every corpus file, with every exception named in `KNOWN_LOSSES` | `tests/test_roundtrip.py` |
-| end to end, wide | `YAML().dump_all(YAML().load_all(text)) == text` for all 308 `yaml-test-suite` cases, with every exception named in `KNOWN_GAPS` — the same cases the Rust harness scores, extracted the same way, so the two numbers subtract | `tests/test_suite_roundtrip.py` |
+| end to end, wide | `YAML().dump_all(YAML().load_all(text)) == text` for all 308 `yaml-test-suite` cases, with every exception named in `KNOWN_GAPS`, over the same cases the Rust harness scores, extracted the same way, so the two numbers subtract | `tests/test_suite_roundtrip.py` |
 | the seam, wide | `emit(parse(text))` through the `_record` classes is byte-identical to `parse`-then-`emit` inside Rust for all 308 suite cases, so the difference between the two round-trip scores is the object model and nothing else | `tests/test_suite_roundtrip.py::test_the_record_seam_loses_nothing_over_the_suite` |
-| differential | every divergence from ruamel is either a deliberate fix recorded in `docs/DIVERGENCES.md` or a defect in yamluna (DESIGN 6.3) | `differential.py` |
-| mutation | comments stay attached to the right node across `insert`, `del`, `pop`, `move_to_end` and key rename (DESIGN 6.4) | `pytest tests` |
+| differential | every divergence from ruamel is either a deliberate fix recorded on the [behaviour-differences list](https://qilimanjaro-tech.github.io/yamluna/migrating/differences/) or a defect in yamluna (design contract 6.3) | `differential.py` |
+| mutation | comments stay attached to the right node across `insert`, `del`, `pop`, `move_to_end` and key rename (design contract 6.4) | `pytest tests` |
 
 ## The corpus
 
 One concern per file; each file's first line says what it covers, so `head -3 corpus/*.yaml` is
-the index. Files are read as bytes and decoded UTF-8 with nothing normalised — `text-bom.yaml`
-keeps its BOM, `text-crlf.yaml` keeps its CRLF, `comment-eof-no-newline.yaml` has no final
-newline — because those are exactly the bytes that go missing in a round trip.
+the index. Files are read as bytes and decoded UTF-8 with nothing normalised, so
+`text-bom.yaml` keeps its BOM, `text-crlf.yaml` keeps its CRLF and
+`comment-eof-no-newline.yaml` has no final newline. Those are exactly the bytes that go missing
+in a round trip.
 
 Two things the corpus deliberately does **not** contain:
 
@@ -102,8 +104,8 @@ Two things the corpus deliberately does **not** contain:
   assumed; the finding is written up in `corpus/text-tabs.yaml`, which keeps only the tab
   positions that actually parse. Matching libyaml here is a compatibility decision yamluna
   should make on purpose.
-- **An alias before its anchor.** There is no legal ordering to test — an alias may only refer to
-  an anchor earlier in the stream — so `corpus/anchors-aliases.yaml` covers every *other*
+- **An alias before its anchor.** There is no legal ordering to test, because an alias may only
+  refer to an anchor earlier in the stream, so `corpus/anchors-aliases.yaml` covers every *other*
   ordering instead, including anchor-then-tag and tag-then-anchor.
 
 ### Writing yamluna tests against it
@@ -111,7 +113,7 @@ Two things the corpus deliberately does **not** contain:
 Take `corpus_path`, `corpus_bytes` or `corpus_text` and the test is parametrised over all 41
 files automatically, with the file stem as the test id (`pytest -k comment-eol`). The yamluna
 side is one fixture, `yamluna_roundtrip`, which skips until the extension is built; filling it in
-turns the corpus into the DESIGN 6.2 acceptance run without touching a single test.
+turns the corpus into the design contract 6.2 acceptance run without touching a single test.
 
 ```python
 def test_roundtrip_is_byte_identical(corpus_text, yamluna_roundtrip):
@@ -124,7 +126,7 @@ fix can never leave a stale excuse behind.
 
 ## Measured: yamluna vs ruamel.yaml 0.19.1 over this corpus
 
-Both libraries get the ordinary round-trip recipe — `YAML()` (`typ='rt'`),
+Both libraries get the ordinary round-trip recipe: `YAML()` (`typ='rt'`),
 `preserve_quotes = True`, everything else default, including `width = 80` and
 `allow_duplicate_keys = False`. Regenerate with
 `PYTHONPATH=python .venv/bin/python tests/differential.py`.
@@ -134,13 +136,13 @@ Both libraries get the ordinary round-trip recipe — `YAML()` (`typ='rt'`),
 | **ruamel.yaml 0.19.1** | **3 of 40** |
 | **yamluna** | **40 of 40** |
 
-**40, not 41 — `key-duplicate.yaml` is scored on behaviour instead.** That file deliberately
+**40, not 41: `key-duplicate.yaml` is scored on behaviour instead.** That file deliberately
 holds `a: 1 ... a: 3`, and a mapping keeps one of two equal keys, so *no* dict-backed API can
 write those bytes back: "does it round-trip" is a question neither library has a yes available
-for, and the harness used to record that as a yamluna round-trip failure — a real result about
-`dict`, dressed up as a defect in the emitter. What the file actually specifies is behaviour:
+for, and the harness used to record that as a yamluna round-trip failure, a real result about
+`dict` dressed up as a defect in the emitter. What the file actually specifies is behaviour:
 refuse duplicates by default, and when told to allow them, say so rather than lose data
-silently, and keep the last of each pair (DESIGN 2.3). `differential.py` measures those three
+silently, and keep the last of each pair (design contract 2.3). `differential.py` measures those three
 (`check_duplicate_keys`, `BEHAVIOUR_ONLY`) and prints them in their own table:
 
 <!-- generated by: PYTHONPATH=python .venv/bin/python tests/differential.py -->
@@ -150,13 +152,13 @@ silently, and keep the last of each pair (DESIGN 2.3). `differential.py` measure
 | `key-duplicate`   | ruamel  | **no**       | raises DuplicateKeyError by default; when allowed, warns nothing and the first key wins |
 | `key-duplicate`   | yamluna | yes          | raises DuplicateKeyError by default; when allowed, warns DuplicateKeyFutureWarning and the last key wins |
 
-So the file is not a tie: ruamel refuses it correctly, then — once told to allow duplicates —
+So the file is not a tie: ruamel refuses it correctly, then, once told to allow duplicates,
 drops four values with no warning at all and resolves each pair to the *first* key, which is
 neither what a `dict` literal does nor what any other YAML implementation does.
 
 Point ruamel at the indentation style most of the corpus is written in
 (`yaml.indent(mapping=2, sequence=4, offset=2)`, i.e. `differential.py --seq-indent`) and it
-manages **7 of 40** — `blank-lines`, `comment-block-boundaries`, `comment-eol` and
+manages **7 of 40**: `blank-lines`, `comment-block-boundaries`, `comment-eol` and
 `comment-own-line` join its passing set; yamluna is unaffected, because it reproduces each
 node's own layout rather than applying one global indentation. That is also why no single
 setting can fix `struct-seq-indent.yaml` for ruamel: the file mixes indentations within one
@@ -215,76 +217,76 @@ reproduced further down.
 Everything that does not pass, with its cause and the guard that will notice when it stops
 failing. Nothing on this list is silent: each entry fails the suite if it starts passing.
 
-#### The corpus — 1 of 41
+#### The corpus: 1 of 41
 
 | file | cause | pinned by |
 |---|---|---|
-| `key-duplicate` | `CommentedMap` is a `dict`, so two entries with equal keys collapse into one; the bytes cannot come back. Not an emitter defect, and not on the Rust lists — `yamluna-core` and the FFI records both reproduce the file. | `KNOWN_LOSSES` (`tests/test_roundtrip.py`) |
+| `key-duplicate` | `CommentedMap` is a `dict`, so two entries with equal keys collapse into one; the bytes cannot come back. Not an emitter defect, and not on the Rust lists: `yamluna-core` and the FFI records both reproduce the file. | `KNOWN_LOSSES` (`tests/test_roundtrip.py`) |
 
 `text-tabs` and `flow-forms` were the last two to close: both needed the separation a flow
-collection's source wrote *between* its lexemes, which is one field — `Node.flow_seps`, carried
-across the FFI by the record slot of the same name (DESIGN §2.5). `KNOWN_FAILURES`
+collection's source wrote *between* its lexemes, which is one field: `Node.flow_seps`, carried
+across the FFI by the record slot of the same name (design contract §2.5). `KNOWN_FAILURES`
 (`crates/yamluna-core/tests/roundtrip.rs`) and `KNOWN_RECORD_GAPS` (`tests/test_bindings.py`)
 are both empty as a result.
 
-#### `yaml-test-suite` through the Rust core — 0 of 308
+#### `yaml-test-suite` through the Rust core: 0 of 308
 
 `cargo test -p yamluna-core --test proptest_roundtrip` runs `parse → emit` over every suite
 case, and every one of the 308 comes back byte-identical. `KNOWN_GAPS` in that file is
 **empty**, and the test fails on any case that stops round-tripping, so the list is a gate
 rather than a record.
 
-The six that were open until this commit were closed the way DESIGN §2.5 says to close them —
-one recorded fact each, echoed on the round-trip path only:
+The six that were open until this commit were closed the way the design contract §2.5 says to
+close them, with one recorded fact each, echoed on the round-trip path only:
 
 | case | what it needed |
 |---|---|
 | `6HB6`, `7TMG` | a comment inside a flow collection leaves a bare `#` mark in `Node.flow_seps`, so the separation run can be written back *around* the comment instead of being cut in half by it |
 | `CN3R` | a single pair written with no brackets of its own (`[&c c: d]`) records exactly `children` separation runs where a bracketed collection records `children + 1`; that length is what says the braces were never written |
 | `CT4Q` | the `?` of an explicit key inside a flow collection is part of the separation run, so the flow emitter writes it from there |
-| `M5C3` | `Node.header_at` — a block scalar's `\|`/`>` header is a lexeme on a line and column of its own, which the body's `pos` cannot spell |
+| `M5C3` | `Node.header_at`: a block scalar's `\|`/`>` header is a lexeme on a line and column of its own, which the body's `pos` cannot spell |
 | `M7A3` | `Document::directives_raw` now covers any raw region the model cannot spell out again, not only `%` lines, so a `...` that ends no document survives as the line it is |
 
-#### `yaml-test-suite` through the Python API — 2 of 308
+#### `yaml-test-suite` through the Python API: 2 of 308
 
 `python tests/suite_roundtrip.py` runs `YAML().load_all → .dump_all` over the same 308 cases;
 `tests/test_suite_roundtrip.py` is the gate over the same list, with the same causes in its own
 `KNOWN_GAPS`. The core loses none of them, so both remaining cases are the Python side's own,
-and both are the same trade: `CommentedMap` is a `dict` (DESIGN §4.1), so two keys that compare
-equal — or one key reached twice — are one entry.
+and both are the same trade: `CommentedMap` is a `dict` (design contract §4.1), so two keys
+that compare equal, or one key reached twice, are one entry.
 
 | case | cause |
 |---|---|
-| `2JQS` — `': a\n: b\n'` | **permanent.** An empty key *is* the null key, so both entries carry `None` and a `dict` holds one of them; the suite tags the case `duplicate-key` itself. Telling the two apart needs the entry's source position, and keying a `Mapping` on position would break `doc[None]` for every well-formed document to rescue an ill-formed one. `DuplicateKeyError` naming both positions is the answer. ruamel raises the same error |
-| `X38W` — `'{ &a [a, &b b]: *b, *a : [c, *b, d]}'` | **permanent.** An alias *is* the node its anchor named, so an alias used as a key of its own mapping is that key — one object, reached twice — and the document is ill-formed at the data-model level. No wrapper helps: identity cannot separate an object from itself. ruamel raises the same error; PyYAML never gets that far (`found unhashable key`) |
+| `2JQS`, `': a\n: b\n'` | **permanent.** An empty key *is* the null key, so both entries carry `None` and a `dict` holds one of them; the suite tags the case `duplicate-key` itself. Telling the two apart needs the entry's source position, and keying a `Mapping` on position would break `doc[None]` for every well-formed document to rescue an ill-formed one. `DuplicateKeyError` naming both positions is the answer. ruamel raises the same error |
+| `X38W`, `'{ &a [a, &b b]: *b, *a : [c, *b, d]}'` | **permanent.** An alias *is* the node its anchor named, so an alias used as a key of its own mapping is that key, one object reached twice, and the document is ill-formed at the data-model level. No wrapper helps: identity cannot separate an object from itself. ruamel raises the same error; PyYAML never gets that far (`found unhashable key`) |
 
 Neither is an unfinished task: both are ill-formed documents that YAML's own uniqueness rule
 rejects, and every peer implementation refuses them too. Both are decided in the `constructor`
 module docstring and pinned by `test_constructor.py::test_two_empty_keys_are_one_null_key` and
 `::test_an_alias_to_a_key_of_its_own_mapping_is_a_duplicate`. The Rust core round-trips both,
-and so does `emit(parse(...))` across the record seam — what cannot represent them is the
+and so does `emit(parse(...))` across the record seam. What cannot represent them is the
 `dict`, and buying that back costs `isinstance(x, dict)`, `json.dumps`, `deepcopy`, `pickle`
-and `==`, the trade DESIGN §4.1 makes on purpose.
+and `==`, the trade the design contract §4.1 makes on purpose.
 
-#### Mutation — 12 xfails, all in `tests/test_mutation.py`
+#### Mutation: 12 xfails, all in `tests/test_mutation.py`
 
 Two causes, and both are model defects rather than test debt:
 
 | xfails | cause |
 |---|---|
-| 8 — `test_a2_insert_at_the_front`, `test_a3_deleting_the_first_item`, `test_a4_deleting_the_first_key`, `test_a5_move_to_end`, `test_a5_move_to_front`, `test_a6_reverse`, `test_map_clear`, `test_seq_clear` | `loader.rs::take_before` files a first child's own-line comment on the enclosing collection's `inner` slot rather than on the child's `before`, so an insertion at the front labels the new element with the old one's comment. Every byte still round-trips; only the ownership is wrong, and only for the first child. DESIGN §2.2 rule 2 requires `before` and says so; DIVERGENCES A2–A6 carry the same caveat, each with its measured output. |
-| 4 — `test_a2_insert_in_the_middle`, `test_no_mutation_strands_a_dash_from_its_value[seq-insert-front / -middle / -slice-set]` | after an insertion the emitter strands the `-` of the item preceding an own-line comment: `-\n  value` where the source wrote `- value` |
+| 8: `test_a2_insert_at_the_front`, `test_a3_deleting_the_first_item`, `test_a4_deleting_the_first_key`, `test_a5_move_to_end`, `test_a5_move_to_front`, `test_a6_reverse`, `test_map_clear`, `test_seq_clear` | `loader.rs::take_before` files a first child's own-line comment on the enclosing collection's `inner` slot rather than on the child's `before`, so an insertion at the front labels the new element with the old one's comment. Every byte still round-trips; only the ownership is wrong, and only for the first child. The design contract §2.2 rule 2 requires `before` and says so; the behaviour-differences entries A2–A6 carry the same caveat, each with its measured output. |
+| 4: `test_a2_insert_in_the_middle`, `test_no_mutation_strands_a_dash_from_its_value[seq-insert-front / -middle / -slice-set]` | after an insertion the emitter strands the `-` of the item preceding an own-line comment: `-\n  value` where the source wrote `- value` |
 
-#### Skips — 45, and none of them is a gap
+#### Skips: 45, and none of them is a gap
 
 `pytest tests -q` skips 45, every one a guard declining a case that does not apply:
 
 | count | skip |
 |---|---|
-| 40 | `test_roundtrip.py:72` "not a known loss" — the "a known loss still fails" test declining the 40 files that are not known losses |
-| 1 | `test_roundtrip.py:63` "known loss" — `key-duplicate`, the one file on `KNOWN_LOSSES` |
-| 2 | `test_roundtrip.py:94`, `:110` "does not load" — `key-duplicate` again, which refuses to load at all under the default `allow_duplicate_keys=False` |
-| 2 | `test_api.py:308`, `:316` "the extension is built" — the two branches that test the *unbuilt* extension's error messages |
+| 40 | `test_roundtrip.py:72` "not a known loss", the "a known loss still fails" test declining the 40 files that are not known losses |
+| 1 | `test_roundtrip.py:63` "known loss", which is `key-duplicate`, the one file on `KNOWN_LOSSES` |
+| 2 | `test_roundtrip.py:94`, `:110` "does not load", which is `key-duplicate` again, refusing to load at all under the default `allow_duplicate_keys=False` |
+| 2 | `test_api.py:308`, `:316` "the extension is built", the two branches that test the *unbuilt* extension's error messages |
 
 
 ## What ruamel.yaml 0.19.1 does to this corpus
@@ -345,34 +347,37 @@ not look like the two-character escape `\t`.
 The "no" rows are the list of places where being bug-compatible with ruamel is the wrong goal.
 Grouped by what the fix costs:
 
-1. **Trivia that is simply dropped.** Directives (`%YAML`, `%TAG` — and the multi-`%TAG` file
+1. **Trivia that is dropped outright.** Directives (`%YAML`, `%TAG`, and the multi-`%TAG` file
    loses two of three), document markers (`---`, `...`, and `struct-empty` loses five), the BOM,
    CRLF, the missing final newline, and comments inside flow collections and around document
-   markers. `comment-only.yaml` — a file that is nothing but comments — comes back as zero
-   bytes. These are the DESIGN 2.1 / 2.2 / 2.3 slots existing precisely because ruamel has
+   markers. `comment-only.yaml`, a file that is nothing but comments, comes back as zero
+   bytes. These are the design contract's 2.1 / 2.2 / 2.3 slots, which exist because ruamel has
    nowhere to put them.
 2. **Trivia that is kept but moved.** End-of-line comments demoted onto their own line
-   (`anchors-merge`, `comment-anchors`, `key-complex`, `text-bom`), which is the DESIGN 2.1
+   (`anchors-merge`, `comment-anchors`, `key-complex`, `text-bom`), which is the design
+   contract 2.1
    `Trivia::Comment { own_line, col }` distinction.
 3. **Layout re-decided rather than reproduced.** Sequence re-indentation, flow collections
    collapsed onto one line, multi-line plain and quoted scalars joined, long lines refolded at
-   `width`, `?`-form keys rewritten as simple keys. DESIGN 2.4's invariant — reproduce `raw`
-   verbatim for any node the user did not touch — is the whole answer to this group.
+   `width`, `?`-form keys rewritten as simple keys. The design contract 2.4's invariant,
+   reproduce `raw` verbatim for any node the user did not touch, is the whole answer to this
+   group.
 4. **Scalars re-spelled from the parsed value.** `+7` -> `7`, `\x41\x42` -> `AB`,
    `2001-12-15T02:59:43.1Z` -> `...43.100000Z`, `!!int "42"` -> `42`, `"é \U0001F600"` ->
    the literal characters, `|-2` -> `|2-`, base64 rewrapped at a different width, a literal tab
-   re-escaped. This is why `Node` carries both `value` and `raw` (DESIGN 2).
+   re-escaped. This is why `Node` carries both `value` and `raw` (design contract 2).
 5. **Structural loss.** `anchors-aliases` and `anchors-recursive` lose anchors and aliases
-   outright — the recursive file loses all four of each, because ruamel resolves an alias by
-   cloning the target (DESIGN 2.3). `key-duplicate` raises `DuplicateKeyError` rather than
-   reporting the duplicates and letting the caller decide (DESIGN 2.3, 4.2).
+   outright; the recursive file loses all four of each, because ruamel resolves an alias by
+   cloning the target (design contract 2.3). `key-duplicate` raises `DuplicateKeyError` rather
+   than reporting the duplicates and letting the caller decide (design contract 2.3, 4.2).
 
-Every one of these is a yamluna requirement, not a nice-to-have: DESIGN 6.2 admits no
-exceptions, so the target is 40 of 40, plus a `key-duplicate` row that behaves. Groups 1 to 4
-are done — yamluna keeps every directive, marker, BOM, CRLF and comment, including in the two
-files that are nothing but comments and empty documents, never moves an end-of-line comment,
+Every one of these is a yamluna requirement, not a nice-to-have: the design contract 6.2
+admits no exceptions, so the target is 40 of 40, plus a `key-duplicate` row that behaves.
+Groups 1 to 4 are done: yamluna keeps every directive, marker, BOM, CRLF and comment, including
+in the two files that are nothing but comments and empty documents, never moves an end-of-line
+comment,
 never re-indents or refolds an untouched node, and never re-spells a scalar it did not touch.
 Group 5 is done for anchors and aliases, which stay aliases rather than being cloned;
-duplicate keys are reported rather than raised on by default, but still cannot be *represented* while
-`CommentedMap` is a `dict` — the one remaining wall, and the reason `key-duplicate` is
-scored on behaviour rather than on bytes.
+duplicate keys are reported rather than raised on by default, but still cannot be
+*represented* while `CommentedMap` is a `dict`. That is the one remaining wall, and the reason
+`key-duplicate` is scored on behaviour rather than on bytes.

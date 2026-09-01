@@ -1,40 +1,45 @@
 #!/usr/bin/env python
-"""yamluna vs ruamel.yaml round-trip benchmark.
+"""Times a yamluna round trip against the same round trip in ruamel.yaml.
 
-Run it::
+Prints a Markdown report: a load, dump and round-trip table for each document, a
+byte-identical check, an attribution of yamluna's own time across its three layers, and a
+parallel-load scaling table.
 
-    .venv/bin/python bench/bench.py              # the whole table
-    .venv/bin/python bench/bench.py --quick      # fewer repeats, for a smoke run
-    .venv/bin/python bench/bench.py --threads    # only the parallel-scaling section
+Run it:
+
+```bash
+.venv/bin/python bench/bench.py              # the whole report
+.venv/bin/python bench/bench.py --quick      # fewer repeats, for a smoke run
+.venv/bin/python bench/bench.py --threads    # only the parallel-scaling section
+```
 
 Four inputs, each stressing a different part of the pipeline:
 
-``config``
-    A small hand-written config file -- the common case, where fixed overhead dominates.
-``nested``
-    A large, deeply nested document: many collections, few bytes per node.  This is where
-    the Python object model (one ``CommentedMap``/``CommentedSeq`` per collection) costs
-    the most.
-``comments``
-    A document that is mostly comments and blank lines -- trivia attachment, not parsing.
-``scalars``
-    A long flat run of scalars in every style.  Few collections, so the per-node Python
-    cost is at its lowest and the scanner is at its most exposed.
+- `config`: a small hand-written config file, the common case, where fixed overhead
+  dominates.
+- `nested`: a large, deeply nested document, many collections and few bytes per node.
+  This is where the Python object model, one `CommentedMap` or `CommentedSeq` per
+  collection, costs the most.
+- `comments`: a document that is mostly comments and blank lines, so it measures trivia
+  attachment rather than parsing.
+- `scalars`: a long flat run of scalars in every style. Few collections, so the per-node
+  Python cost is at its lowest and the scanner is at its most exposed.
 
-The big three are generated here rather than committed, so the repository stays small and
-the sizes are easy to change.
+The big three are generated at run time and not committed, so the repository stays small
+and the sizes are easy to change.
 
 Both libraries get the same two lines of configuration, the ones the differential harness
-uses (``tests/differential.py``)::
+in `tests/differential.py` uses:
 
-    yaml = YAML()
-    yaml.preserve_quotes = True
+```python
+yaml = YAML()
+yaml.preserve_quotes = True
+```
 
-Everything else is left at its default in both, ``width = 80`` included.
+Everything else is left at its default in both, `width = 80` included.
 
-Timing is :mod:`timeit`: ``autorange`` picks a batch size that runs for ~0.2 s, then five
-batches are taken and the *median* reported.  Median, not min: min flatters whichever
-library has the twitchier allocator, and this is not a competition where that should help.
+Timing goes through `timeit`: `autorange` picks a batch size that runs for about 0.2 s,
+then five batches are taken and the median of them is reported.
 """
 
 from __future__ import annotations
@@ -100,7 +105,16 @@ CONFIG = textwrap.dedent("""\
 
 
 def make_nested(depth: int = 6, breadth: int = 3, leaves: int = 4) -> str:
-    """A balanced tree `depth` levels deep, `breadth` mappings wide, `leaves` scalars each."""
+    """Builds the `nested` input: a balanced tree of mappings.
+
+    Args:
+        depth: How many levels of nested mappings to emit.
+        breadth: How many child mappings each level holds.
+        leaves: How many scalar entries sit at the bottom of each mapping.
+
+    Returns:
+        The YAML text of the tree.
+    """
     out: list[str] = ['# A deeply nested document.', '']
 
     def rec(level: int, indent: str, tag: str) -> None:
@@ -123,7 +137,14 @@ def make_nested(depth: int = 6, breadth: int = 3, leaves: int = 4) -> str:
 
 
 def make_comments(entries: int = 900) -> str:
-    """A document where roughly three lines in four are trivia."""
+    """Builds the `comments` input, where roughly three lines in four are trivia.
+
+    Args:
+        entries: How many commented key and value entries to emit.
+
+    Returns:
+        The YAML text of the document.
+    """
     out: list[str] = [
         '# Top-of-file banner.',
         '# Two lines of it, so the document-leading slot has something to hold.',
@@ -141,7 +162,18 @@ def make_comments(entries: int = 900) -> str:
 
 
 def make_scalars(count: int = 1200) -> str:
-    """A flat sequence of scalars in every style the emitter has to re-analyse."""
+    """Builds the `scalars` input: a flat sequence of scalars in every style.
+
+    The styles are the ones the emitter has to re-analyse before it can write a scalar
+    back out plain.
+
+    Args:
+        count: How many sequence entries to emit. One literal block scalar is added
+            for every 20 of them.
+
+    Returns:
+        The YAML text of the document.
+    """
     out: list[str] = ['# Scalars, one style after another.', 'values:']
     styles: list[Callable[[int], str]] = [
         lambda i: f'plain scalar number {i}',
@@ -166,6 +198,7 @@ def make_scalars(count: int = 1200) -> str:
 
 
 def inputs() -> dict[str, str]:
+    """Returns the four benchmark documents, keyed by name."""
     return {
         'config': CONFIG,
         'nested': make_nested(),
@@ -180,22 +213,32 @@ def inputs() -> dict[str, str]:
 
 
 def yamluna_rt() -> yamluna.YAML:
+    """Returns a fresh yamluna round-trip loader with `preserve_quotes` on."""
     y = yamluna.YAML()
     y.preserve_quotes = True
     return y
 
 
 def ruamel_rt() -> ruamel.yaml.YAML:
+    """Returns a fresh ruamel.yaml round-trip loader with `preserve_quotes` on."""
     y = ruamel.yaml.YAML()
     y.preserve_quotes = True
     return y
 
 
 def ops(make: Callable[[], object], text: str) -> dict[str, Callable[[], object]]:
-    """The three timed operations for one library on one document.
+    """Builds the three timed operations for one library on one document.
 
-    ``dump`` is timed against an object loaded once up front, so it measures emitting and
-    not emitting-plus-loading; ``load+dump`` is the whole round trip.
+    `dump` is timed against an object loaded once up front, so it measures emitting on
+    its own rather than emitting plus loading. `load+dump` is the whole round trip.
+
+    Args:
+        make: A factory returning a configured loader, `yamluna_rt` or `ruamel_rt`.
+        text: The document to load and dump.
+
+    Returns:
+        A mapping from operation name (`load`, `dump`, `load+dump`) to a callable that
+        performs that operation once and takes no arguments.
     """
     yaml = make()
     loaded = yaml.load(text)
@@ -214,14 +257,25 @@ def ops(make: Callable[[], object], text: str) -> dict[str, Callable[[], object]
 
 
 def measure(fn: Callable[[], object], quick: bool) -> float:
-    """Median seconds per call."""
+    """Times `fn` and returns the median seconds per call.
+
+    Args:
+        fn: The operation to time. It takes no arguments.
+        quick: Take three batches instead of five.
+
+    Returns:
+        The median per-call time, in seconds.
+    """
     timer = timeit.Timer(fn)
     n, _ = timer.autorange()
     repeats = 3 if quick else REPEATS
+    # The median rather than the minimum: the minimum flatters whichever library has
+    # the twitchier allocator, and this is not a competition where that should help.
     return statistics.median(t / n for t in timer.repeat(repeats, n))
 
 
 def roundtrips(make: Callable[[], object], text: str) -> bool:
+    """Reports whether `make()` dumps `text` back byte for byte after loading it."""
     yaml = make()
     out = io.StringIO()
     yaml.dump(yaml.load(text), out)
@@ -234,6 +288,12 @@ def roundtrips(make: Callable[[], object], text: str) -> bool:
 
 
 def section_compare(docs: dict[str, str], quick: bool) -> None:
+    """Prints the load, dump and round-trip table, then a byte-identical check.
+
+    Args:
+        docs: The benchmark documents, keyed by name.
+        quick: Take fewer timing batches.
+    """
     print('## load / dump / round trip\n')
     print('| document | size | operation | yamluna | ruamel | ratio |')
     print('| --- | ---: | --- | ---: | ---: | ---: |')
@@ -263,24 +323,30 @@ def section_compare(docs: dict[str, str], quick: bool) -> None:
 
 
 def section_layers(docs: dict[str, str], quick: bool) -> None:
-    """Where the round-trip time actually goes, in three layers of the same operation.
+    """Prints where a yamluna round trip spends its time, in three layers.
 
-    ``Rust only``
-        ``_yamluna._roundtrip_in_rust`` -- the scanner, the loader, trivia attachment and
-        the emitter, with no Python object ever built.  This is the floor.
-    ``+ FFI records``
-        ``emit(parse(text))`` -- the same work plus building the flat ``Node``/``Trivia``
-        records on the way out and reading them back on the way in.
-    ``+ object model``
-        ``YAML.dump(YAML.load(text))`` -- the whole library: the constructor builds a
-        ``CommentedMap``/``CommentedSeq`` per collection and a scalar subclass per scalar,
-        and the representer takes them apart again.
+    Each column is the same work with more of the library stacked on top:
 
-    A criterion bench in ``crates/yamluna-core/benches/`` would measure the first column
-    and nothing else; measuring it from here instead means all three columns come off the
-    same input, in the same process, on the same clock, so the differences between them
-    are the attribution rather than an apples-to-oranges comparison.
+    - `Rust only`: `_yamluna._roundtrip_in_rust`, which is the scanner, the loader,
+      trivia attachment and the emitter, with no Python object ever built. This is the
+      floor.
+    - `+ FFI records`: `emit(parse(text))`, the same work plus building the flat `Node`
+      and `Trivia` records on the way out and reading them back on the way in.
+    - `+ object model`: `YAML.dump(YAML.load(text))`, the whole library. The
+      constructor builds a `CommentedMap` or `CommentedSeq` per collection and a scalar
+      subclass per scalar, and the representer takes them apart again.
+
+    The last column of the table is the share of the round trip spent above the FFI
+    records, which is what the Python object model costs.
+
+    Args:
+        docs: The benchmark documents, keyed by name.
+        quick: Take fewer timing batches.
     """
+    # A criterion bench under crates/yamluna-core/benches/ would measure the first
+    # column and nothing else. Measuring all three from here puts them on the same
+    # input, in the same process, on the same clock, so the differences between the
+    # columns are the attribution rather than a comparison of unlike runs.
     from yamluna import _yamluna
 
     opts = yamluna_rt()._emit_options()
@@ -300,7 +366,16 @@ def section_layers(docs: dict[str, str], quick: bool) -> None:
 
 
 def parallel(work: Callable[[], object], threads: int, total: int) -> float:
-    """Wall seconds to run `work` `total` times spread over `threads` threads."""
+    """Runs `work` `total` times over `threads` threads and returns the wall time.
+
+    Args:
+        work: The operation to run. It takes no arguments.
+        threads: How many worker threads to spread the calls over.
+        total: How many calls in all, rounded down to a multiple of `threads`.
+
+    Returns:
+        Wall-clock seconds for the whole run.
+    """
     per = total // threads
     start = timeit.default_timer()
     with ThreadPoolExecutor(max_workers=threads) as pool:
@@ -311,14 +386,18 @@ def parallel(work: Callable[[], object], threads: int, total: int) -> float:
 
 
 def section_threads(docs: dict[str, str], quick: bool) -> None:
-    """Parallel loads -- the thing ruamel cannot do at all.
+    """Prints how load throughput scales with thread count, for both libraries.
 
-    ``yamluna._yamluna.parse`` runs the scanner, the loader and the trivia attachment
-    inside ``py.detach``, so those run genuinely in parallel.  Building the ``Node``
+    `yamluna._yamluna.parse` runs the scanner, the loader and the trivia attachment
+    inside `py.detach`, so that work runs genuinely in parallel. Building the `Node`
     records, and everything the constructor does on top, is Python object creation and
-    holds the GIL.  So ``parse`` scales and ``YAML.load`` scales partly; ruamel is pure
-    Python and scales not at all.  All three numbers are below, measured, including the
-    one that does not flatter us.
+    holds the GIL. So `parse` scales, `YAML.load` scales partly, and ruamel is pure
+    Python and does not scale at all. All three are printed, including the one that
+    does not flatter yamluna.
+
+    Args:
+        docs: The benchmark documents, keyed by name. Only `nested` is timed.
+        quick: Measure 1 and 4 threads instead of 1, 2, 4 and 8.
     """
     from yamluna import _yamluna
 
@@ -340,10 +419,11 @@ def section_threads(docs: dict[str, str], quick: bool) -> None:
     print(f'| workload | {heads} | speedup at {counts[-1]} |')
     print('| --- |' + ' ---: |' * (len(counts) + 1))
     for label, work in workloads.items():
-        # Two passes, ascending then descending, and the faster of the two per thread count.
-        # One pass measures whichever count runs first on a cold, un-throttled CPU and the
-        # rest on a hot one, which moves the reported speedup by ~20% on a laptop -- in
-        # whichever direction the ordering happens to favour.
+        # Two passes, ascending then descending, keeping the faster of the two per
+        # thread count. A single pass measures whichever count runs first on a cold,
+        # un-throttled CPU and the rest on a hot one, which moves the reported speedup
+        # by about 20% on a laptop, in whichever direction the ordering happens to
+        # favour.
         up = [parallel(work, n, total) for n in counts]
         down = [parallel(work, n, total) for n in reversed(counts)]
         times = [min(a, b) for a, b in zip(up, reversed(down), strict=True)]
@@ -353,11 +433,17 @@ def section_threads(docs: dict[str, str], quick: bool) -> None:
 
 
 def _cpu_count() -> int:
+    """Returns the number of hardware threads this process is allowed to run on."""
     getaffinity = getattr(os, 'sched_getaffinity', None)
     return len(getaffinity(0)) if getaffinity else (os.cpu_count() or 1)
 
 
 def header(docs: dict[str, str]) -> None:
+    """Prints the machine, interpreter, library versions and input sizes.
+
+    Args:
+        docs: The benchmark documents, keyed by name.
+    """
     uname = platform.uname()
     print('# yamluna benchmark\n')
     print(f'- machine: {uname.system} {uname.release}, {uname.machine}, {_cpu_count()} hw threads')
@@ -371,6 +457,12 @@ def header(docs: dict[str, str]) -> None:
 
 
 def _cpu_model() -> str:
+    """Returns the CPU model name, read from /proc/cpuinfo where that is readable.
+
+    Returns:
+        The model name, or `platform.processor()`, or `'unknown'` when neither is
+        available.
+    """
     try:
         for line in Path('/proc/cpuinfo').read_text().splitlines():
             if line.startswith('model name'):
@@ -381,6 +473,15 @@ def _cpu_model() -> str:
 
 
 def main(argv: list[str]) -> int:
+    """Runs the sections selected by `argv` and prints the report to stdout.
+
+    Args:
+        argv: Command-line arguments. `--quick` takes fewer timing batches and
+            `--threads` skips everything but the parallel-scaling section.
+
+    Returns:
+        The process exit status, always 0.
+    """
     quick = '--quick' in argv
     docs = inputs()
     header(docs)

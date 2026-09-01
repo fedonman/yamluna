@@ -1,13 +1,27 @@
-"""YAML integer scalars: ``int`` subclasses that remember how they were written.
+"""YAML integer scalars: `int` subclasses that remember how they were written.
 
-`0x1F`, `0o755`, `0b1010`, `1_000_000`, `+5` and `007` all mean an integer and all have to
-come back out of a round trip byte-for-byte, so each instance keeps the source lexeme.  The
-ruamel-shaped formatting fields (``_width``, ``_underscore``, plus ``_sign``, which ruamel
-drops and thereby loses ``+5``) are parsed out of the lexeme as well: they are what
-``lexeme()`` falls back to for a value that was built in Python rather than loaded.
+`0x1F`, `0o755`, `0b1010`, `1_000_000`, `+5` and `007` all mean an integer, and all of them
+have to come back out of a round trip byte for byte, so each instance keeps the source
+lexeme. The formatting fields (`_width`, `_underscore`, `_sign`, `_caps`) are parsed out of
+the lexeme as well, and they are what `lexeme()` falls back to for a value built in Python
+rather than loaded from a file. ruamel drops the sign field and so loses the `+` of `+5`.
 
-``int`` forbids ``__slots__`` on its subclasses, so these carry a ``__dict__`` — which also
-means user code can hang attributes off them, as it can with ruamel's.
+Loading gives you one of these classes only when a plain `int` would not write the same text
+back: `7` comes back as a builtin `int`, while `007`, `1_000`, `+5` and `0x1f` come back as
+`ScalarInt` or one of its base-specific subclasses.
+
+`int` forbids `__slots__` on its subclasses, so these carry a `__dict__`, which means your
+own code can hang attributes off them, as it can off ruamel's.
+
+```python
+data['mode'] = OctalInt(0o755)
+data['mask'] = HexInt(0x1F, caps=True)
+```
+
+```yaml
+mode: 0o755
+mask: 0x1F
+```
 """
 
 from __future__ import annotations
@@ -26,13 +40,13 @@ _INT_RE = re.compile(
     re.VERBOSE,
 )
 
-#: Format fields copied onto the result of in-place arithmetic.  ``_lexeme`` is deliberately
-#: not among them: the value changed, so the source text no longer describes it.
+# Format fields copied onto the result of in-place arithmetic. `_lexeme` is deliberately not
+# among them: the value changed, so the source text no longer describes it.
 _FMT_FIELDS = ('_width', '_underscore', '_sign', '_caps')
 
 
 def _split_underscores(body: str) -> list[Any] | None:
-    """ruamel's ``[step, leading, trailing]`` description of `body`'s underscores."""
+    """ruamel's `[step, leading, trailing]` description of `body`'s underscores."""
     core = body.rstrip('_')
     if '_' not in core:
         return None if '_' not in body else [0, body.startswith('_'), True]
@@ -40,6 +54,7 @@ def _split_underscores(body: str) -> list[Any] | None:
 
 
 def _insert_underscores(digits: str, underscore: list[Any] | None) -> str:
+    """Put the underscores `_split_underscores` measured back into `digits`."""
     if not underscore:
         return digits
     step, leading, trailing = underscore
@@ -56,9 +71,34 @@ def _insert_underscores(digits: str, underscore: list[Any] | None) -> str:
 
 
 class ScalarInt(_Anchored, int):
-    """A decimal integer, with its width, underscores and explicit ``+`` preserved."""
+    """A decimal integer that keeps its width, underscores and explicit `+`.
+
+    In-place arithmetic carries the formatting onto the result and drops the lexeme, so
+    `x += 1` on a value loaded as `0x0f` dumps as `0x10`. Ordinary arithmetic (`x + 1`)
+    returns a plain `int`, as it does in ruamel.
+
+    Args:
+        value: Anything `int()` accepts.
+        width: Total number of digits, left-padded with zeros, so `007` survives.
+        underscore: `[step, leading, trailing]`, the spacing of `_` separators.
+        sign: `'+'` to write an explicit plus. A negative value always writes `-`.
+        lexeme: The source text. When present `lexeme()` returns it unchanged and the other
+            formatting fields are not consulted.
+        anchor: An anchor name to attach, marked to be written even when nothing aliases
+            this scalar.
+
+    Example:
+        ```python
+        data['perms'] = ScalarInt(7, width=3)
+        ```
+
+        ```yaml
+        perms: 007
+        ```
+    """
 
     prefix: ClassVar[str] = ''
+    """The base prefix this class writes: `''`, `0b`, `0o` or `0x`."""
 
     def __new__(
         cls,
@@ -81,14 +121,31 @@ class ScalarInt(_Anchored, int):
 
     @classmethod
     def from_lexeme(cls, text: str) -> ScalarInt:
-        """Parse an integer lexeme into the matching subclass.  ``.lexeme()`` returns `text`."""
+        """Parse an integer lexeme into the subclass that matches its base.
+
+        Args:
+            text: The integer exactly as the source wrote it.
+
+        Returns:
+            A `ScalarInt`, `BinaryInt`, `OctalInt` or `HexInt` whose `lexeme()` returns
+            `text` unchanged. The class is chosen by the base prefix, not by `cls`.
+
+        Raises:
+            ValueError: `text` is not an integer lexeme.
+        """
         return from_lexeme(text)
 
     def _digits(self) -> str:
+        """The magnitude in this class's base, without sign, prefix or underscores."""
         return format(abs(int(self)), 'd')
 
     def lexeme(self) -> str:
-        """The source form verbatim, or a rendering of the formatting fields."""
+        """Return the source text verbatim, or a rendering of the formatting fields.
+
+        Returns:
+            The text the source used, when this integer was loaded from one. Otherwise the
+            value written out through `sign`, `prefix`, `width` and `underscore`.
+        """
         if self._lexeme is not None:
             return self._lexeme
         digits = self._digits()
@@ -98,13 +155,13 @@ class ScalarInt(_Anchored, int):
         return f'{sign}{self.prefix}{_insert_underscores(digits, self._underscore)}'
 
     def _derived(self, value: int) -> Self:
+        """A copy holding `value` with this one's formatting fields, minus the lexeme."""
         result = type(self)(value)
         for name in _FMT_FIELDS:
             if hasattr(self, name):
                 setattr(result, name, getattr(self, name))
         return result
 
-    # In-place arithmetic keeps the formatting (0x0f + 1 dumps as 0x10), as in ruamel.
     def __iadd__(self, other: Any) -> Self:
         return self._derived(int(self) + other)
 
@@ -125,7 +182,17 @@ class ScalarInt(_Anchored, int):
 
 
 class BinaryInt(ScalarInt):
-    """``0b1010``."""
+    """An integer written in base two, as `0b1010`.
+
+    Example:
+        ```python
+        data['flags'] = BinaryInt(0b1010)
+        ```
+
+        ```yaml
+        flags: 0b1010
+        ```
+    """
 
     prefix = '0b'
 
@@ -134,7 +201,17 @@ class BinaryInt(ScalarInt):
 
 
 class OctalInt(ScalarInt):
-    """``0o755``."""
+    """An integer written in base eight, as `0o755`.
+
+    Example:
+        ```python
+        data['mode'] = OctalInt(0o755)
+        ```
+
+        ```yaml
+        mode: 0o755
+        ```
+    """
 
     prefix = '0o'
 
@@ -143,7 +220,23 @@ class OctalInt(ScalarInt):
 
 
 class HexInt(ScalarInt):
-    """``0x1f`` / ``0x1F`` — `caps` records which case the source used."""
+    """An integer written in base sixteen, as `0x1f` or `0x1F`.
+
+    Args:
+        value: Anything `int()` accepts.
+        caps: Write the digits `A` to `F` in upper case. `from_lexeme` sets it from the
+            source, so a document written with `0x1F` does not come back as `0x1f`.
+        kw: The rest of `ScalarInt`'s keyword arguments.
+
+    Example:
+        ```python
+        data['mask'] = HexInt(255, width=4)
+        ```
+
+        ```yaml
+        mask: 0x00ff
+        ```
+    """
 
     prefix = '0x'
 
@@ -154,6 +247,7 @@ class HexInt(ScalarInt):
 
     @property
     def caps(self) -> bool:
+        """Whether the hex digits are written in upper case."""
         return self._caps
 
     def _digits(self) -> str:
@@ -168,10 +262,26 @@ _BY_BASE: dict[str, tuple[type[ScalarInt], int]] = {
 
 
 def from_lexeme(text: str) -> ScalarInt:
-    """Build the right ``ScalarInt`` subclass from an integer lexeme.
+    """Build the `ScalarInt` subclass that matches an integer lexeme.
 
-    >>> from_lexeme('0o755').lexeme()
-    '0o755'
+    Args:
+        text: The integer exactly as the source wrote it: an optional sign, then either a
+            `0b`, `0o` or `0x` prefix and its digits, or decimal digits. Underscores are
+            allowed anywhere in the digits.
+
+    Returns:
+        A `BinaryInt`, `OctalInt` or `HexInt` for a prefixed lexeme, otherwise a
+        `ScalarInt`. Its `lexeme()` returns `text` byte for byte.
+
+    Raises:
+        ValueError: `text` is not an integer lexeme.
+
+    Example:
+        ```pycon
+        >>> from_lexeme('0o755').lexeme()
+        '0o755'
+
+        ```
     """
     m = _INT_RE.match(text)
     if m is None:

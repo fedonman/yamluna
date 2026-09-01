@@ -1,10 +1,16 @@
 """Reading and writing comments through `.ca`.
 
-`.ca` keeps ruamel's shape, so ported code works; underneath, a comment belongs to the
-*node* it describes rather than to an index, which is why the mutations at the bottom
-land where you would expect (docs/DIVERGENCES.md A1-A7).
+`.ca` keeps the shape ruamel gives it, so ported code works. Underneath, a comment
+belongs to the *node* it describes rather than to a position in the container, which is
+why the mutations at the bottom of this file land where you would expect: a delete, a
+rename and a reorder each carry the entry's own comments and leave its neighbours
+alone.
 
-    .venv/bin/python examples/comments.py
+Run it:
+
+```bash
+.venv/bin/python examples/comments.py
+```
 """
 
 from yamluna import YAML, CommentMark, CommentToken
@@ -36,8 +42,8 @@ doc = yaml.load(SRC)
 # somebody else's comment, so "how many blank lines are here" has an answer.
 #
 # An own-line comment above a container's *first* entry belongs to the container
-# (`.ca.comment[1]`), as it does in ruamel -- it is the block's heading, so it stays
-# at the top of the block when you reorder what is under it.
+# (`.ca.comment[1]`), as it does in ruamel: it is the block's heading, so it stays at
+# the top of the block when you reorder what is under it.
 
 print('root .ca.comment ', doc.ca.comment)
 print("root .ca.items   ", dict(doc.ca.items))
@@ -65,8 +71,8 @@ print(yaml.dump(doc))
 # -- comments follow the node, not the index ---------------------------------------
 #
 # ruamel stores an own-line comment glued to the *previous* sibling's end-of-line
-# token, so `del`, `rename` and `move_to_end` scatter comments onto the wrong entries
-# (DIVERGENCES A3-A5).  Here they are owned by the entry.
+# token, so `del`, `rename` and `move_to_end` scatter comments onto the wrong
+# entries. Here the entry that the comment describes owns it.
 
 CFG = """\
 services:

@@ -1,30 +1,31 @@
 """The headline bug fix: comments do not drift when the tree is mutated.
 
-``yamluna`` keys trivia on **node identity** and projects ``.ca.items`` on access
-(``DESIGN.md`` §2.1).  ``ruamel.yaml`` keys it on the mapping key / sequence index and
-glues an own-line comment into the *previous* sibling's end-of-line ``CommentToken``, so
-every structural edit moves prose onto data it was never about
-(``docs/DIVERGENCES.md`` A1-A6, ``docs/RUAMEL-BEHAVIOR.md`` §3).
+yamluna keys trivia on node identity and projects `.ca.items` on access. ruamel.yaml keys
+it on the mapping key or the sequence index, and glues an own-line comment into the
+previous sibling's end-of-line `CommentToken`, so every structural edit moves prose onto
+data it was never about.
 
 Two kinds of test live here.
 
-1. **The A1-A6 repros**, asserted as exact emitted bytes, because the divergence
-   documents give exact expected output.  Each one is paired with a ``ruamel`` assertion
-   of the *wrong* output that document records: that pins the divergence as intentional
-   and fails loudly the day yamluna starts agreeing with ruamel again.
-2. **The whole mutating API**, asserted through :func:`attach` -- a reader that says, of
-   the emitted text alone, which comment describes which element.  The invariant is
-   mechanical and the same for every mutation:
+1. The numbered repros, `test_a1_*` through `test_a6_*`, asserted as exact emitted bytes,
+   because the expected output is known exactly. Each one is paired with a ruamel
+   assertion of the wrong output ruamel writes today: that pins the divergence as
+   intentional and fails loudly the day yamluna starts agreeing with ruamel again.
+2. The whole mutating API, asserted through `attach`, a reader that says, of the emitted
+   text alone, which comment describes which element. The invariant is mechanical and the
+   same for every mutation:
 
        a surviving element keeps exactly the comments it had, a deleted element takes
        its comments with it and touches no neighbour's, and a new element arrives bare.
 
-   :func:`surviving` spells that out, so each test says only which elements went and
-   which arrived.
+   `surviving` spells that out, so each test says only which elements went and which
+   arrived.
 
-Run::
+Run:
 
-    PYTHONPATH=python .venv/bin/pytest tests/test_mutation.py -q
+```bash
+PYTHONPATH=python .venv/bin/pytest tests/test_mutation.py -q
+```
 """
 
 from __future__ import annotations
@@ -43,7 +44,7 @@ from yamluna.comments import C_ELEM_EOL, C_ELEM_PRE, C_VALUE_EOL  # noqa: E402
 
 try:
     import ruamel.yaml as ruamel
-except ImportError:  # pragma: no cover - the oracle is optional
+except ImportError:  # pragma: no cover: the oracle is optional
     ruamel = None  # type: ignore[assignment]
 
 needs_ruamel = pytest.mark.skipif(ruamel is None, reason="ruamel.yaml is not installed")
@@ -53,47 +54,61 @@ needs_ruamel = pytest.mark.skipif(ruamel is None, reason="ruamel.yaml is not ins
 
 
 def _rt(lib: Any) -> Any:
-    """The ordinary round-trip recipe, identical for both libraries."""
+    """A round-trip `YAML` on the ordinary recipe, identical for both libraries."""
     yaml = lib.YAML()
     yaml.preserve_quotes = True
     return yaml
 
 
 def load(text: str, lib: Any = yamluna) -> Any:
+    """Loads the first document of `text` through `lib`, which is yamluna by default."""
     return _rt(lib).load(text)
 
 
 def dump(node: Any, lib: Any = yamluna) -> str:
+    """Dumps one document through `lib` and returns the text it wrote."""
     buf = io.StringIO()
     _rt(lib).dump(node, buf)
     return buf.getvalue()
 
 
 def mutated(text: str, mutate: Any, lib: Any = yamluna) -> str:
-    """``load -> mutate -> dump``, the operation every test here measures."""
+    """Loads, mutates, then dumps: the operation every test here measures.
+
+    Args:
+        text: The source document.
+        mutate: Called with the loaded root, for its effect on that object.
+        lib: The library to measure, yamluna by default and ruamel for an oracle test.
+
+    Returns:
+        What the library writes after the mutation.
+    """
     node = load(text, lib)
     mutate(node)
     return dump(node, lib)
 
 
 def attach(text: str) -> dict[str, tuple[tuple[str, ...], str | None]]:
-    """``{element: (own-line comments above it, its end-of-line comment)}``.
+    """Reads which comment describes which element, out of the emitted text alone.
 
-    Read out of the emitted text rather than out of ``.ca``, because "which comment
-    describes which element" is a property of the document a human opens, not of the
-    projection -- a test that read ``.ca`` would pass on a store that is right and an
-    emitter that is wrong.
+    Args:
+        text: An emitted document.
 
-    The element label is the line's content with the ``- `` indicator and the comment
-    stripped, and cut at the ``:`` of a mapping key, so ``- one  # eol`` labels as
-    ``one`` and ``alpha: 1  # eol`` labels as ``alpha``.  Comments with no element left
-    below them land under ``END``.
-
-    A line that is a bare ``-`` is a dash whose value the emitter pushed onto the next
-    line; it is skipped so that this reader measures attachment only.  The layout defect
-    itself is asserted separately, by
-    :func:`test_no_mutation_strands_a_dash_from_its_value`.
+    Returns:
+        `{element: (own-line comments above it, its end-of-line comment)}`. The element
+        label is the line's content with the `- ` indicator and the comment stripped, cut
+        at the `:` of a mapping key, so `- one  # eol` labels as `one`, and
+        `alpha: 1  # eol` labels as `alpha`. Comments with no element left below them
+        land under `END`.
     """
+    # Read out of the emitted text rather than out of `.ca`, because "which comment
+    # describes which element" is a property of the document a human opens rather than of
+    # the projection: a test that read `.ca` would pass on a store that is right and an
+    # emitter that is wrong.
+    #
+    # A line that is a bare `-` is a dash whose value the emitter pushed onto the next
+    # line. It is skipped, so this reader measures attachment only, and the layout defect
+    # itself is asserted by `test_no_mutation_strands_a_dash_from_its_value`.
     out: dict[str, tuple[tuple[str, ...], str | None]] = {}
     pending: list[str] = []
     for line in text.splitlines():
@@ -122,8 +137,14 @@ def surviving(
 ) -> dict[str, tuple[tuple[str, ...], str | None]]:
     """The attachment map a mutation must produce: the invariant, spelled out once.
 
-    Everything that is still there keeps exactly what it had, everything in `gone` took
-    its comments with it, and everything in `added` arrives with none.
+    Args:
+        base: The attachment map of the document before the mutation.
+        gone: Labels of elements the mutation removed. They took their comments with them.
+        added: Labels of elements the mutation introduced. They arrive with no comments.
+
+    Returns:
+        The map `attach` has to return for the emitted result: everything still there
+        keeps exactly what it had, and everything added is bare.
     """
     out = {k: v for k, v in base.items() if k not in gone}
     for k in added:
@@ -133,10 +154,12 @@ def surviving(
 
 # --------------------------------------------------------------------------- documents
 
-#: ``docs/DIVERGENCES.md`` A2/A3 and ``docs/RUAMEL-BEHAVIOR.md`` §3.1-§3.3.
+# A block sequence with an own-line comment above every item: the shape the insert and
+# delete repros are measured on.
 SEQ = "# about one\n- one\n# about two\n- two\n# about three\n- three\n"
 
-#: ``docs/DIVERGENCES.md`` A4/A5 and ``docs/RUAMEL-BEHAVIOR.md`` §3.5-§3.8.
+# A block mapping with an own-line comment above every entry and an end-of-line comment
+# on every value: the shape the delete, rename and reorder repros are measured on.
 MAP = (
     "# about alpha\n"
     "alpha: 1   # eol alpha\n"
@@ -146,11 +169,12 @@ MAP = (
     "gamma: 3   # eol gamma\n"
 )
 
-#: ``docs/DIVERGENCES.md`` A6 -- end-of-line comments only, which is where ruamel's
-#: ``sort`` is right and its ``reverse`` is wrong.
+# End-of-line comments only, which is where ruamel's `sort` is right and its `reverse`
+# is wrong.
 EOL_SEQ = "- a  # ca\n- b  # cb\n- c  # cc\n- d  # cd\n"
 
-#: ``docs/RUAMEL-BEHAVIOR.md`` §1.5, the canonical "a comment in every position".
+# A comment in every position a sequence has a slot for: above the collection, above an
+# item, at the end of an item's line, and after the last item.
 POSITIONS_SEQ = (
     "# doc comment\n"
     "# before first item\n"
@@ -162,9 +186,9 @@ POSITIONS_SEQ = (
     "# trailing\n"
 )
 
-#: A mapping with a comment in every position the model has a slot for: above an entry,
-#: at the end of a value's line, at the end of a key's line (the "between key and value"
-#: slot), above the first key of a nested collection, and after the last entry.
+# A mapping with a comment in every position the model has a slot for: above an entry,
+# at the end of a value's line, at the end of a key's line (the "between key and value"
+# slot), above the first key of a nested collection, and after the last entry.
 EVERY = (
     "# before alpha\n"
     "alpha: 1        # eol alpha\n"
@@ -177,7 +201,7 @@ EVERY = (
     "# trailing\n"
 )
 
-#: The sequence of the same shape.
+# The sequence of the same shape.
 EVERY_SEQ = (
     "# before one\n"
     "- one          # eol one\n"
@@ -192,21 +216,22 @@ EVERY_BASE = attach(EVERY)
 EVERY_SEQ_BASE = attach(EVERY_SEQ)
 
 
-#: The first own-line comment of a collection is filed on the collection
-#: (``Trivia4::inner``) instead of on the first child (``before``), against
-#: ``DESIGN.md`` §2.2 rule 2 -- ``crates/yamluna-core/src/loader.rs``, ``take_before``.
-#: Every mutation that deletes or moves a *first* element therefore still drifts, which
-#: is exactly the ruamel defect DIVERGENCES A2/A3/A5/A6 says we do not have.
+# The one ownership gap these xfails pin. `take_before` in
+# `crates/yamluna-core/src/loader.rs` files a collection's first own-line comment on the
+# collection's own `inner` slot instead of on the first child's `before` slot, and the
+# rule it breaks is that an own-line comment belongs to the element written below it.
+# Every mutation that deletes or moves a first element therefore still drifts that
+# comment, which is the ruamel defect the rest of this file says yamluna does not have.
 first_child = pytest.mark.xfail(
-    reason="loader.rs take_before() files the first child's own-line comment on the "
-    "collection's `inner` slot, not on the child's `before`; DESIGN 2.2 rule 2 and "
-    "DIVERGENCES A2/A3/A5 require `before`",
+    reason="the loader files the first child's own-line comment on the collection's "
+    "`inner` slot instead of on the child's `before` slot, so deleting or moving a "
+    "first element still drifts that comment onto its neighbour",
     strict=True,
 )
 
-#: A node the user inserted has no recorded position, which desyncs the writer; the next
-#: node that is followed by an own-line comment is then emitted as ``-\n  value``.
-#: ``crates/yamluna-core/src/emitter/{mod,layout}.rs``.
+# A node the user inserted has no recorded position, which desyncs the writer in
+# `crates/yamluna-core/src/emitter/`. The next node that is followed by an own-line
+# comment then comes out as a bare dash with its value on the line below.
 dash_layout = pytest.mark.xfail(
     reason="after an insertion the emitter strands the dash of the item preceding an "
     "own-line comment: `-\\n  value` instead of `- value`",
@@ -218,29 +243,29 @@ dash_layout = pytest.mark.xfail(
 
 
 def test_a1_own_line_comment_is_stored_on_the_node_it_describes() -> None:
-    """A1: trivia hangs off the node, in its own slot -- not glued to a sibling."""
+    """Trivia hangs off the node it describes, in a slot of its own, not on a sibling."""
     seq = load(POSITIONS_SEQ)
     items = seq.ca.items
 
-    # item 0's end-of-line comment is *only* its own end-of-line comment.
+    # Item 0's end-of-line comment is only its own end-of-line comment.
     assert items[0][C_ELEM_EOL].value.strip() == "# eol on one"
-    # ... and the comment that describes item 1 is filed on item 1, in the "before" slot.
+    # The comment that describes item 1 is filed on item 1, in the "before" slot.
     assert [t.value for t in items[1][C_ELEM_PRE]] == ["# between one and two\n"]
     assert items[1][C_ELEM_EOL] is None  # item 1 has no end-of-line comment at all
     assert [t.value for t in items[2][C_ELEM_PRE]] == ["# between two and three\n"]
     assert items[2][C_ELEM_EOL].value.strip() == "# eol on three"
-    # The trailing comment is the collection's, and .ca.end round-trips it (A9).
+    # The trailing comment belongs to the collection, and `.ca.end` round-trips it.
     assert [t.value for t in seq.ca.end] == ["# trailing\n"]
 
 
 @needs_ruamel
 def test_a1_ruamel_glues_it_into_the_previous_sibling() -> None:
-    """RUAMEL-BEHAVIOR §1.5: one token per item, holding two items' worth of prose."""
+    """ruamel gives each item one token, and that token holds two items' worth of prose."""
     items = load(POSITIONS_SEQ, ruamel).ca.items
 
     assert items[0][0].value == "# eol on one\n# between one and two\n"
-    # item 1 has no comment of its own, yet carries a token -- the bare leading "\n" is
-    # how "no end-of-line comment, but something below" is encoded.
+    # Item 1 has no comment of its own and still carries a token: the bare leading "\n" is
+    # how ruamel encodes "no end-of-line comment, but something below".
     assert items[1][0].value == "\n# between two and three\n"
     assert items[2][0].value == "# eol on three\n# trailing\n"
     assert all(slot is None for item in items.values() for slot in item[1:])
@@ -282,7 +307,7 @@ def test_a2_insert_attaches_nothing_to_the_new_item() -> None:
 
 @needs_ruamel
 def test_a2_ruamel_labels_the_new_item_with_its_successor_s_comment() -> None:
-    """RUAMEL-BEHAVIOR §3.1: the comment renumbers faithfully and lands on the wrong item."""
+    """The comment renumbers faithfully, and so lands on the item next to the right one."""
     front = attach(mutated(SEQ, lambda s: s.insert(0, "zero"), ruamel))
     assert front["zero"][0] == ("# about one",)  # describes `one`
     assert front["one"][0] == ()  # ... which now has nothing
@@ -316,9 +341,9 @@ def test_a3_deleting_the_last_item_leaves_no_comment_dangling() -> None:
 
 @needs_ruamel
 def test_a3_ruamel_orphans_one_comment_and_destroys_another() -> None:
-    """RUAMEL-BEHAVIOR §3.2/§3.3: both failure directions, at once."""
-    # del s[0]: `# about one` survives its item and mislabels `two`; `# about two`,
-    # whose item survives, is destroyed -- it lived inside the popped token.
+    """Both failure directions at once: one comment outlives its item, another is lost."""
+    # del s[0]: `# about one` survives its item and mislabels `two`, while `# about two`,
+    # whose item survives, is destroyed because it lived inside the popped token.
     assert mutated(SEQ, lambda s: s.__delitem__(0), ruamel) == (
         "# about one\n- two\n# about three\n- three\n"
     )
@@ -368,7 +393,7 @@ def test_a4_a_deleted_comment_cannot_be_resurrected_by_re_adding_the_key() -> No
 
 @needs_ruamel
 def test_a4_ruamel_drifts_the_comment_and_keeps_a_stale_record() -> None:
-    """RUAMEL-BEHAVIOR §3.5(a): `__delitem__` never looks at `self.ca`."""
+    """`__delitem__` never looks at `self.ca`, so the comment drifts and the record stays."""
     node = load(MAP, ruamel)
     node.pop("beta")
     assert dump(node, ruamel) == (
@@ -382,7 +407,7 @@ def test_a4_ruamel_drifts_the_comment_and_keeps_a_stale_record() -> None:
 
 @needs_ruamel
 def test_a4_ruamel_resurrects_a_deleted_comment_onto_an_unrelated_value() -> None:
-    """RUAMEL-BEHAVIOR §3.5(b): the stale record re-attaches on the next assignment."""
+    """The stale record re-attaches on the next assignment to that key."""
     src = "alpha: 1\nbeta: 2  # secret comment about beta\ngamma: 3\n"
     node = load(src, ruamel)
     del node["beta"]
@@ -458,7 +483,10 @@ def test_a5_move_to_front_reorders_the_comments_too() -> None:
 
 
 def test_a5_order_preserving_insert_keeps_the_end_of_line_comment() -> None:
-    """``CommentedMap.insert(pos, key, value)`` as a rename: ruamel destroys `# eol beta`."""
+    """`CommentedMap.insert(pos, key, value)` used as a rename keeps `# eol beta`.
+
+    ruamel destroys that comment on the same operation.
+    """
     assert mutated(MAP, lambda m: m.insert(1, "BETA", m.pop("beta"))) == (
         "# about alpha\n"
         "alpha: 1   # eol alpha\n"
@@ -470,9 +498,9 @@ def test_a5_order_preserving_insert_keeps_the_end_of_line_comment() -> None:
 
 @needs_ruamel
 def test_a5_ruamel_scatters_comments_across_the_document() -> None:
-    """RUAMEL-BEHAVIOR §3.6/§3.7."""
-    # move_to_end: `# about alpha` stays at the top (it lives in ca.comment[1]) and
-    # `# about beta` -- glued to alpha's end-of-line token -- travels to the very end.
+    """`move_to_end` splits an entry's comments, and `insert` destroys an end-of-line one."""
+    # move_to_end: `# about alpha` stays at the top, because it lives in `ca.comment[1]`,
+    # while `# about beta`, glued to alpha's end-of-line token, travels to the very end.
     assert mutated(MAP, lambda m: m.move_to_end("alpha"), ruamel) == (
         "# about alpha\n"
         "beta: 2    # eol beta\n"
@@ -520,7 +548,7 @@ def test_a6_sort_moves_the_comments_with_the_items() -> None:
 
 @needs_ruamel
 def test_a6_ruamel_reverse_moves_nothing() -> None:
-    """RUAMEL-BEHAVIOR §3.4: ``sort`` remaps ``ca.items``, ``reverse`` does not."""
+    """`sort` remaps `ca.items` and `reverse` does not, so every comment ends up wrong."""
     assert mutated(EOL_SEQ, lambda s: s.sort(reverse=True), ruamel) == (
         "- d  # cd\n- c  # cc\n- b  # cb\n- a  # ca\n"  # correct
     )
@@ -778,7 +806,7 @@ def test_seq_nested_container_replacement_drops_only_the_old_child_s_comments() 
 
 @needs_ruamel
 def test_ruamel_slice_deletion_strands_the_deleted_items_comments() -> None:
-    """RUAMEL-BEHAVIOR §3.9: correct for end-of-line comments, wrong for own-line ones."""
+    """Correct for the end-of-line comments and wrong for the own-line ones."""
     out = mutated(EVERY_SEQ, lambda s: s.__delitem__(slice(1, 3)), ruamel)
     assert out == "# before one\n- one          # eol one\n# before two\n"
 
@@ -871,17 +899,17 @@ def test_no_mutation_invents_a_comment(name: str) -> None:
     ],
 )
 def test_no_mutation_strands_a_dash_from_its_value(name: str) -> None:
-    """A sequence item is ``- value``, not ``-`` followed by an indented value.
+    """A sequence item is `- value`, rather than a bare `-` followed by an indented value.
 
-    Purely a layout property, but it is the one the :func:`attach` reader has to look
-    past, so it gets asserted here rather than nowhere.
+    A layout property rather than an attachment one, and it is the one the `attach` reader
+    has to look past, so it gets asserted here rather than nowhere.
     """
     src, mutate = MUTATIONS[name]
     assert [line for line in mutated(src, mutate).splitlines() if line.strip() == "-"] == []
 
 
 def test_dumping_does_not_mutate_the_object_graph() -> None:
-    """DIVERGENCES A8: ruamel's representer appends to ``ca.comment`` on every dump."""
+    """Three dumps leave `.ca` exactly as it was, so a dump is a read of the graph."""
     node = load(EVERY)
     before = repr(node.ca)
     for _ in range(3):
@@ -901,7 +929,7 @@ def test_ruamel_dumping_grows_ca_comment_without_bound() -> None:
 
 
 def test_the_key_eol_slot_survives_a_mutation_of_a_sibling() -> None:
-    """The "between key and value" comment is the entry's, not the neighbour's."""
+    """The "between key and value" comment belongs to its entry, not to the neighbour."""
     node = load(EVERY)
     assert node.ca.items["beta"][C_VALUE_EOL].value.strip() == "# eol on beta"
     del node["alpha"]

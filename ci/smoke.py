@@ -1,16 +1,29 @@
-"""Smoke-test an installed yamluna wheel.
+"""Checks that an installed yamluna wheel loads, edits and dumps a document.
 
-Run against a *fresh* interpreter that only has the wheel installed -- that is what makes the
-wheel verified rather than merely built, and running it on a Python other than the one the
-extension was compiled against is what verifies the abi3 tag.
+Run it against a fresh interpreter that has nothing but the wheel installed:
 
-Three things, because they exercise three different halves of the boundary:
+```bash
+uv venv /tmp/fresh --python 3.13
+uv pip install --python /tmp/fresh/bin/python dist/*.whl
+/tmp/fresh/bin/python ci/smoke.py
+```
 
-1. a commented document with an **anchor**, loaded and dumped byte-identically -- the emitter,
-   the trivia slots and the anchor/alias path;
-2. the same document edited -- the trivia store surviving a mutation;
-3. a **custom class** registered with the instance registry, dumped and read back -- the
-   representer, the constructor and the ``%TAG`` wire format.
+Installing into an empty environment is what makes the wheel verified rather than
+merely built, and running it on a Python other than the one the extension was compiled
+against is what verifies the abi3 tag.
+
+It checks three things, which between them cross the Rust and Python boundary in both
+directions:
+
+1. A commented document with an anchor loads and dumps byte-identically, covering the
+   emitter, the trivia slots and the anchor and alias path.
+2. The same document, edited, keeps each comment with the entry it described, covering
+   the trivia store across a mutation.
+3. A custom class registered on the instance registry dumps and reads back, covering
+   the representer, the constructor and the `%TAG` wire format.
+
+Every check is an assertion, so the script exits non-zero on the first failure and
+prints the versions it ran against on success.
 """
 
 import sys
@@ -47,7 +60,7 @@ assert '&defaults' in edited and '*defaults' in edited, edited  # still an alias
 
 
 class Circuit:
-    """A custom class, registered on this YAML() only."""
+    """A custom class, registered on one `YAML` instance and not on any other."""
 
     def __init__(self, qubits: int = 0) -> None:
         self.qubits = qubits

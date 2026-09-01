@@ -1,10 +1,10 @@
-"""``yamluna.representer``: Python tree -> FFI records.
+"""Tests for `yamluna.representer`: a Python tree in, FFI records out.
 
-The strongest tests here are the round trips in :class:`TestRecordRoundTrip`: build a record
-tree, construct it into Python objects, represent it back, assert the records are identical.
+The strongest tests here are the round trips at the end of the file: build a record tree,
+construct it into Python objects, represent it back, then assert the records are identical.
 A per-direction test can pass while the two directions disagree about which slot a comment
-lives in; a round trip cannot.  Those skip until ``yamluna.constructor`` exists; everything
-above them tests this module on its own.
+lives in; a round trip cannot. Those tests skip until `yamluna.constructor` exists, and
+everything above them tests this module on its own.
 """
 
 from __future__ import annotations
@@ -68,19 +68,36 @@ from yamluna.scalarstring import (
 
 
 def root(data: Any, **kw: Any) -> Node:
-    """The root node of ``represent(data)``."""
+    """Returns the root node of `represent(data)`.
+
+    Args:
+        data: The Python tree to represent.
+        kw: Keyword options for `represent`, such as `registry` or `version`.
+
+    Returns:
+        The document's root record node.
+    """
     d = represent(data, **kw)
     assert d.root == 0, d
     return d.nodes[0]
 
 
 def one(data: Any, **kw: Any) -> Node:
-    """``represent({'k': data})`` -> the value node, for testing one scalar in isolation."""
+    """Returns the value node of `represent({'k': data})`, to test one scalar in isolation.
+
+    Args:
+        data: The value to put under the key `k`.
+        kw: Keyword options for `represent`, such as `version`.
+
+    Returns:
+        The record node written for `data`.
+    """
     d = represent({'k': data}, **kw)
     return d.nodes[d.nodes[0].children[1]]
 
 
 def token(text: str, column: int = 0) -> CommentToken:
+    """Returns a `CommentToken` holding `text`, starting at `column`."""
     return CommentToken(text, CommentMark(column))
 
 
@@ -124,11 +141,17 @@ class TestLexemePreservation:
         assert (node.value, node.style) == ('one\ntwo\n', STYLE_LITERAL)
 
     def test_constructed_values_have_no_raw(self) -> None:
-        """B7/B8: no lexeme means the emitter formats -- and never zero-pads or drops a sign."""
+        """With no lexeme the emitter formats the value, and formatting loses nothing.
+
+        ruamel turns `1_000.5` into `01000.5` and `+12` into `12`, which is a lost digit
+        separator, a fabricated leading zero and a dropped sign.
+        """
         assert one(scalarint.ScalarInt(1000)).raw is None
         assert one(scalarint.ScalarInt(1000)).value == '1000'
         assert one(scalarint.HexInt(255)).value == '0xff'
-        assert one(scalarint.HexInt(-31, caps=True)).value == '-0x1F'  # D1: sign before the base
+        # The sign goes in front of the base prefix. ruamel writes '0x-1F', which matches
+        # neither the YAML 1.1 nor the 1.2 integer production and only ruamel reads back.
+        assert one(scalarint.HexInt(-31, caps=True)).value == '-0x1F'
         assert one(scalarfloat.ScalarFloat(1.5)).value == '1.5'
         assert one(scalarbool.ScalarBoolean(True)).value == 'true'
         assert one(LiteralScalarString('a\n')).raw is None
@@ -257,11 +280,11 @@ class TestStructure:
     def test_line_and_col_come_back_from_lc(self) -> None:
         """A recorded position is what lets the emitter reproduce the source's own layout.
 
-        DESIGN 6.2 wants `load -> dump` byte-identical, and the emitter gets there by
-        writing an untouched node where the source wrote it.  A bare `str` or `int` has
-        nowhere to keep a position of its own, so the parent's `.lc` is where every scalar's
-        comes back from.  A stale one cannot open a hole in the output: the emitter stops
-        believing recorded lines at the first construct that does not land on one.
+        A byte-identical `load` then `dump` needs every untouched node written where the
+        source wrote it. A bare `str` or `int` has nowhere to keep a position of its own,
+        so the parent's `.lc` is where every scalar's comes back from. A stale position
+        cannot open a hole in the output: the emitter stops believing recorded lines at
+        the first construct that does not land on one.
         """
         m = CommentedMap({'a': 1})
         m.lc.line, m.lc.col = 7, 3
@@ -281,7 +304,16 @@ class TestStructure:
 
 
 def assert_no_dangling_alias(written: Doc) -> None:
-    """No `*name` without a `&name` ahead of it -- arena order is document order."""
+    """Asserts that every `*name` has its `&name` ahead of it.
+
+    Args:
+        written: The represented document to check.
+
+    Raises:
+        AssertionError: An alias has no anchor before it, or carries a tag.
+    """
+    # A node's index in the arena is its position in the document, so one pass in index
+    # order is the same walk the emitter makes.
     seen: set[str] = set()
     for node in written.nodes:
         if node.kind == KIND_ALIAS:
@@ -312,7 +344,10 @@ class TestAnchors:
         assert [n.anchor for n in d.nodes if n.anchor] == ['id001', 'id001', 'id002', 'id002']
 
     def test_an_anchor_used_once_is_kept(self) -> None:
-        """DIVERGENCES B1: ruamel drops it. It is source text; deleting it is not a round trip."""
+        """An anchor used once is kept: it is source text, so dropping it is not a round trip.
+
+        ruamel drops any anchor referenced fewer than twice.
+        """
         only = CommentedMap({'y': 2})
         only.yaml_set_anchor('unused')  # always_dump left False
         assert root(CommentedMap({'other': only})).children[1] == 2
@@ -331,9 +366,12 @@ class TestAnchors:
         assert d.nodes[4] == Node(KIND_ALIAS, anchor='s')
 
     def test_an_alias_to_a_null_comes_back_from_the_parent(self, construct: Any) -> None:
-        """`a: &n` / `b: *n`: both keys hold the one `None`, so identity cannot say `b` is
-        an alias.  The record the parent parked for `b` is an alias node, and that is what
-        says it -- but only while `&n` is still somewhere ahead of it in the document.
+        """An alias to a null comes back from the record its parent parked.
+
+        In `a: &n` over `b: *n` both keys hold the one `None`, so identity cannot tell
+        that `b` is an alias. The parent parked an alias record for `b`, and that record
+        is what says so, but only while `&n` is still somewhere ahead of it in the
+        document.
         """
         source = doc(mapping([('a', scalar('', raw='', anchor='n')), ('b', alias('n'))]))
         tree = construct(source)
@@ -349,8 +387,10 @@ class TestAnchors:
     def test_an_alias_is_dropped_when_its_anchor_goes(
         self, construct: Any, edit: Any
     ) -> None:
-        """An alias whose anchor is not in the output is not YAML at all, so the site falls
-        back to the plain `None` it holds.  Losing an alias beats emitting a dangling one.
+        """An alias whose anchor left the tree falls back to the plain `None` it holds.
+
+        A `*name` with no `&name` ahead of it is not YAML, so losing the alias beats
+        emitting a dangling one.
         """
         tree = construct(doc(mapping([('a', scalar('', raw='', anchor='n')), ('b', alias('n'))])))
         edit(tree)
@@ -507,7 +547,11 @@ class TestTrivia:
         assert root(m).eol == Trivia('# note', own_line=False)
 
     def test_comments_survive_a_mutation_that_moves_the_entry(self) -> None:
-        """The A2/A5 divergence, from the representer's side: the record follows the entry."""
+        """The record follows the entry that moved, seen from the representer's side.
+
+        ruamel keys by index, so an insert relabels the following element's comment, and a
+        rename or a `move_to_end` scatters comments across the document.
+        """
         s = CommentedSeq(['one', 'two'])
         s._ca_record(0)[C_ELEM_PRE] = [token('# about one\n')]
         s.insert(0, 'zero')
@@ -516,7 +560,11 @@ class TestTrivia:
         assert d.nodes[2].before == [Trivia('# about one')]
 
     def test_representing_does_not_mutate_the_object(self) -> None:
-        """DIVERGENCES A8: a dump is a read. Nothing here may create .ca or grow it."""
+        """A dump is a read: nothing here may create `.ca` or grow it.
+
+        ruamel's representer writes to `.ca` while dumping, so serialising an object
+        changes it.
+        """
         m = CommentedMap({'a': [1, 2], 'b': 'x'})
         before = {k: repr(v) for k, v in vars(m).items()}
         for _ in range(3):
@@ -527,14 +575,16 @@ class TestTrivia:
 
 
 def d_before(document: Doc) -> list[Trivia]:
-    """``before`` of the first key of a one-entry mapping."""
+    """Returns the `before` trivia of the first key of a one-entry mapping."""
     return document.nodes[1].before
 
 
 # -- tags ---------------------------------------------------------------------------------
 
 
-#: The tag source these test classes register under: their root package (DESIGN.md 5.2).
+# The tag source these test classes register under. A registration with no explicit
+# source takes the first component of the class's `__module__`, which here is the name of
+# this module.
 SOURCE = __name__.partition('.')[0]
 
 
@@ -640,15 +690,15 @@ class TestTags:
 # -- the round trip -----------------------------------------------------------------------
 
 def _tag(suffix: str) -> tuple[str, str, str]:
-    """The `!!suffix` form of a `tag:yaml.org,2002:` tag, as the loader records it."""
+    """Returns the `!!suffix` form of a `tag:yaml.org,2002:` tag, as the loader records it."""
     return ('!!', suffix, f'tag:yaml.org,2002:{suffix}')
 
 
 _STR = _tag('str')
 _BINARY = _tag('binary')
 
-#: One entry per feature above.  Each is a record tree that a *load* could have produced,
-#: so `construct` -> `represent` must return it unchanged.
+# One entry per feature above. Each is a record tree that a load could have produced, so
+# `construct` followed by `represent` has to return it unchanged.
 ROUND_TRIP: dict[str, Doc] = {
     'scalar': doc('hello'),
     'mapping': doc(mapping([('a', '1'), ('b', 'x')])),
@@ -718,11 +768,17 @@ ROUND_TRIP: dict[str, Doc] = {
 
 
 def normalise(document: Doc) -> Doc:
-    """Clear ``raw`` where the value alone reproduces it.
+    """Clears `raw` wherever the value alone reproduces it.
 
-    A plain scalar whose builtin re-renders its lexeme exactly comes back as a bare
-    ``str``/``int``/``bool``, which has nowhere to keep a lexeme -- and needs none, because
-    ``value`` *is* the lexeme.  Applied to both sides, so a real difference still fails.
+    A plain scalar whose builtin re-renders its lexeme exactly comes back as a bare `str`,
+    `int` or `bool`, which has nowhere to keep a lexeme and needs none: `value` is the
+    lexeme. Applied to both sides of a comparison, so a real difference still fails.
+
+    Args:
+        document: The document to normalise. It is modified in place.
+
+    Returns:
+        The same document.
     """
     for node in document.nodes:
         if node.style == STYLE_PLAIN and node.raw == node.value:
@@ -732,7 +788,14 @@ def normalise(document: Doc) -> Doc:
 
 @pytest.fixture(scope='session')
 def construct() -> Any:
-    """``Doc -> Python tree``, skipping until the constructor exists."""
+    """Returns a callable that constructs a `Doc` into a Python tree.
+
+    Skips the test until `yamluna.constructor` exists. The callable loads with
+    `preserve_quotes=True`, so a quoted scalar keeps the class that carries its lexeme.
+
+    Returns:
+        A function taking a `Doc` and keyword options for `construct`.
+    """
     module = pytest.importorskip('yamluna.constructor', reason='constructor.py is not written yet')
 
     def build(document: Doc, **kw: Any) -> Any:
@@ -742,6 +805,16 @@ def construct() -> Any:
 
 
 def assert_round_trips(original: Doc, construct: Any, **kw: Any) -> None:
+    """Asserts that `original` survives being constructed and represented again.
+
+    Args:
+        original: The record document a load could have produced.
+        construct: The `construct` fixture.
+        kw: Keyword options for `represent`, such as `registry`.
+
+    Raises:
+        AssertionError: The represented records differ from `original`.
+    """
     assert normalise(represent(construct(original), **kw)) == normalise(original)
 
 
@@ -775,7 +848,7 @@ def test_round_trip_of_a_registered_class(construct: Any) -> None:
 def test_an_edited_value_drops_the_parked_tag_and_lexeme(construct: Any) -> None:
     """The staleness guard: what the parent parked describes the value that was loaded.
 
-    Overwrite the entry and the record no longer applies -- the new value is formatted from
+    Overwrite the entry and the record no longer applies. The new value is formatted from
     scratch, tag and all, exactly as it would be in a tree nobody loaded.
     """
     tree = construct(doc(mapping([

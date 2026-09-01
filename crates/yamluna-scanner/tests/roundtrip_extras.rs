@@ -1,5 +1,5 @@
 //! Tests for the round-trip capabilities the `yamluna` fork adds on top of `saphyr-parser`:
-//! comments (§1.1), collection style (§1.2) and anchor names (§1.3).
+//! comment events, collection style on the collection-start events, and anchor names.
 //!
 //! The upstream tests (and the 402 `yaml-test-suite` cases) cover the parser with the default
 //! `keep_comments(false)`; these cover what turning it on produces, and the two new event fields.
@@ -137,7 +137,7 @@ fn comment_texts(source: &str) -> Vec<String> {
 }
 
 // -------------------------------------------------------------------------------------------
-// §1.1 — comments are off by default
+// Comments are off by default.
 // -------------------------------------------------------------------------------------------
 
 /// The default must be byte-for-byte the upstream behaviour: that is what keeps the 402
@@ -185,7 +185,7 @@ c: |-
 }
 
 // -------------------------------------------------------------------------------------------
-// §1.1 — every position a comment can occur in
+// Every position a comment can occur in.
 // -------------------------------------------------------------------------------------------
 
 #[test]
@@ -425,7 +425,7 @@ fn comment_text_is_verbatim() {
 
 /// Every comment's span must slice back to exactly the comment's text.
 ///
-/// `Marker::index` is a *char* offset (§1.5), hence the `chars()` dance.
+/// `Marker::index` counts characters rather than bytes, hence the `chars()` dance.
 #[test]
 fn comment_spans_slice_back_to_the_source() {
     let source = "\
@@ -454,7 +454,7 @@ block: |- # header
 }
 
 // -------------------------------------------------------------------------------------------
-// §1.1 — `#` characters that are not comments
+// `#` characters that are not comments.
 // -------------------------------------------------------------------------------------------
 
 #[test]
@@ -518,7 +518,7 @@ fn comment_must_be_preceded_by_whitespace() {
 }
 
 // -------------------------------------------------------------------------------------------
-// §1.1 — comments never enter the state machine
+// Comments never enter the state machine.
 // -------------------------------------------------------------------------------------------
 
 #[derive(Default)]
@@ -571,7 +571,7 @@ fn peek_matches_next_with_comments() {
 }
 
 // -------------------------------------------------------------------------------------------
-// §1.2 — collection style
+// Collection style.
 // -------------------------------------------------------------------------------------------
 
 #[test]
@@ -687,7 +687,7 @@ fn flow_key_of_a_block_mapping() {
 }
 
 // -------------------------------------------------------------------------------------------
-// §1.3 — anchor names
+// Anchor names.
 // -------------------------------------------------------------------------------------------
 
 #[test]
@@ -778,7 +778,7 @@ fn reused_anchor_name() {
 }
 
 // -------------------------------------------------------------------------------------------
-// §1.5 — positions
+// Positions.
 // -------------------------------------------------------------------------------------------
 
 /// `Marker::index` is a char offset and `Marker::col` is 0-based, as the doc comments now say.

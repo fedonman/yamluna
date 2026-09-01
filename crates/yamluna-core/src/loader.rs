@@ -1,9 +1,30 @@
-//! Events → documents (DESIGN §2.3), with the trivia attachment pass of DESIGN §2.2 folded in.
+//! Turns the scanner's event stream into [`Document`]s, hanging every comment and blank line
+//! off the node it was written against as it goes.
 //!
-//! This is our own [`Parser`] driver rather than `saphyr::YamlLoader`, which forces a
-//! `LinkedHashMap` mapping (no duplicate keys, nowhere to hang per-entry trivia), silently
-//! last-wins on duplicate keys, and resolves aliases by cloning the target so `*base` is
-//! unrecoverable after load.
+//! The loader drives [`Parser`] itself instead of using `saphyr::YamlLoader`, which cannot
+//! carry this model: its `LinkedHashMap` mapping has no room for per-entry trivia and silently
+//! keeps only the last of a set of duplicate keys, and it resolves aliases by cloning the
+//! target, so `*base` is unrecoverable after load.
+//!
+//! # Where trivia go
+//!
+//! Comments and node spans share one character-offset coordinate system, so the attachment is a
+//! merge along a single axis. The rules it applies:
+//!
+//! 1. A comment on the same line as, and after, the last token of a node is that node's `eol`
+//!    comment. For a mapping entry the node is the value, unless the comment falls between the
+//!    key and the `:`, which makes it the key's.
+//! 2. An own-line comment goes in the `before` slot of the next node that starts at or after
+//!    it, unless that node lies outside the collection currently open, in which case it is that
+//!    collection's `after`. Column decides: a run of comments sitting where several block
+//!    collections end is cut at the first comment left of a collection's content column, and
+//!    what precedes the cut stays inside. A run indented into a nested block collection goes to
+//!    that collection's `inner` slot rather than to its first child's `before`, so it dies with
+//!    the subtree it describes.
+//! 3. A run of one or more empty lines becomes a `Trivia::BlankLines` in whichever slot the
+//!    next comment or node takes.
+//! 4. Comments before the first token of a document go to `Document::leading`, and comments
+//!    after its last node to `Document::trailing`.
 
 use std::collections::HashMap;
 
@@ -15,34 +36,37 @@ use crate::node::{
 };
 use crate::trivia::{Pending, Trivia};
 
-/// A block scalar's lexeme without the single line break that terminates its last line: the
-/// emitter writes that itself, as it does for any other scalar.
+/// Returns `s` without the single line break that terminates its last line.
 fn strip_break(s: &str) -> String {
+    // A block scalar's lexeme is stored without that break because the emitter writes it back
+    // itself, the same way it does for any other scalar.
     s.strip_suffix("\r\n")
         .or_else(|| s.strip_suffix('\n'))
         .unwrap_or(s)
         .to_owned()
 }
 
-/// Whether a source line is a document-end marker: `...` at column 0, alone or with nothing after
-/// it but a comment. The parser gives an event for the one that closes a document and none at all
-/// for one that does not, so this is how the second kind is found.
+/// Reports whether `line` is a document-end marker: `...` at column 0, alone or with nothing
+/// after it but a comment.
 fn is_document_end(line: &str) -> bool {
+    // The parser gives an event for the `...` that closes a document and no event at all for
+    // one that closes nothing, so reading the line back is the only way to find that second
+    // kind.
     let Some(rest) = line.strip_prefix("...") else {
         return false;
     };
     rest.is_empty() || rest.starts_with([' ', '\t'])
 }
 
-/// A scanner count (a line, a column, a char index) as a `u32`, saturating rather than wrapping.
+/// Narrows a scanner count (a line, a column, a char index) to `u32`, saturating at `u32::MAX`.
 fn small(v: usize) -> u32 {
     u32::try_from(v).unwrap_or(u32::MAX)
 }
 
 /// What went wrong while parsing.
 ///
-/// The kind is carried structurally so the Python layer never has to classify by string-matching
-/// (DESIGN §3).
+/// The kind is a value of its own rather than a substring of the message, so a caller can
+/// branch on it without matching text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorKind {
     /// A lexical or syntactic error reported by the scanner.
@@ -78,14 +102,27 @@ impl From<ScanError> for ParseError {
     }
 }
 
-/// Load every document of `source`.
+/// Parses `source` into one [`Document`] per YAML document in the stream.
 ///
-/// A UTF-8 BOM is stripped (`Parser::new_from_str` does not do it) and recorded on the first
-/// document. A source that holds nothing but trivia yields one rootless document carrying it.
+/// A leading UTF-8 BOM is stripped before parsing and recorded on the first document, so the
+/// emitter can write it back. A source that holds nothing but comments and blank lines yields
+/// one document with no root, carrying that trivia.
 ///
 /// # Errors
-/// Returns the scanner's error, with its position translated into the model's coordinates.
+///
+/// Returns a [`ParseError`] when the scanner rejects the source. It carries the scanner's
+/// message verbatim, an [`ErrorKind`], and the position translated into the model's 0-based
+/// coordinates.
+///
+/// # Examples
+///
+/// ```
+/// let docs = yamluna_core::parse("a: 1  # hi\n")?;
+/// assert_eq!(docs.len(), 1);
+/// # Ok::<(), yamluna_core::ParseError>(())
+/// ```
 pub fn parse(source: &str) -> Result<Vec<Document>, ParseError> {
+    // `Parser::new_from_str` leaves a BOM in the text, so it comes off here.
     let (src, bom) = match source.strip_prefix('\u{feff}') {
         Some(rest) => (rest, true),
         None => (source, false),
@@ -97,8 +134,8 @@ pub fn parse(source: &str) -> Result<Vec<Document>, ParseError> {
     Ok(docs)
 }
 
-/// The lines of `src` whose white space the emitter cannot reproduce from a column alone. See
-/// [`Document::line_space`].
+/// Returns the lines of `src` whose white space the emitter cannot reproduce from a column
+/// alone. See [`Document::line_space`].
 fn line_space(src: &str) -> HashMap<u32, String> {
     let mut out = HashMap::new();
     for (i, line) in src.split('\n').enumerate() {
@@ -117,7 +154,8 @@ struct Frame {
     seq: bool,
     /// Whether it is bracket-delimited.
     flow: bool,
-    /// The column its content starts at; the threshold of DESIGN §2.2 rule 2.
+    /// The column its content starts at, which is where a pending run of own-line trivia is cut
+    /// between this collection and a shallower one.
     col: u32,
     /// Whether any child node has been created yet.
     has_child: bool,
@@ -162,19 +200,20 @@ struct Loader<'a> {
     /// The most recently completed node of the current document.
     last_node: Option<NodeId>,
     /// Char index just past the last thing consumed, comments included. Blank lines are counted
-    /// from the source between it and the next token, never from line arithmetic: the parser gives
-    /// a flow collection's end event the span of the token *before* its closing bracket, so the
-    /// bracket's line would otherwise be miscounted as blank.
+    /// from the source between it and the next token, never from line arithmetic: the parser
+    /// gives a flow collection's end event the span of the token *before* its closing bracket,
+    /// so the bracket's line would otherwise be miscounted as blank.
     last_index: usize,
     /// Char index just past the last *structural* token; comments never move it, so a `?`
     /// indicator stays findable across the comment that follows it.
     scan_from: usize,
-    /// Whether every trivium still waiting in `pending` was read *after* [`Self::scan_from`], so
-    /// that a raw region echoed from there accounts for all of them. A comment written above the
-    /// `...` that closed the document before does not, and echoing the region would drop it.
+    /// Whether every trivium still waiting in `pending` was read *after* [`Self::scan_from`],
+    /// so that a raw region echoed from there accounts for all of them. A comment written above
+    /// the `...` that closed the document before does not, and echoing the region would drop
+    /// it.
     pending_after_scan: bool,
-    /// An end-of-line comment that follows a `key:` and therefore belongs to the value that has
-    /// not been created yet (DESIGN §2.2 rule 1).
+    /// An end-of-line comment that follows a `key:` and therefore belongs to the value, which
+    /// has not been created yet.
     deferred_eol: Option<Trivia>,
     doc_start_line: Option<u32>,
     doc_end_line: Option<u32>,
@@ -225,10 +264,11 @@ impl<'a> Loader<'a> {
             Event::DocumentStart(explicit) => self.document_start(explicit, span, version),
             Event::DocumentEnd => self.document_end(span),
             Event::Scalar(value, style, anchor, tag) => {
-                // A block scalar's span starts at its *body*, so the run to probe for blank lines
-                // ends at the header: everything past it is the lexeme's own, and `scalar_raw`
-                // keeps it. Probing to the body instead counts a blank first content line twice —
-                // once in `raw`, once as a `BlankLines` trivia the emitter writes again.
+                // A block scalar's span starts at its *body*, so the run to probe for blank
+                // lines ends at the header: everything past it is the lexeme's own, and
+                // `scalar_raw` keeps it. Probing to the body instead counts a blank first
+                // content line twice: once in `raw`, once as a `BlankLines` trivia the emitter
+                // writes again.
                 let header = match style {
                     ScalarStyle::Literal | ScalarStyle::Folded => {
                         self.block_header(span.start.index())
@@ -243,8 +283,8 @@ impl<'a> Loader<'a> {
                 node.anchor = anchor.name.map(std::borrow::Cow::into_owned);
                 node.tag = tag.map(|t| self.node_tag(&t));
                 self.record_props(&mut node, span.start.index());
-                // The header is a lexeme of its own, ahead of the body and possibly a line below
-                // the node's properties, so it needs its own coordinates the way they do.
+                // The header is a lexeme of its own, ahead of the body and possibly a line
+                // below the node's properties, so it needs its own coordinates the way they do.
                 node.header_at = header
                     .as_ref()
                     .map(|(indicator, end)| self.position_at(end - indicator.chars().count()));
@@ -260,8 +300,8 @@ impl<'a> Loader<'a> {
                     self.ends[id as usize] = end;
                 }
                 self.place(id);
-                // A synthetic node has whatever token was current as its span, so it must not be
-                // allowed to move the cursor the `?` scan starts from.
+                // A synthetic node has whatever token was current as its span, so it must not
+                // be allowed to move the cursor the `?` scan starts from.
                 self.advance(span, !implicit_empty);
             }
             Event::Alias(anchor) => {
@@ -290,9 +330,9 @@ impl<'a> Loader<'a> {
     // ---------------------------------------------------------------- documents
 
     fn document_start(&mut self, explicit: bool, span: Span, version: Option<(u32, u32)>) {
-        // An implicit start carries the span of the first token of the *content*. When that is a
-        // block scalar the token is its body, and the empty lines between the header and it are
-        // the scalar's own content — `Event::Scalar` probes to the same place for that reason.
+        // An implicit start carries the span of the first token of the *content*. When that is
+        // a block scalar the token is its body, and the empty lines between the header and it
+        // are the scalar's own content, which is why `Event::Scalar` probes to the same place.
         let probe = if explicit {
             span.start.index()
         } else {
@@ -305,8 +345,8 @@ impl<'a> Loader<'a> {
         } else {
             (Vec::new(), 0)
         };
-        // Not only for an explicit start: a `...` that closes nothing sits above an implicit one
-        // just as readily, and `probe` is where that document's own first line begins.
+        // Not only for an explicit start: a `...` that closes nothing sits above an implicit
+        // one just as readily, and `probe` is where that document's own first line begins.
         let region = self.region(self.scan_from, probe);
         self.doc = Document::default();
         self.doc.explicit_start = explicit;
@@ -314,8 +354,9 @@ impl<'a> Loader<'a> {
         self.doc.tag_directives = directives;
         self.doc.tags_before_version = tags_before_version;
         self.doc.leading = self.pending.take_all();
-        // Every trivium just taken was read between the last consumed token and the `---`, which
-        // is exactly the region: the count is where the emitter's own leading run resumes.
+        // Every trivium just taken was read between the last consumed token and the `---`,
+        // which is exactly the region: the count is where the emitter's own leading run
+        // resumes.
         self.doc.directives_raw = region.map(|raw| (raw, self.doc.leading.len()));
         self.ends.clear();
         self.starts.clear();
@@ -350,19 +391,19 @@ impl<'a> Loader<'a> {
     fn stream_end(&mut self, span: Span) {
         self.blanks(span.start.index());
         let rest = self.pending.take_all();
-        // A `...` that closes no document is not a parser event, and at the end of a stream there
-        // is no document below it to carry it either: it gets one of its own, rootless, the same
-        // way a stream of nothing but trivia does.
+        // A `...` that closes no document is not a parser event, and at the end of a stream
+        // there is no document below it to carry it either: it gets one of its own, rootless,
+        // the same way a stream of nothing but trivia does.
         let region = self.region(self.scan_from, self.map.len());
         if self.docs.is_empty() || region.is_some() {
-            // A source of nothing but trivia. Rule 4 still has to put it somewhere, and a rootless
-            // document re-emits as exactly the trivia it holds.
+            // A source of nothing but trivia. It still has to belong to some document, and a
+            // rootless one re-emits as exactly the trivia it holds.
             self.docs.push(Document::default());
         }
-        // A stream that does not end in a break can still end in white space, and no node and no
-        // trivium owns it: the emitter writes a line's tail only when it breaks the line, and it
-        // never breaks the last one. Bounded by the last lexeme, so a `|+` scalar that kept those
-        // lines as its own content does not get them twice.
+        // A stream that does not end in a break can still end in white space, and no node and
+        // no trivium owns it: the emitter writes a line's tail only when it breaks the line,
+        // and it never breaks the last one. Bounded by the last lexeme, so a `|+` scalar that
+        // kept those lines as its own content does not get them twice.
         let lexemes = self
             .ends
             .iter()
@@ -382,8 +423,9 @@ impl<'a> Loader<'a> {
                 tail
             };
         let last = self.docs.last_mut().expect("just pushed");
-        // Trivia read inside the region sit *above* its markers, which is `leading`, and the count
-        // is what stops the emitter writing them twice; `trailing` is for everything else.
+        // Trivia read inside the region sit *above* its markers, which is `leading`, and the
+        // count is what stops the emitter writing them twice; `trailing` is for everything
+        // else.
         if let Some(raw) = region {
             last.leading.extend(rest);
             last.directives_raw = Some((raw, last.leading.len()));
@@ -431,10 +473,10 @@ impl<'a> Loader<'a> {
         // swallow the blank lines that follow it.
         self.blanks(span.start.index());
         let frame = self.stack.pop().expect("unbalanced collection events");
-        // DESIGN §2.2 rule 2. A flow collection is delimited, so everything still pending is
-        // inside it. A block collection takes only the part of the run indented to its content;
-        // the rest belongs to a shallower slot. The root collection takes nothing: what follows
-        // its last node is the document's trailing trivia (rule 4).
+        // A flow collection is delimited, so everything still pending is inside it. A block
+        // collection takes only the part of the run indented to its content; the rest belongs
+        // to a shallower slot. The root collection takes nothing: what follows its last node is
+        // the document's trailing trivia.
         let after = if frame.flow {
             self.pending.take_all()
         } else if self.stack.is_empty() {
@@ -457,15 +499,15 @@ impl<'a> Loader<'a> {
         self.ends[frame.node as usize] = end;
         if frame.flow {
             // The end event carries the token *before* the closing bracket whenever a `,` or a
-            // comment sits in front of it, so the bracket is scanned for -- and it is where the
-            // collection really ends, which is what an enclosing flow collection measures its own
-            // separation from.
+            // comment sits in front of it, so the bracket is scanned for. The bracket is where
+            // the collection really ends, which is what an enclosing flow collection measures
+            // its own separation from.
             match self.flow_seps(&frame) {
                 // Where the scan came to rest, whatever token the end event names: past the
-                // closing bracket, or -- for a pair that wrote none -- past its last lexeme.
+                // closing bracket, or past the last lexeme of a pair that wrote no brackets.
                 Some(end) => self.ends[frame.node as usize].1 = end,
-                // A scan that lost the thread: the end event then names a token that is not this
-                // collection's, and only its last child is known to be inside it.
+                // A scan that lost the thread: the end event then names a token that is not
+                // this collection's, and only its last child is known to be inside it.
                 None => {
                     if let Some(c) = last_child {
                         self.ends[frame.node as usize].1 = self.ends[c as usize].1;
@@ -486,8 +528,8 @@ impl<'a> Loader<'a> {
         self.advance(span, true);
     }
 
-    /// Create a node: give it its position, its deferred end-of-line comment and the run of
-    /// own-line trivia that precedes it.
+    /// Creates a node and gives it its position, its deferred end-of-line comment and the run
+    /// of own-line trivia that precedes it.
     fn new_node(&mut self, mut node: Node, span: Span) -> NodeId {
         node.pos = Position::from_marker(span.start);
         if let Some(t) = self.deferred_eol.take() {
@@ -503,14 +545,14 @@ impl<'a> Loader<'a> {
         id
     }
 
-    /// Give the pending run of trivia to `node` — or, if `node` is the first child of the
-    /// collection that encloses it, to that collection's `inner` slot (DESIGN §2.1).
+    /// Gives the pending run of trivia to `node`, or to the `inner` slot of the collection that
+    /// encloses it when `node` is that collection's first child.
     ///
-    /// A nested block collection first takes the tail of the run that is indented into it: those
-    /// comments precede its *first child*, not the collection, so they are its `inner` and must
-    /// die with it when the entry is replaced. Left in `before` they land in the parent's record
-    /// for the entry (a sequence element's `before` *is* `C_ELEM_PRE`) and outlive the subtree
-    /// they describe.
+    /// A nested block collection first takes the tail of the run that is indented into it.
+    /// Those comments precede its *first child* rather than the collection, so they go in its
+    /// `inner` slot and die with it when the entry is replaced. Left in `before` they would
+    /// land in the parent's record for the entry (a sequence element's `before` is the slot the
+    /// Python layer calls `C_ELEM_PRE`) and outlive the subtree they describe.
     fn take_before(&mut self, node: NodeId) {
         if self.pending.is_empty() {
             return;
@@ -519,16 +561,16 @@ impl<'a> Loader<'a> {
         let n = self.doc.node(node);
         if n.style == Style::Block && n.is_collection() && !self.stack.is_empty() {
             let mut inside = self.pending.take_to_col(n.pos.col);
-            // A blank run at the head of what was taken sits *above* the `-` that introduces this
-            // node, so it divides the node from the sibling before it — unless the node is the
+            // A blank run at the head of what was taken sits *above* the `-` that introduces
+            // this node, so it divides the node from the sibling before it. The exception is a
             // collection's first child, whose `-` was written before the run began at all.
             if self.stack.last().is_some_and(|f| f.has_child) {
                 let at = inside.iter().position(|t| t.col().is_some()).unwrap_or(0);
                 lifted = inside.drain(..at).collect();
             }
-            // Blank lines directly above the collection's own first line sit under the `-` or the
-            // `key:` that introduces it, so they are inside it; ones separated from it by that
-            // indicator's line are what divides it from the sibling before it.
+            // Blank lines directly above the collection's own first line sit under the `-` or
+            // the `key:` that introduces it, so they are inside it; ones separated from it by
+            // that indicator's line are what divides it from the sibling before it.
             if self.line_above_is_blank(self.starts[node as usize]) {
                 inside.extend(self.pending.take_trailing_blanks());
             }
@@ -549,15 +591,15 @@ impl<'a> Loader<'a> {
         let mut run = lifted;
         run.append(&mut self.pending.take_all());
         if let Some(owner) = self.stack.last().filter(|f| !f.has_child).map(|f| f.node) {
-            // An end-of-line comment in the run sits on the line of the indicator that introduces
-            // this node — after the `-` — which is what `before` writes; only what precedes it
-            // has lines of its own, between the collection and its first child.
+            // An end-of-line comment in the run sits on the line of the indicator that
+            // introduces this node, after the `-`, which is what `before` writes. Only what
+            // precedes it has lines of its own, between the collection and its first child.
             let rest = run.split_off(run.iter().position(eol).unwrap_or(run.len()));
             self.doc.node_mut(owner).trivia.inner.extend(run);
             run = rest;
         }
-        // A block scalar's `|` header is written ahead of the comment that ends its line, so that
-        // comment belongs in `eol`, which the emitter writes straight after the header.
+        // A block scalar's `|` header is written ahead of the comment that ends its line, so
+        // that comment belongs in `eol`, which the emitter writes straight after the header.
         let n = self.doc.node(node);
         if n.trivia.eol.is_none()
             && matches!(
@@ -572,7 +614,7 @@ impl<'a> Loader<'a> {
         self.doc.node_mut(node).trivia.before.extend(run);
     }
 
-    /// File a completed node into its parent.
+    /// Files a completed node into its parent.
     fn place(&mut self, id: NodeId) {
         self.last_node = Some(id);
         self.saw_node = true;
@@ -624,9 +666,10 @@ impl<'a> Loader<'a> {
             self.pending.push(t);
             return;
         }
-        // A block sequence's `-` introduces its *item*, not the sequence: a comment after it sits
-        // on the item's own first line. The item does not exist yet, and `before` is the slot the
-        // emitter writes straight after the `-`, so the run it is built from is where this goes.
+        // A block sequence's `-` introduces its *item*, not the sequence: a comment after it
+        // sits on the item's own first line. The item does not exist yet, and `before` is the
+        // slot the emitter writes straight after the `-`, so the run it is built from is where
+        // this goes.
         if self
             .stack
             .last()
@@ -635,8 +678,9 @@ impl<'a> Loader<'a> {
             self.pending.push(t);
             return;
         }
-        // Rule 1. A collection that opened on this line and has no children yet owns the comment:
-        // it sits after the `[` or the `-`, and the emitter writes it on the collection's own line.
+        // A collection that opened on this line and has no children yet owns the comment: it
+        // sits after the `[` or the `-`, and the emitter writes it on the collection's own
+        // line.
         if let Some(frame) = self.stack.last() {
             if !frame.has_child {
                 let n = frame.node;
@@ -647,8 +691,8 @@ impl<'a> Loader<'a> {
                 }
             }
         }
-        // Rule 1. Inside a mapping entry whose value has not been seen, the comment belongs to the
-        // value — unless it falls between the key and the `:`, in which case it is the key's.
+        // Inside a mapping entry whose value has not been seen, the comment belongs to the
+        // value, unless it falls between the key and the `:`, which makes it the key's.
         if let Some(frame) = self.stack.last() {
             if let Some(key) = frame.pending_key {
                 if self.ends[key as usize].0 == line {
@@ -664,14 +708,16 @@ impl<'a> Loader<'a> {
                 }
             }
         }
-        // Rule 1, the ordinary case: the last node whose final token is on this line.
+        // The ordinary case: the comment goes to the last node whose final token is on this
+        // line.
         if let Some(n) = self.last_node {
             if self.ends[n as usize].0 == line && self.doc.node(n).trivia.eol.is_none() {
                 self.doc.node_mut(n).trivia.eol = Some(t);
                 return;
             }
         }
-        // Rule 4: on the `...` line, or on the `---` line before any node.
+        // On the `...` line the comment trails the document that just closed; on the `---` line
+        // before any node it leads the document that just opened.
         if self.doc_end_line == Some(line) {
             if let Some(d) = self.docs.last_mut() {
                 d.trailing.push(t);
@@ -684,19 +730,21 @@ impl<'a> Loader<'a> {
         self.pending.push(t);
     }
 
-    /// Rule 3: record the empty lines between the last thing consumed and char `index`.
+    /// Records each run of empty lines between the last thing consumed and char `index` as one
+    /// `Trivia::BlankLines`, so it lands in whatever slot the next comment or node takes.
     fn blanks(&mut self, index: usize) {
         if index <= self.last_index {
             return;
         }
         let between = self.slice(self.last_index, index);
-        // The first and last pieces are the tail of the line we were on and the head of the line
-        // we are going to; only the whole lines in between can be blank. At the very start of the
-        // stream there is no line we were on, so the first piece is a whole line as well.
+        // The first and last pieces are the tail of the line we were on and the head of the
+        // line we are going to; only the whole lines in between can be blank. At the very start
+        // of the stream there is no line we were on, so the first piece is a whole line as
+        // well.
         let parts: Vec<&str> = between.split('\n').collect();
         // One trivium per *consecutive* run: a line with content between two empty ones is an
-        // indicator the parser gives no event of its own (a `-`, a `---`), and the empty lines on
-        // either side of it go to different slots.
+        // indicator the parser gives no event of its own (a `-`, a `---`), and the empty lines
+        // on either side of it go to different slots.
         let mut run: u32 = 0;
         let flush = |run: &mut u32, pending: &mut Pending| {
             if *run > 0 {
@@ -718,7 +766,7 @@ impl<'a> Loader<'a> {
         self.last_index = index;
     }
 
-    /// Advance the "last thing consumed" cursors past an event.
+    /// Advances the cursors that track the last thing consumed past an event.
     fn advance(&mut self, span: Span, structural: bool) {
         let end = if span.is_empty() {
             span.start.index()
@@ -734,15 +782,15 @@ impl<'a> Loader<'a> {
 
     // ---------------------------------------------------------------- flow separation
 
-    /// Record what the source wrote *between* this flow collection's lexemes, and return the char
-    /// index it ends at: past its closing bracket, or past the last lexeme of a single pair that
-    /// wrote none. `None` when the scan lost the thread and nothing was recorded.
+    /// Records what the source wrote *between* this flow collection's lexemes and returns the
+    /// char index it ends at: past its closing bracket, or past the last lexeme of a single
+    /// pair that wrote none. `None` when the scan lost the thread and nothing was recorded.
     ///
-    /// One run in front of each child and one in front of the bracket. Each is found by scanning
-    /// forward from the end of the lexeme before it: inside `[]` or `{}` only white space, `,`,
-    /// `:`, `?` and comments can separate two things, so the first character that is none of those
-    /// is the next lexeme -- or its own `&anchor` or tag, which the emitter writes from the node --
-    /// and ends the run.
+    /// There is one run in front of each child and one in front of the bracket. Each is found
+    /// by scanning forward from the end of the lexeme before it: inside `[]` or `{}` only white
+    /// space, `,`, `:`, `?` and comments can separate two things, so the run ends at the first
+    /// character that is none of those. That character opens the next lexeme, or the `&anchor`
+    /// or tag in front of it, which the emitter writes from the node.
     fn flow_seps(&mut self, frame: &Frame) -> Option<usize> {
         let kids: Vec<NodeId> = if frame.seq {
             frame.items.clone()
@@ -759,15 +807,15 @@ impl<'a> Loader<'a> {
         let n = self.doc.node(frame.node);
         let props = usize::from(n.anchor.is_some()) + usize::from(n.tag.is_some());
         let head = from + past_properties(self.slice(from, self.map.len()), props);
-        // `[a: 1]`, `[? a : b]`, `[&c c: d]`, `[[a]: b]`: a single pair written with no brackets
-        // of its own, which the parser gives the span of its first lexeme. It is bracket-less
-        // exactly when that first lexeme is its own key -- when nothing but separation and the
-        // key's own `&anchor` and tag stands between the two -- because a `{` of its own would
-        // stand there instead.
+        // `[a: 1]`, `[? a : b]`, `[&c c: d]`, `[[a]: b]`: a single pair written with no
+        // brackets of its own, which the parser gives the span of its first lexeme. It is
+        // bracket-less exactly when that first lexeme is its own key, meaning nothing but
+        // separation and the key's own `&anchor` and tag stands between the two, because a `{`
+        // of its own would stand there instead.
         //
         // Its separation is recorded like any other (the `?` is part of it), but the gap that
-        // follows it holds the `,` of the collection *around* it, so it records one run per child
-        // and not one more. That length is what tells the emitter it wrote no brackets.
+        // follows it holds the `,` of the collection *around* it, so it records one run per
+        // child and not one more. That length is what tells the emitter it wrote no brackets.
         let key = frame.entries.first().map(|e| e.key);
         let key_at = key.map_or(usize::MAX, |k| self.starts[k as usize]);
         let key_props = key.map_or(0, |k| {
@@ -784,10 +832,10 @@ impl<'a> Loader<'a> {
         let mut seps = Vec::with_capacity(kids.len() + 1);
         for &k in &kids {
             // Bounded by where the parser says the child's content begins: in flow context a
-            // plain scalar may *start* with `:` or `?` (`[:x]`, `{x: :x}`), and an unbounded scan
-            // would take that first character for separation and write it twice. A node the
-            // parser supplied has no content and no trustworthy span, and nothing of its own to
-            // write twice, so its run runs on to the next lexeme.
+            // plain scalar may *start* with `:` or `?` (`[:x]`, `{x: :x}`), and an unbounded
+            // scan would take that first character for separation and write it twice. A node
+            // the parser supplied has no content and no trustworthy span, and nothing of its
+            // own to write twice, so its run runs on to the next lexeme.
             let empty = is_implicit_empty(self.doc.node(k));
             let limit = if empty {
                 usize::MAX
@@ -796,9 +844,9 @@ impl<'a> Loader<'a> {
             };
             let (run, stop) = self.separation(at, limit);
             seps.push(run);
-            // A node the parser supplied has no lexeme to advance past, and the span it was given
-            // is the *next* token's -- for `{a: , b}` already beyond the `}`. The scan's own stop
-            // is the cursor there; a real node ends where its last token does.
+            // A node the parser supplied has no lexeme to advance past, and the span it was
+            // given is the *next* token's, for `{a: , b}` already beyond the `}`. The scan's
+            // own stop is the cursor there; a real node ends where its last token does.
             at = if empty {
                 // ...and an empty node's `&anchor` and tag *are* written, so the scan has to
                 // step over them itself: they are the one thing between it and the next run.
@@ -811,8 +859,8 @@ impl<'a> Loader<'a> {
         }
         if !braced {
             self.doc.node_mut(frame.node).flow_seps = seps;
-            // A pair with no brackets ends at its last lexeme -- which for a value the parser
-            // supplied is where the scan came to rest, the span it was given being the *next*
+            // A pair with no brackets ends at its last lexeme. For a value the parser supplied
+            // that is where the scan came to rest, the span it was given being the *next*
             // token's.
             return Some(at);
         }
@@ -830,8 +878,9 @@ impl<'a> Loader<'a> {
         Some(close + 1)
     }
 
-    /// The separation the source wrote from char `from` up to the next lexeme -- or to `limit`,
-    /// whichever comes first -- with its comments taken out, and the char index it stops at.
+    /// Returns the separation the source wrote from char `from` up to the next lexeme (or to
+    /// `limit`, whichever comes first) with its comments taken out, and the char index it stops
+    /// at.
     fn separation(&self, from: usize, limit: usize) -> (String, usize) {
         let mut run = String::new();
         let mut at = from;
@@ -841,8 +890,8 @@ impl<'a> Loader<'a> {
             at += 1;
             match c {
                 ',' | ':' | '?' => run.push(c),
-                // A comment is trivia and is written back from the slot it was filed in, so its
-                // text is not part of the run -- but a bare `#` stays to mark where it stood,
+                // A comment is trivia and is written back from the slot it was filed in, so
+                // its text is not part of the run. A bare `#` stays to mark where it stood,
                 // which is what lets the emitter write the run *around* it instead of splitting
                 // the two into passes that cannot see each other. The break that ends it is
                 // separation and stays as well.
@@ -865,7 +914,7 @@ impl<'a> Loader<'a> {
 
     // ---------------------------------------------------------------- source probes
 
-    /// The 0-based line and column of char `index`.
+    /// Returns the 0-based line and column of char `index`.
     fn position_at(&self, index: usize) -> Position {
         let before = &self.src[..self.map.byte(index)];
         match before.rsplit_once('\n') {
@@ -884,7 +933,7 @@ impl<'a> Loader<'a> {
         self.map.slice(self.src, start, end)
     }
 
-    /// Is the line directly above the one char `index` sits on empty?
+    /// Reports whether the line directly above the one char `index` sits on is empty.
     fn line_above_is_blank(&self, index: usize) -> bool {
         let before = &self.src[..self.map.byte(index)];
         let Some(nl) = before.rfind('\n') else {
@@ -896,17 +945,18 @@ impl<'a> Loader<'a> {
             .is_empty()
     }
 
-    /// Is there only whitespace between the start of the line and char `index`?
+    /// Reports whether only whitespace stands between the start of the line and char `index`.
     fn is_own_line(&self, index: usize) -> bool {
         let before = &self.src[..self.map.byte(index)];
         let line = before.rsplit_once('\n').map_or(before, |(_, l)| l);
         line.chars().all(|c| c == ' ' || c == '\t' || c == '\r')
     }
 
-    /// Is the node starting at char `index` introduced by an explicit `?` key indicator?
+    /// Reports whether the node starting at char `index` is introduced by an explicit `?` key
+    /// indicator.
     ///
-    /// Only whitespace, indicators and comments can sit between the previous structural token and
-    /// a node, so scanning forward for a `?` while skipping comment runs is exact.
+    /// Only whitespace, indicators and comments can sit between the previous structural token
+    /// and a node, so scanning forward for a `?` while skipping comment runs is exact.
     fn explicit_indicator_before(&self, index: usize) -> bool {
         let mut rest = self.slice(self.scan_from, index).chars();
         while let Some(c) = rest.next() {
@@ -928,10 +978,10 @@ impl<'a> Loader<'a> {
         false
     }
 
-    /// Record where the node's `&anchor` and its tag were written, and with them their order.
+    /// Records where the node's `&anchor` and its tag were written, and with them their order.
     ///
-    /// Only whitespace, indicators and comments can sit between the previous structural token and
-    /// a node's properties, so a scan of that text finds both.
+    /// Only whitespace, indicators and comments can sit between the previous structural token
+    /// and a node's properties, so a scan of that text finds both.
     fn record_props(&self, node: &mut Node, index: usize) {
         if node.anchor.is_none() && node.tag.is_none() {
             return;
@@ -947,8 +997,8 @@ impl<'a> Loader<'a> {
         };
     }
 
-    /// Where the `:` of the entry whose key ends at `from` was written, or `None` when the source
-    /// wrote none (`{a: 1, b}`, a `? key` with no `: value` line).
+    /// Returns where the `:` of the entry whose key ends at `from` was written, or `None` when
+    /// the source wrote none (`{a: 1, b}`, a `? key` with no `: value` line).
     ///
     /// Only white space and comments can sit between a key and its `:`, so anything else means
     /// the entry has no `:` at all and the scan stops there.
@@ -958,11 +1008,12 @@ impl<'a> Loader<'a> {
         Some(self.position_at(from.1 + gap[..at].chars().count()))
     }
 
-    /// The block-scalar header (`|`, `>-`, `|2`, ...) that introduces the scalar starting at char
-    /// `index`, together with the line break that follows it.
+    /// Returns the block-scalar header (`|`, `>-`, `|2`, ...) that introduces the scalar
+    /// starting at char `index`, together with the line break that follows it.
     fn block_header(&self, index: usize) -> Option<(String, usize)> {
-        // The span of a block scalar starts at its *body*, so the header is behind it — except
-        // for one with no body at all (`a: |`), which the parser reports at the header itself.
+        // The span of a block scalar starts at its *body*, so the header is behind it. The
+        // exception is a scalar with no body at all (`a: |`), which the parser reports at the
+        // header itself.
         let mut from = self.scan_from;
         let mut head = self.slice(from, index);
         if !head.contains(['|', '>']) {
@@ -980,11 +1031,11 @@ impl<'a> Loader<'a> {
         Some((indicator, end))
     }
 
-    /// Where a block scalar's lexeme ends, as `ends` records it: the 1-based line and the char
-    /// index just past its last character.
+    /// Returns where a block scalar's lexeme ends, as `ends` records it: the 1-based line and
+    /// the char index just past its last character.
     ///
-    /// The parser's span runs on to the *next* token, so without this a comment on the line that
-    /// follows the scalar reads as the scalar's own end-of-line comment.
+    /// The parser's span runs on to the *next* token, so without this a comment on the line
+    /// that follows the scalar reads as the scalar's own end-of-line comment.
     fn block_lexeme_end(
         &self,
         style: ScalarStyle,
@@ -1003,16 +1054,17 @@ impl<'a> Loader<'a> {
         ))
     }
 
-    /// The lexeme of a scalar, or `None` when the parser synthesised the node (`key:` with nothing
-    /// after it, an empty document, an explicit key with no value).
+    /// Returns the lexeme of a scalar, or `None` when the parser synthesised the node (`key:`
+    /// with nothing after it, an empty document, an explicit key with no value).
     fn scalar_raw(&self, value: &str, style: ScalarStyle, span: Span) -> Option<String> {
         let text = self.slice(span.start.index(), span.end.index());
         match style {
             ScalarStyle::Literal | ScalarStyle::Folded => {
                 let (indicator, header_end) = self.block_header(span.start.index())?;
-                // A block scalar with no body at all and nothing after it is reported at its own
-                // header rather than a line below it, so there is no body to widen. All that can
-                // follow the header is the rest of its line and the empty lines a `+` keeps.
+                // A block scalar with no body at all and nothing after it is reported at its
+                // own header rather than a line below it, so there is no body to widen. All
+                // that can follow the header is the rest of its line and the empty lines a `+`
+                // keeps.
                 if span.start.index() < header_end {
                     let tail = &self.src[self.map.byte(header_end)..];
                     let blank: usize = tail
@@ -1028,10 +1080,10 @@ impl<'a> Loader<'a> {
                 let start = self.map.byte(span.start.index());
                 let line_start = self.src[..start].rfind('\n').map_or(0, |i| i + 1);
                 // What the source wrote between the indicators and the body's first line, from
-                // its first break on. Usually just that break — but a blank line here is block
+                // its first break on. Usually only that break, but a blank line here is block
                 // scalar *content* (`|+` keeps it, and the cooked value starts with it), so it
-                // belongs in the lexeme. Anything before the break is the header line's own tail:
-                // white space, or a comment already lifted into `Trivia4::eol`.
+                // belongs in the lexeme. Anything before the break is the header line's own
+                // tail: white space, or a comment already lifted into the node's `eol` slot.
                 let gap = self
                     .src
                     .get(self.map.byte(header_end)..line_start)
@@ -1042,17 +1094,17 @@ impl<'a> Loader<'a> {
                 };
                 let body = &self.src[line_start..self.map.byte(span.end.index())];
                 // The span runs to the *next* token, so it can end part-way into that token's
-                // indentation. A body line is never white space alone with no break after it, so
-                // such a tail is the next line's indent and not the scalar's.
+                // indentation. A body line is never white space alone with no break after it,
+                // so such a tail is the next line's indent and not the scalar's.
                 let body = match body.rfind('\n') {
                     Some(i) if !body[i + 1..].is_empty() && body[i + 1..].trim().is_empty() => {
                         &body[..=i]
                     }
                     _ => body,
                 };
-                // The break that terminates the last line is the emitter's, not the lexeme's —
-                // and with no body at all that break is the one right after the header, so it
-                // has to come off the whole lexeme rather than off `body`.
+                // The break that terminates the last line belongs to the emitter, not to the
+                // lexeme. With no body at all that break is the one right after the header, so
+                // it has to come off the whole lexeme rather than off `body`.
                 Some(strip_break(&format!("{indicator}{brk}{body}")))
             }
             ScalarStyle::Plain => {
@@ -1067,10 +1119,10 @@ impl<'a> Loader<'a> {
         }
     }
 
-    /// The document's `%TAG` lines, and how many of them sat above its `%YAML` line.
+    /// Returns the document's `%TAG` lines, and how many of them sat above its `%YAML` line.
     ///
-    /// The version itself comes from the parser; only its place among the `%TAG` lines has to be
-    /// read back off the page.
+    /// The version itself comes from the parser; only its place among the `%TAG` lines has to
+    /// be read back off the page.
     fn directives(&self, from: usize, to: usize) -> (Vec<TagDirective>, usize) {
         let mut tags = Vec::new();
         let mut above = None;
@@ -1096,12 +1148,12 @@ impl<'a> Loader<'a> {
         (tags, above.unwrap_or(0))
     }
 
-    /// The whole lines between `from` and `to` as written, or `None` when none of them is a line
-    /// the model cannot spell out again.
+    /// Returns the whole lines between `from` and `to` as written, or `None` when none of them
+    /// is a line the model cannot spell out again.
     ///
     /// See [`Document::directives_raw`](crate::Document::directives_raw): the region is kept
-    /// verbatim because neither a directive line's spelling nor a `...` that ends no document is
-    /// recoverable from the model.
+    /// verbatim because neither a directive line's spelling nor a `...` that ends no document
+    /// is recoverable from the model.
     fn region(&self, from: usize, to: usize) -> Option<String> {
         let text = self.slice(from, to);
         // `from` can land mid-line, just past the `...` that closed the document before. That
@@ -1112,9 +1164,9 @@ impl<'a> Loader<'a> {
         } else {
             text.split_once('\n')?.1
         };
-        // `to` can land mid-line too — an implicit document starts at its first token, not at the
-        // start of its line — and the break before that line is written by the emitter, not
-        // echoed with the region.
+        // `to` can land mid-line too, since an implicit document starts at its first token
+        // rather than at the start of its line, and the break before that line is written by
+        // the emitter rather than echoed with the region.
         let text = text.rsplit_once('\n').map_or("", |(head, _)| head);
         let directive = text.lines().any(|l| l.starts_with('%'));
         // Only the marker needs the guard: a directive region has always been echoed whole, and
@@ -1126,10 +1178,10 @@ impl<'a> Loader<'a> {
         Some(text.strip_suffix('\r').unwrap_or(text).to_owned())
     }
 
-    /// Turn the parser's already-resolved tag back into the form it was written in.
+    /// Turns the parser's already-resolved tag back into the form it was written in.
     ///
-    /// The event carries the *prefix* in `handle`, so the shorthand is recovered by inverting the
-    /// `%TAG` table of the document (plus the two default handles).
+    /// The event carries the *prefix* in `handle`, so the shorthand is recovered by inverting
+    /// the `%TAG` table of the document (plus the two default handles).
     fn node_tag(&self, tag: &yamluna_scanner::Tag) -> NodeTag {
         let resolved = format!("{}{}", tag.handle, tag.suffix);
         let handle = match tag.handle.as_str() {
@@ -1168,7 +1220,7 @@ impl<'a> Loader<'a> {
             && n.value.as_deref() == Some("<<")
     }
 
-    /// A canonical rendering of a key, for duplicate reporting only.
+    /// Renders a key canonically, for duplicate reporting only.
     fn key_repr(&self, id: NodeId) -> String {
         let n = self.doc.node(id);
         match &n.kind {
@@ -1189,8 +1241,8 @@ impl<'a> Loader<'a> {
     }
 }
 
-/// The byte offset of the `:` between a key and its value, in the source text that follows the
-/// key. `None` when the next thing written is not a `:`.
+/// Returns the byte offset of the `:` between a key and its value, in the source text that
+/// follows the key. `None` when the next thing written is not a `:`.
 fn colon_offset(gap: &str) -> Option<usize> {
     let mut it = gap.char_indices();
     while let Some((i, c)) = it.next() {
@@ -1210,13 +1262,13 @@ fn colon_offset(gap: &str) -> Option<usize> {
     None
 }
 
-/// The byte offsets of the `&anchor` and of the tag, in the text between the previous structural
-/// token and the node.
+/// Returns the byte offsets of the `&anchor` and of the tag, in the text between the previous
+/// structural token and the node.
 ///
-/// Both open a word of their own: only white space, comments and the indicators that may precede
-/// a node can sit in front of them. *Inside* a word the two characters are ordinary — an anchor
-/// name may contain a `!` and a tag suffix a `&` — so the word boundary is what makes the scan
-/// exact.
+/// Both open a word of their own: only white space, comments and the indicators that may
+/// precede a node can sit in front of them. *Inside* a word the two characters are ordinary (an
+/// anchor name may contain a `!`, a tag suffix a `&`), so the word boundary is what makes the
+/// scan exact.
 fn property_offsets(gap: &str) -> (Option<usize>, Option<usize>) {
     let (mut anchor, mut tag) = (None, None);
     let mut fresh = true;
@@ -1241,11 +1293,11 @@ fn property_offsets(gap: &str) -> (Option<usize>, Option<usize>) {
     (anchor, tag)
 }
 
-/// How many characters at the start of `text` `props` node properties take up, white space
-/// between them included.
+/// Returns how many characters at the start of `text` the first `props` node properties take
+/// up, white space between them included.
 ///
-/// A node the parser supplied has no span of its own, so a scan that stops at the first character
-/// of its `&anchor` or its tag has nothing else to get it past them.
+/// A node the parser supplied has no span of its own, so a scan that stops at the first
+/// character of its `&anchor` or its tag has nothing else to get it past them.
 fn past_properties(text: &str, props: usize) -> usize {
     let mut at = 0;
     let mut rest = text;
@@ -1256,8 +1308,8 @@ fn past_properties(text: &str, props: usize) -> usize {
         if !rest.starts_with(['&', '!']) {
             break;
         }
-        // A verbatim tag runs to its `>` and may hold a `,`; an anchor and a tag shorthand end at
-        // the first white space or flow indicator.
+        // A verbatim tag runs to its `>` and may hold a `,`; an anchor and a tag shorthand end
+        // at the first white space or flow indicator.
         let end = if rest.starts_with("!<") {
             rest.find('>').map_or(rest.len(), |i| i + 1)
         } else {
@@ -1270,7 +1322,8 @@ fn past_properties(text: &str, props: usize) -> usize {
     at
 }
 
-/// A value the parser supplied because the source wrote none: `{a: }`, or the `b` of `{a: 1, b}`.
+/// Reports whether `n` is a value the parser supplied because the source wrote none: `{a: }`,
+/// or the `b` of `{a: 1, b}`.
 fn is_implicit_empty(n: &Node) -> bool {
     matches!(n.kind, NodeKind::Scalar) && n.raw.as_deref() == Some("")
 }

@@ -1,13 +1,12 @@
-"""Error hierarchy and source positions.
+"""The exception and warning hierarchy, and the source positions the errors carry.
 
-Layout mirrors ``ruamel.yaml.error`` so existing ``except`` blocks and error output keep
-working, with one class per ruamel class that ``typ='rt'`` can actually raise.
+The layout mirrors `ruamel.yaml.error`, one class per ruamel class that `typ='rt'` can
+raise, so `except` blocks and error output written against ruamel keep working.
 
-Positions are **character** offsets with 0-based ``line``/``column`` throughout, matching
-both ruamel's ``Mark`` and the offsets the Rust core reports (DESIGN.md 1.5).  Error
-*messages* print ``line + 1`` / ``column + 1``.  Never feed a byte offset into ``pointer``:
-``buffer`` is a ``str``, so a byte offset slices mid-character on any document containing
-an accent or an emoji.
+Positions are character offsets, with `line` and `column` 0-based throughout, matching both
+ruamel's `Mark` and the offsets the Rust core reports. Messages print `line + 1` and
+`column + 1`. Never feed a byte offset into `pointer`: `buffer` is a `str`, so a byte
+offset slices mid-character on any document containing an accent or an emoji.
 """
 
 import re
@@ -38,14 +37,15 @@ __all__ = [
     'make_error',
 ]
 
-#: What the scanner counts as a line break (`char_traits::is_break`): CR, LF, CRLF.
+# What the scanner counts as a line break (`char_traits::is_break`): CR, LF, CRLF.
 _BREAK = re.compile(r'\r\n|[\r\n]')
 
-#: What ruamel's snippet scan stops at.  Wider than `_BREAK` on purpose: this set is
-#: copied verbatim from ruamel so snippets render identically.
+# What ruamel's snippet scan stops at. Wider than `_BREAK` deliberately: the set is copied
+# verbatim from ruamel so snippets render identically.
 _SNIPPET_STOP = '\0\r\n\x85\u2028\u2029'
 
 DUPKEY_URL = 'https://yaml.dev/doc/ruamel.yaml/api/#Duplicate_keys'
+"""ruamel's page on duplicate-key handling. Nothing in yamluna prints it."""
 
 
 def _line_bounds(text: str) -> tuple[list[int], list[int]]:
@@ -59,7 +59,7 @@ def _line_bounds(text: str) -> tuple[list[int], list[int]]:
 
 
 def _offset_of(text: str, line: int, column: int) -> int:
-    """Char offset of 0-based ``line``/``column``, clamped into ``text``."""
+    """Char offset of the 0-based `line` and `column`, clamped into `text`."""
     starts, ends = _line_bounds(text)
     if line < 0:
         return 0
@@ -69,13 +69,19 @@ def _offset_of(text: str, line: int, column: int) -> int:
 
 
 class Mark:
-    """A position in a stream.
+    """A position in a stream, with the text around it when there is any.
 
-    ``index`` and ``pointer`` are char offsets, ``line`` and ``column`` are 0-based.
-    ``index`` may be ``None``, in which case it is derived from ``line``/``column``
-    (this is the path used for errors that come from a node rather than the scanner).
-    Covers ruamel's ``StreamMark``/``FileMark``/``StringMark``; ``buffer is None``
-    simply means there is no snippet.
+    One class covers ruamel's `StreamMark`, `FileMark` and `StringMark`.
+
+    Args:
+        name: What to call the stream in messages, usually a file name.
+        index: Character offset of the position. `None` derives it from `line` and
+            `column`, which is the path errors raised against a node take, since a node
+            carries a line and a column and no offset.
+        line: 0-based line.
+        column: 0-based column.
+        buffer: The source text the position is in. `None` means no snippet is printed.
+        pointer: Character offset the caret points at. Defaults to `index`.
     """
 
     __slots__ = ('name', 'index', 'line', 'column', 'buffer', 'pointer')
@@ -106,6 +112,17 @@ class Mark:
         self.pointer = pointer
 
     def get_snippet(self, indent: int = 4, max_length: int = 75) -> str | None:
+        """The source around this position, with a caret on the line below it.
+
+        Args:
+            indent: Spaces put in front of both lines.
+            max_length: Longest snippet to print. A longer line is cut on whichever side
+                overruns and the cut end is marked with ` ... `.
+
+        Returns:
+            Two lines, the source text and the caret line, or `None` when this mark carries
+            no buffer.
+        """
         if self.buffer is None:
             return None
         head = ''
@@ -137,15 +154,18 @@ class Mark:
         )
 
     def __str__(self) -> str:
+        """Where the mark points, and the snippet under it when it carries a buffer."""
         where = f'  in "{self.name!s}", line {self.line + 1:d}, column {self.column + 1:d}'
         snippet = self.get_snippet()
         if snippet is not None:
             where += ':\n' + snippet
         return where
 
+    # A mark in a traceback reads the same as a mark in a message.
     __repr__ = __str__
 
     def __eq__(self, other: object) -> bool:
+        # Position and stream name only. `buffer` and `pointer` are there for printing.
         if not isinstance(other, Mark):
             return NotImplemented
         return (
@@ -158,15 +178,28 @@ class Mark:
     __hash__ = None  # type: ignore[assignment]  # mutable position, same as ruamel
 
 
-# ruamel names.  One class does for all three: a mark without a buffer behaves exactly
-# like ruamel's StreamMark.
+# ruamel's three names. One class does for all of them: a mark with no buffer behaves
+# exactly like ruamel's StreamMark.
 StreamMark = Mark
+"""ruamel's name for a mark into a stream. The same class as `Mark`."""
+
 FileMark = Mark
+"""ruamel's name for a mark into a file. The same class as `Mark`."""
+
 StringMark = Mark
+"""ruamel's name for a mark into a string, the one that carries a snippet buffer."""
 
 
 class CommentMark:
-    """Column a comment was written at (ruamel compatibility)."""
+    """The column a comment was written at.
+
+    Here so that code importing `CommentMark` from `yamluna.error`, as ruamel allows, keeps
+    working. The class yamluna itself attaches to comment tokens is
+    `yamluna.comments.CommentMark`.
+
+    Args:
+        column: 0-based column of the `#`.
+    """
 
     __slots__ = ('column',)
 
@@ -175,7 +208,7 @@ class CommentMark:
 
 
 class _Marked:
-    """context/problem/marks rendering, shared by the marked error and warning classes."""
+    """The context, problem, mark and note rendering the marked errors and warnings share."""
 
     def __init__(
         self,
@@ -216,71 +249,133 @@ class _Marked:
 
 
 class YAMLError(Exception):
-    pass
+    """Base class of the YAML errors. Catch it to catch any of them."""
 
 
 class MarkedYAMLError(_Marked, YAMLError):
+    """A `YAMLError` that says where in the source it happened.
+
+    `str()` renders the context line, the context mark, the problem line, the problem mark
+    and the note, each one when it is set, in ruamel's order and layout. It is also what
+    `make_error` falls back to for a kind it does not recognise.
+
+    Args:
+        context: What was being read, such as `while parsing a block mapping`.
+        context_mark: Where that started.
+        problem: What went wrong.
+        problem_mark: Where it went wrong.
+        note: Extra text, printed last and dedented.
+    """
+
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self.warn = None  # ruamel accepts and ignores `warn` on errors
 
 
 class ScannerError(MarkedYAMLError):
-    pass
+    """Raised when the source is not well-formed YAML.
+
+    Every parse failure the Rust core reports arrives as this class, at the line and column
+    the core gave for it.
+    """
 
 
 class ParserError(MarkedYAMLError):
-    pass
+    """Kept for compatibility with ruamel's name. yamluna does not raise it.
+
+    `make_error('parser', ...)` builds one, but the core reports every parse failure as a
+    `ScannerError`, so an `except ParserError` block carried over from ruamel imports and
+    never fires. Catch `YAMLError` or `MarkedYAMLError` to cover both.
+    """
 
 
 class ComposerError(MarkedYAMLError):
-    pass
+    """Raised by `YAML.load` when the stream holds more than one document.
+
+    Use `YAML.load_all` for a multi-document stream.
+    """
 
 
 class ConstructorError(MarkedYAMLError):
-    pass
+    """Raised when a node cannot be turned into a Python object.
+
+    Covers a tag naming no registered class, a tag matching several registered classes, a
+    scalar that does not hold the type its tag claims, and a registered class the loader
+    cannot build because it has neither a `from_yaml` nor a mapping to unpack.
+    """
 
 
 class RepresenterError(MarkedYAMLError):
-    pass
+    """Raised when dumping meets an object it has no representation for.
+
+    Either the object's class was never registered, or its `to_yaml` hook returned
+    something other than the node index `representer.represent_*` gave it.
+    """
 
 
 class EmitterError(MarkedYAMLError):
-    pass
+    """Raised when the Rust emitter cannot write the model it was given.
+
+    It carries a message and no mark: an emit failure has no position in any source text.
+    """
 
 
 class DuplicateKeyError(MarkedYAMLError):
-    pass
+    """Raised when a mapping repeats a key and `allow_duplicate_keys` is off.
+
+    Off is the default. The message gives both positions, and the mark is on the second
+    occurrence. Set `yaml.allow_duplicate_keys = True` to get a
+    `DuplicateKeyFutureWarning` and last-value-wins instead.
+    """
 
 
 class YAMLStreamError(Exception):
-    """Not a `YAMLError` -- deliberately, that is where ruamel puts it."""
+    """Raised for a stream yamluna cannot read from or write to.
+
+    That means an object with no `read()` or `write()` method, and the context-manager form
+    used without `YAML(output=...)` or with a stream passed to `dump` inside it. It sits
+    beside `YAMLError` rather than under it, which is where ruamel puts it, so it survives
+    `except YAMLError`.
+    """
 
 
 class YAMLWarning(Warning):
-    pass
+    """Base class of the warnings yamluna issues."""
 
 
 class MarkedYAMLWarning(_Marked, YAMLWarning):
-    pass
+    """A `YAMLWarning` that says where in the source it happened.
+
+    Renders like `MarkedYAMLError` and also prints `warn`. Kept for ruamel compatibility;
+    yamluna issues no warning of this class.
+    """
 
 
 class ReusedAnchorWarning(YAMLWarning):
-    pass
+    """ruamel's warning for a document that defines the same anchor twice.
+
+    yamluna keeps both definitions and never issues this, so the name is here only so that
+    an import or a `filterwarnings` entry written against ruamel keeps working.
+    """
 
 
 class YAMLFutureWarning(Warning):
-    pass
+    """Base class of the warnings about behaviour that is going to change."""
 
 
 class MarkedYAMLFutureWarning(_Marked, YAMLFutureWarning):
-    pass
+    """A `YAMLFutureWarning` that says where in the source it applies."""
 
 
 class DuplicateKeyFutureWarning(MarkedYAMLFutureWarning):
-    pass
+    """Warned for a repeated mapping key when `allow_duplicate_keys` is on.
+
+    The message gives both positions and says that the last value wins.
+    """
 
 
+# Keyed on the class name with its `error` suffix taken off, so `ScannerError` is reached as
+# 'scanner'. Adding a class above and not here silently degrades it to `MarkedYAMLError`.
 _KINDS: dict[str, type[MarkedYAMLError]] = {
     cls.__name__.lower().removesuffix('error'): cls
     for cls in (
@@ -307,12 +402,26 @@ def make_error(
 ) -> MarkedYAMLError:
     """Build the exception for a structured error reported by the Rust core.
 
-    `kind` is the `ParseError` discriminant -- 'scanner', 'parser', 'duplicate_key', ...
-    (the class name, with or without the 'Error' suffix, also works).  This is the only
-    place classification happens; Rust must never string-match on `message`.
-    `line`/`col` are 0-based and `index` is a **char** offset into `source`; pass
-    `index=None` when only a line/column is known.
+    Args:
+        kind: The `ParseError` discriminant: `scanner`, `parser`, `duplicate_key` and so
+            on. A class name works too, with or without the `Error` suffix; case, `_` and
+            `-` are ignored. An unrecognised kind gives a plain `MarkedYAMLError`.
+        message: What went wrong. Printed as the first line and kept as `problem`.
+        line: 0-based line of the problem.
+        col: 0-based column of the problem.
+        index: Character offset of the problem into `source`. Pass `None` when only a line
+            and a column are known and it is derived from them.
+        source: The text the problem is in, which is what the snippet is cut from. `None`
+            prints no snippet.
+        name: What to call the source in the message.
+        note: Extra text, printed after the snippet and dedented.
+
+    Returns:
+        An instance of the class `kind` names, with `problem` set to `message` and
+        `problem_mark` at the position.
     """
+    # The only place a kind becomes a class. The Rust side sends the discriminant so that
+    # neither side of the boundary ever has to match on the text of a message.
     key = kind.lower().replace('_', '').replace('-', '').removesuffix('error')
     cls = _KINDS.get(key, MarkedYAMLError)
     return cls(None, None, message, Mark(name, index, line, col, source), note)

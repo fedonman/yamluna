@@ -1,11 +1,19 @@
-# ruamel.yaml 0.19.1 `typ='rt'` — measured behaviour
+# Measured ruamel behaviour
 
-Every claim below was produced by running the snippet shown against
-`.venv/bin/python` with `ruamel.yaml` 0.19.1 (`ruamel.yaml.version_info == (0, 19, 1)`).
-Output blocks are verbatim program output, not reconstructions. Where the source
-explains *why*, the source is quoted; the observed behaviour is the specification.
+This page is an appendix. It is the evidence the rest of the site cites when it says
+`ruamel.yaml` does something: 59 runnable snippets against `ruamel.yaml` 0.19.1, each with the
+output it actually printed. It is dense, it is not written to be read front to back, and
+nothing here is a recommendation. Come to it when you want to check a claim made on
+[Why yamluna exists](../why.md), [Behaviour differences](../migrating/differences.md) or
+[Architecture](index.md), and use the [snippet index](#11-snippet-index) at the bottom to find
+the section that covers it.
 
-All snippets assume this preamble — paste it above any snippet you want to re-run:
+Every claim below was produced by running the snippet shown against `.venv/bin/python` with
+`ruamel.yaml` 0.19.1 (`ruamel.yaml.version_info == (0, 19, 1)`). Output blocks are verbatim
+program output, not reconstructions. Where the source explains *why*, the source is quoted; the
+observed behaviour is the specification.
+
+All snippets assume this preamble. Paste it above any snippet you want to re-run:
 
 ```python
 import io
@@ -65,13 +73,13 @@ CommentedSeq.__slots__ = ('_yaml_comment', '_lst')
 |---|---|---|
 | `.comment` | `comment`  | `None`, or `[post, pre]` where `post` is a single `CommentToken` (the node's own EOL comment) and `pre` is a `list[CommentToken]` (own-line comments immediately above the node's first token). |
 | `.items`   | `_items`   | `dict` keyed by mapping key / sequence index → a 4-slot `list`. |
-| `.end`     | `_post`    | `list`. **The round-trip loader never populates it** — it is always `[]` (see §1.6). |
+| `.end`     | `_post`    | `list`. **The round-trip loader never populates it**: it is always `[]` (see §1.6). |
 | `.pre`     | `_pre`     | `None`. `Comment.__init__(old=True)` is the default and sets `_pre = None`; only `Comment(old=False)` gives `[]`. The rt path never constructs `old=False`, so `.ca.pre` is `None` on every loaded node. |
 
 `Comment.get(item, pos)` / `Comment.set(item, pos, value)` read/write one slot, growing
 the 4-list as needed. `Comment.set` asserts the slot is currently `None`.
 
-### 1.2 The four slots of `ca.items[key]` — **mapping**
+### 1.2 The four slots of `ca.items[key]`: **mapping**
 
 Written by `CommentedBase.yaml_key_comment_extend` (`r[0] = comment[0]; r[1] = comment[1]`)
 and `yaml_value_comment_extend` (`r[2] = comment[0]; r[3] = comment[1]`):
@@ -79,7 +87,7 @@ and `yaml_value_comment_extend` (`r[2] = comment[0]; r[3] = comment[1]`):
 | slot | name | type | holds |
 |---|---|---|---|
 | 0 | post-key | `CommentToken` | EOL comment on the **key's own line**, only for an explicit `? key` entry |
-| 1 | pre-key  | `list[CommentToken]` | own-line comments above the key — **only ever written by `yaml_set_comment_before_after_key`**, never by the loader |
+| 1 | pre-key  | `list[CommentToken]` | own-line comments above the key. **Only ever written by `yaml_set_comment_before_after_key`**, never by the loader |
 | 2 | post-value | `CommentToken` | EOL comment after the value **plus every own-line comment that follows it**, concatenated into one token's `.value` |
 | 3 | pre-value | `list[CommentToken]` | own-line comments between the `:` and a **collection** value |
 
@@ -92,7 +100,7 @@ and `yaml_value_comment_extend` (`r[2] = comment[0]; r[3] = comment[1]`):
 > YAML().comment_handling      = None
 > ```
 
-### 1.3 The four slots of `ca.items[index]` — **sequence**
+### 1.3 The four slots of `ca.items[index]`: **sequence**
 
 `CommentedSeq._yaml_add_comment` always routes through `yaml_key_comment_extend`, so only
 slots 0 and 1 are ever used:
@@ -100,10 +108,10 @@ slots 0 and 1 are ever used:
 | slot | type | holds |
 |---|---|---|
 | 0 | `CommentToken` | EOL comment on the item **plus every own-line comment that follows it** |
-| 1 | `list[CommentToken]` | own-line comments above the item — populated by the loader **only inside a flow sequence** |
-| 2, 3 | — | unused |
+| 1 | `list[CommentToken]` | own-line comments above the item, populated by the loader **only inside a flow sequence** |
+| 2, 3 | (none) | unused |
 
-### 1.4 A comment in every position — mapping
+### 1.4 A comment in every position: mapping
 
 ```python
 SRC = """\
@@ -139,7 +147,7 @@ m["beta"].ca.end     = []
 m["beta"].ca.items['inner'] = [None, None, CT('# eol on inner\n# between beta and gamma\n' @L8,C12), None]
 ```
 
-Read this carefully — it is the whole model:
+Read this carefully; it is the whole model:
 
 1. **A comment before the first key is not a per-key comment.** It goes into the
    *collection's* `ca.comment[1]` list, together with every comment above it, including
@@ -155,7 +163,7 @@ Read this carefully — it is the whole model:
    token; the second and later lines carry their original indentation literally inside
    `.value` (see `d['key'].ca.items[0] = CT('# eol one\n  # between\n')` in §1.5).
 
-### 1.5 A comment in every position — sequence
+### 1.5 A comment in every position: sequence
 
 ```python
 SRC = """\
@@ -208,8 +216,8 @@ d['key'].ca.items[0] = [CT('# eol one\n  # between\n' @L2,C10), None, None, None
 d['key'].ca.items[1] = [CT('\n# after the seq, before next key\n' @L5,C0), None, None, None]
 ```
 
-`# after the seq, before next key` — a comment that belongs to the *outer* mapping, at
-column 0, outdented past the sequence — is stored on the sequence's **last item**. There is
+`# after the seq, before next key`, a comment that belongs to the *outer* mapping, at
+column 0, outdented past the sequence, is stored on the sequence's **last item**. There is
 no "this comment closes the block" concept.
 
 ### 1.6 `ca.comment[0]` (post) and `ca.end`
@@ -228,8 +236,8 @@ for src in ["a: {x: 1, y: 2}  # eol\n", "a: # eol on the key of a block map\n  b
  child: [CT('# eol on the key of a block map\n' @L0,C3), None]
 ```
 
-`ca.end` is **never** written by the rt loader in 0.19.1. Everything I could construct —
-`...` markers, multi-document streams, comments after `...`, outdented trailing comments —
+`ca.end` is **never** written by the rt loader in 0.19.1. Everything I could construct
+(`...` markers, multi-document streams, comments after `...`, outdented trailing comments)
 leaves it `[]`:
 
 ```
@@ -240,7 +248,7 @@ leaves it `[]`:
 'a: 1\n...\n# after end marker\n' -> ca.end = [] ; dump: 'a: 1\n'   # <- comment destroyed
 ```
 
-`ca.end` *is* honoured on the write side, but only if `ca.comment` is already a list —
+`ca.end` *is* honoured on the write side, but only if `ca.comment` is already a list;
 `representer.py:744` does `node.comment.append(comment.end)` inside a bare
 `except AttributeError: pass`:
 
@@ -284,7 +292,7 @@ Comment(
   })
 ```
 
-`delta` has no entry at all — its comments live on `d['delta'].ca`:
+`delta` has no entry at all; its comments live on `d['delta'].ca`:
 
 ```
 d['beta'].ca : Comment(comment=[CommentToken('# 4 ...\n  # 5 ...\n', line: 3, col: 16), None, [], []], items={})
@@ -294,7 +302,7 @@ d['delta'].ca: Comment(comment=None,
 ```
 
 `slot 0` (post-key) is populated only by the explicit `? gamma` form. Note also that
-`d['beta'].ca.comment` has grown to **four** elements — see §10.3.
+`d['beta'].ca.comment` has grown to **four** elements; see §10.3.
 
 This document does **not** round-trip (`dump(d) == SRC` is `False`); see §10.5 and §10.6.
 
@@ -432,7 +440,7 @@ Actual:
 - three
 ```
 
-Same defect mid-list — `s.insert(1, 'x')`:
+Same defect mid-list, with `s.insert(1, 'x')`:
 
 Actual:
 ```
@@ -460,7 +468,7 @@ Actual:
 - three
 ```
 
-`two` is gone, `# about two` is not — it now describes `three`. **Expected:**
+`two` is gone, `# about two` is not; it now describes `three`. **Expected:**
 ```
 # about one
 - one
@@ -513,7 +521,7 @@ reverse()          -> '- d  # ca\n- c  # cb\n- b  # cc\n- a  # cd\n'     every c
 ### 3.5 `CommentedMap.__delitem__` never removes the key's `ca.items` entry
 
 `comments.py:CommentedMap.__delitem__` touches `_ok`, `_ref`, `merge_pos` and the
-`ordereddict` — never `self.ca`. Two consequences.
+`ordereddict`, never `self.ca`. Two consequences.
 
 **(a) The comment drifts onto the following key, and stale state accumulates.**
 
@@ -568,7 +576,7 @@ A comment the user deleted reappears attached to a value it was never about.
 
 ### 3.6 Key rename
 
-**Naive `pop` + assign** — order lost, comment misattached, EOL comment destroyed:
+**Naive `pop` + assign**: order lost, comment misattached, EOL comment destroyed:
 
 `SRC` here is the six-line document from §3.5(a).
 
@@ -583,7 +591,7 @@ gamma: 3   # eol gamma
 BETA: 2
 ```
 
-**Order-preserving `CommentedMap.insert(pos, key, value)`** — order kept, `# eol beta`
+**Order-preserving `CommentedMap.insert(pos, key, value)`**: order kept, `# eol beta`
 still destroyed:
 
 ```python
@@ -597,7 +605,7 @@ BETA: 2
 gamma: 3   # eol gamma
 ```
 
-**Expected** for a rename: every comment slot moves with the entry —
+**Expected** for a rename: every comment slot moves with the entry,
 `BETA: 2    # eol beta` with `# about beta` above it.
 
 ### 3.7 `move_to_end` scatters comments across the document
@@ -616,8 +624,8 @@ alpha: 1   # eol alpha
 # about beta
 ```
 
-`# about alpha` stayed at the top (it lives in `ca.comment[1]`), and `# about beta` — glued
-to alpha's EOL token — travelled to the very end of the document. **Expected:**
+`# about alpha` stayed at the top (it lives in `ca.comment[1]`), and `# about beta`, glued
+to alpha's EOL token, travelled to the very end of the document. **Expected:**
 ```
 # about beta
 beta: 2    # eol beta
@@ -659,7 +667,7 @@ EOL-only comments they behave; with own-line comments they inherit §3.2/§3.3.
 `line`, `col`, `data` plus the accessors `key(k)`, `value(k)`, `item(i)`,
 `add_kv_line_col`, `add_idx_line_col`.
 
-**All values are 0-based**, both line and column — the class docstring says so
+**All values are 0-based**, both line and column; the class docstring says so
 ("values start at zero (0)") and the measurement agrees.
 
 ```python
@@ -704,7 +712,7 @@ list .lc.item(0)     -> (4, 4)  item(1) -> (5, 6)
 the dash at column 2. The dash column is not recorded anywhere.
 
 Only `CommentedMap`/`CommentedSeq`/`CommentedSet`/`TaggedScalar` carry `.lc`. Plain scalars
-do not — a loaded `int`, `str`, `bool`, or `SingleQuotedScalarString` has no `_yaml_line_col`
+do not: a loaded `int`, `str`, `bool`, or `SingleQuotedScalarString` has no `_yaml_line_col`
 (`ScalarString.__slots__` is `Anchor.attrib` only). `TaggedScalar().lc` exists but reads
 `LineCol(None, None)`.
 
@@ -737,7 +745,7 @@ d = load("a: {x: 1}\nb:\n  y: 2\nc: [1, 2]\n")
 ```
 
 `flow_style(default=None)` returns `default` when `_flow_style is None`, else the stored
-value — i.e. the per-node setting always wins over `YAML.default_flow_style`.
+value, i.e. the per-node setting always wins over `YAML.default_flow_style`.
 
 ```python
 d2 = load("a:\n  x: 1\n  y: 2\n"); d2['a'].fa.set_flow_style()
@@ -747,7 +755,7 @@ dump(d3)                                  # -> 'a:\n  x: 1\n  y: 2\n'
 ```
 
 That is the whole API: `set_flow_style()`, `set_block_style()`, `flow_style(default)`.
-There is no `set_undecided()` — once set you cannot go back to `None` through the API.
+There is no `set_undecided()`: once set you cannot go back to `None` through the API.
 
 ### 5.2 `Anchor`
 
@@ -864,7 +872,7 @@ dump(m)                                    # 'a: 1  #raw\n'    leading '#' honou
 
 Note the emitted token has **no trailing newline** (`' # note on a'`), unlike loader-produced
 tokens. Calling it twice for the same key silently overwrites (it routes through
-`yaml_value_comment_extend`, which assigns `r[2]` unconditionally — unlike `Comment.set`,
+`yaml_value_comment_extend`, which assigns `r[2]` unconditionally, unlike `Comment.set`,
 which would assert):
 
 ```python
@@ -888,7 +896,7 @@ m.yaml_set_comment_before_after_key('b', before='before b\nsecond line',
 dump(m)          # 'a: 1\n# before b\n# second line\nb: 2\n'   <- 'after b' is GONE
 ```
 
-`after=` is **silently discarded when the value is a scalar** — slot 3 is only read for
+`after=` is **silently discarded when the value is a scalar**: slot 3 is only read for
 collection values:
 
 ```python
@@ -906,14 +914,14 @@ dump(m)          # 'a: 1\n\nb: 2\n'
 
 ### `yaml_end_comment_extend(comment, clear=False)`
 
-Appends a list of `CommentToken` to `ca.end`. Emitted only if `ca.comment` is a list — see
+Appends a list of `CommentToken` to `ca.end`. Emitted only if `ca.comment` is a list; see
 §1.6.
 
 ### `yaml_key_comment_extend(key, comment, clear=False)` / `yaml_value_comment_extend(...)`
 
 The low-level writers. `comment` is a 2-list `[eol_token, pre_token_list]`.
 `key` variant writes slots 0/1, `value` variant slots 2/3. With `clear=False` and an
-existing list in the pre slot they do `r[1].extend(comment[0])` — extending the *pre* list
+existing list in the pre slot they do `r[1].extend(comment[0])`, extending the *pre* list
 with the *eol* token, which is almost certainly a typo in ruamel but is the shipped
 behaviour.
 
@@ -1029,7 +1037,7 @@ TaggedScalar(self, value=None, style=None, tag=None)
 ```
 
 `ScalarString` subclasses `str`; the `*Int` and `ScalarBoolean` subclass `int`;
-`ScalarFloat` subclasses `float`. **`TaggedScalar` subclasses nothing** — its MRO is
+`ScalarFloat` subclasses `float`. **`TaggedScalar` subclasses nothing**: its MRO is
 `['TaggedScalar', 'CommentedBase', 'object']`; it provides `__str__`, `__getitem__` and
 `count` only.
 
@@ -1104,7 +1112,7 @@ Key facts:
   as `PlainScalarString`/`DecimalInt`/`ScalarBoolean`, even with `preserve_quotes=True`.
   Those three classes exist only for values the user constructs.
 - Only `ScalarString` subclasses have `.style`. It is a **class** attribute, not an
-  instance one — the style is the type.
+  instance one; the style is the type.
 - No scalar type carries `.lc` or `.ca` except `TaggedScalar` (which has both, via
   `CommentedBase`; `.lc` reads `LineCol(None, None)`).
 - Every scalar type carries `.anchor` (an `Anchor`) and `yaml_anchor(any=False)`
@@ -1171,7 +1179,7 @@ x: -0o17   value=-15   redump="x: !!int '0o-17'\n"   reload -> -15 (OctalInt)
 x: -0b101  value=-5    redump="x: !!int '0b-101'\n"  reload -> -5  (BinaryInt)
 ```
 
-ruamel reads its own output back correctly; no other YAML implementation will —
+ruamel reads its own output back correctly; no other YAML implementation will, because
 `0x-1F` matches neither the YAML 1.1 nor the 1.2 int production.
 
 `DecimalInt` is exported by `scalarint` but **has no representer**:
@@ -1295,7 +1303,7 @@ type(s2['x'].upper()).__name__            # 'str'
 
 `ScalarInt` preserves `_width`/`_underscore` through `__iadd__`, `__isub__`, `__imul__`,
 `__ipow__`, `__ifloordiv__` only. `ScalarFloat` defines the same five but every one of them
-`return float(self) op a` on the first line — the type-preserving code below is dead.
+`return float(self) op a` on the first line; the type-preserving code below is dead.
 
 ---
 
@@ -1395,9 +1403,11 @@ d = YAML().load(src)
 dump(d) == src                  # True
 ```
 
-### 8.2 The collision bug (DESIGN.md §5.1) — runnable repro
+### 8.2 The collision bug: a runnable repro
 
-Three files in a scratch directory:
+The registry is keyed on `cls.__name__`, so two classes of the same name from different modules
+overwrite each other. This is the case [the tag registry](../guide/custom-classes.md) is built
+around; [Architecture](index.md) has the design. Three files in a scratch directory:
 
 ```
 libx/__init__.py        (empty)
@@ -1464,7 +1474,7 @@ registration order.
 reverse registration order -> libx.circuits / libx.circuits
 ```
 
-`back['x']` is a `liby.circuits.Circuit` carrying `libx`'s attribute set — accessing
+`back['x']` is a `liby.circuits.Circuit` carrying `libx`'s attribute set, and accessing
 `.n` on it raises `AttributeError`. Nothing warns; the winner is decided by import order,
 and because the registry is class-level (§8.1) even two *independent* `YAML()` instances
 in one process collide.
@@ -1518,7 +1528,7 @@ list:
 Rule: the item column is `parent_indent + sequence`; the `-` column is
 `parent_indent + offset`. `offset >= sequence` is not validated.
 
-**The default output does not preserve the source's sequence indentation** — the input
+**The default output does not preserve the source's sequence indentation**: the input
 above has `  - a` and the default dump produces `- a`. Sequence indentation is a global
 emitter setting, never a per-node property.
 
@@ -1568,7 +1578,7 @@ default_flow_style=False -> 'a:\n  b: 1\n  c:\n  - 1\n  - 2\n'
 default_flow_style=True  -> 'a:\n  b: 1\n  c:\n  - 1\n  - 2\n'
 ```
 
-The setting has **no effect on loaded containers** — each carries `.fa._flow_style` from
+The setting has **no effect on loaded containers**: each carries `.fa._flow_style` from
 the source and `Format.flow_style(default)` returns the stored value. It applies only to
 containers the user creates:
 
@@ -1695,8 +1705,8 @@ d1 == d2 == d3: True
 ```
 
 Output is stable, but `.ca.comment` grows without bound and no longer matches its
-documented `[post, [pre]]` shape — code that does `post, pre = obj.ca.comment` breaks after
-the first dump.
+documented `[post, [pre]]` shape, so code that does `post, pre = obj.ca.comment` breaks
+after the first dump.
 
 ### 10.4 Explicit keys (`? key`) are dropped, sometimes producing unparseable YAML
 

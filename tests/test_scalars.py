@@ -1,8 +1,12 @@
-"""Round-trip acceptance tests for the Python scalar types (DESIGN.md §4.1).
+"""Round-trip acceptance tests for the Python scalar types.
 
-The contract under test: build the type from a raw lexeme, ask for the lexeme back, get the
-original bytes.  Numbers are where round-trip libraries quietly lose data, so they get the
-widest coverage.
+The contract under test: build the type from a raw lexeme, ask for the lexeme back, and
+get the original bytes. Numbers are where round-trip libraries quietly lose data, so they
+get the widest coverage here.
+
+Every type also carries an anchor, a line and column pair, and a comment slot, and keeps
+its lexeme across a copy and a pickle. The shared block at the bottom checks that for all
+five types at once.
 """
 
 from __future__ import annotations
@@ -210,7 +214,7 @@ def test_bool_lexeme_round_trip(lexeme: str, value: bool) -> None:
 def test_bool_without_a_lexeme() -> None:
     assert ScalarBoolean(True).lexeme() == 'true'
     assert ScalarBoolean(False).lexeme() == 'false'
-    assert ScalarBoolean(3) == 1  # normalised, like bool()
+    assert ScalarBoolean(3) == 1  # normalised, the way bool() normalises
 
 
 def test_bool_rejects_non_booleans() -> None:
@@ -263,7 +267,7 @@ def test_timestamp_without_a_lexeme() -> None:
     assert TimeStamp(2001, 12, 14, 21, 59, 43).lexeme() == '2001-12-14 21:59:43'
     replaced = TimeStamp.from_lexeme('2001-12-14 21:59:43').replace(year=2002)
     assert isinstance(replaced, TimeStamp)
-    assert replaced.lexeme() == '2002-12-14 21:59:43'  # edited: the lexeme is dropped
+    assert replaced.lexeme() == '2002-12-14 21:59:43'  # edited, so the lexeme is dropped
 
 
 def test_timestamp_rejects_non_timestamps() -> None:
@@ -362,7 +366,7 @@ def test_every_scalar_carries_anchor_lc_and_comment(make) -> None:
     assert obj.yaml_anchor() is None
     obj.yaml_set_anchor('base')
     assert obj.anchor.value == 'base'
-    assert obj.yaml_anchor() is None  # not always_dump
+    assert obj.yaml_anchor() is None  # because always_dump was not set
     assert obj.yaml_anchor(any=True).value == 'base'
     obj.yaml_set_anchor('base', always_dump=True)
     assert obj.yaml_anchor().value == 'base'

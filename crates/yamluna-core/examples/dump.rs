@@ -1,5 +1,21 @@
+//! Prints what the loader recorded for a YAML file, one line per node.
+//!
+//! Run it over any file to see the tree behind a round trip: each node's kind, raw lexeme,
+//! style, anchor, tag and position, and the comments and blank lines parked in its four trivia
+//! slots. The document header line carries the stream facts that live on the document rather
+//! than on a node, such as the byte-order mark and the final line break.
+//!
+//! ```text
+//! cargo run -p yamluna-core --example dump -- tests/corpus/blank-lines.yaml
+//! ```
+//!
+//! It panics when no path is given, when the file cannot be read, or when the source is not
+//! well-formed YAML, since the point is to look at the failure.
+
 use yamluna_core::{Document, NodeId, NodeKind, Trivia};
 
+/// One trivia item: `own@0"# hi"` or `eol@6"# hi"` for a comment, `blank(2)` for a run of
+/// blank lines.
 fn tv(t: &Trivia) -> String {
     match t {
         Trivia::Comment {
@@ -10,6 +26,7 @@ fn tv(t: &Trivia) -> String {
         Trivia::BlankLines(n) => format!("blank({n})"),
     }
 }
+/// One named trivia slot as ` name=[a, b]`, or nothing at all when the slot is empty.
 fn slot(name: &str, v: &[Trivia]) -> String {
     if v.is_empty() {
         String::new()
@@ -21,6 +38,15 @@ fn slot(name: &str, v: &[Trivia]) -> String {
     }
 }
 
+/// Prints node `id` indented by `ind` spaces, then its children two spaces deeper.
+///
+/// A mapping prints an `entry` line per pair, carrying the two flags that belong to the entry
+/// and not to either node: whether it is a merge key and whether it was written in the explicit
+/// `? key` form.
+///
+/// # Panics
+///
+/// Panics when `id` is not in the document's arena.
 fn show(d: &Document, id: NodeId, ind: usize) {
     let n = d.node(id);
     let pad = " ".repeat(ind);

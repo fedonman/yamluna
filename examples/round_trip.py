@@ -1,6 +1,10 @@
-"""Load, edit, dump — everything you did not touch comes back byte for byte.
+"""Load a document, edit it, dump it: what you did not touch comes back byte for byte.
 
-    .venv/bin/python examples/round_trip.py
+Run it:
+
+```bash
+.venv/bin/python examples/round_trip.py
+```
 """
 
 from yamluna import YAML
@@ -29,7 +33,7 @@ features: []
 yaml = YAML()
 yaml.preserve_quotes = True
 
-# 1. An untouched document is reproduced exactly.  No `indent(...)` incantation
+# 1. An untouched document is reproduced exactly. No `indent(...)` incantation is
 #    needed: every node reproduces the layout it was loaded with.
 config = yaml.load(SRC)
 assert yaml.dump(config) == SRC, 'round trip must be byte-identical'
@@ -39,8 +43,8 @@ assert isinstance(config, dict) and isinstance(config['ports'], list)
 assert config['replicas'] == 3
 assert config['database']['motd'] == 'welcome\nto demo\n'
 
-# 3. Edit.  Comments hang off the node they describe, so they stay with it —
-#    and deleting an entry deletes that entry's comment and nothing else.
+# 3. Edit. Comments hang off the node they describe, so they stay with it, and
+#    deleting an entry deletes that entry's comment and nothing else.
 config['replicas'] = 5
 config['database']['port'] = 6543
 config['ports'].append(8080)

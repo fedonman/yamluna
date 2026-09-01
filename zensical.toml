@@ -1,0 +1,144 @@
+[project]
+site_url = "https://qilimanjaro-tech.github.io/yamluna/"
+site_name = "yamluna"
+site_description = "Round-trip YAML for Python: comments, blank lines, quoting and layout survive a load, an edit and a dump."
+site_author = "Vyron Vasileiadis"
+
+copyright = "Copyright &copy; 2026 Vyron Vasileiadis"
+
+repo_url = "https://github.com/qilimanjaro-tech/yamluna"
+repo_name = "qilimanjaro-tech/yamluna"
+edit_uri = "edit/master/docs/"
+
+nav = [
+  { "Home" = "index.md" },
+  { "Why yamluna" = "why.md" },
+  { "How it compares" = "comparison.md" },
+  { "Install" = "install.md" },
+  { "Guide" = [
+      { "Overview" = "guide/index.md" },
+      { "Loading and dumping" = "guide/load-and-dump.md" },
+      { "Comments and blank lines" = "guide/comments.md" },
+      { "Scalar styles and types" = "guide/scalars.md" },
+      { "Anchors, aliases and merge keys" = "guide/anchors.md" },
+      { "Custom classes and tags" = "guide/custom-classes.md" },
+      { "Settings" = "guide/settings.md" },
+      { "Errors" = "guide/errors.md" },
+      { "Examples" = "guide/examples.md" },
+  ] },
+  { "Migrating from ruamel.yaml" = [
+      { "The port" = "migrating/index.md" },
+      { "Behaviour differences" = "migrating/differences.md" },
+  ] },
+  { "API reference" = [
+      { "Overview" = "api/index.md" },
+      { "YAML" = "api/yaml.md" },
+      { "Containers" = "api/containers.md" },
+      { "Scalar types" = "api/scalars.md" },
+      { "Tag registry" = "api/registry.md" },
+      { "Errors" = "api/errors.md" },
+  ] },
+  { "Internals" = [
+      { "Architecture" = "internals/index.md" },
+      { "The document model" = "internals/document-model.md" },
+      { "The forked scanner" = "internals/scanner.md" },
+      { "Testing" = "internals/testing.md" },
+      { "Measured ruamel behaviour" = "internals/ruamel-behaviour.md" },
+  ] },
+  { "Changelog" = "changelog.md" },
+]
+
+[project.theme]
+language = "en"
+features = [
+  "announce.dismiss",
+  "content.action.edit",
+  "content.code.annotate",
+  "content.code.copy",
+  "content.code.select",
+  "content.footnote.tooltips",
+  "content.tabs.link",
+  "content.tooltips",
+  "navigation.footer",
+  "navigation.indexes",
+  "navigation.instant",
+  "navigation.instant.prefetch",
+  "navigation.path",
+  "navigation.sections",
+  "navigation.tabs",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+  "search.suggest",
+  "toc.follow",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+toggle.icon = "lucide/sun-moon"
+toggle.name = "Switch to light mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to system preference"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/qilimanjaro-tech/yamluna"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/python"
+link = "https://pypi.org/project/yamluna/"
+
+[project.markdown_extensions]
+abbr = {}
+admonition = {}
+attr_list = {}
+def_list = {}
+footnotes = {}
+md_in_html = {}
+tables = {}
+toc.permalink = true
+pymdownx.betterem = {}
+pymdownx.caret = {}
+pymdownx.details = {}
+pymdownx.emoji.emoji_generator = "zensical.extensions.emoji.to_svg"
+pymdownx.emoji.emoji_index = "zensical.extensions.emoji.twemoji"
+pymdownx.highlight.anchor_linenums = true
+pymdownx.highlight.line_spans = "__span"
+pymdownx.highlight.pygments_lang_class = true
+pymdownx.inlinehilite = {}
+pymdownx.keys = {}
+pymdownx.magiclink = {}
+pymdownx.mark = {}
+pymdownx.snippets.base_path = ["."]
+pymdownx.snippets.check_paths = true
+pymdownx.superfences = {}
+pymdownx.tabbed.alternate_style = true
+pymdownx.tabbed.combine_header_slug = true
+pymdownx.tasklist.custom_checkbox = true
+pymdownx.tilde = {}
+
+[project.markdown_extensions."zensical.extensions.mkdocstrings"]
+handlers.python.paths = ["python"]
+handlers.python.options.docstring_style = "google"
+handlers.python.options.docstring_section_style = "table"
+handlers.python.options.show_source = false
+handlers.python.options.show_root_heading = true
+handlers.python.options.show_root_full_path = false
+handlers.python.options.show_symbol_type_heading = true
+handlers.python.options.show_symbol_type_toc = true
+handlers.python.options.members_order = "source"
+handlers.python.options.separate_signature = true
+handlers.python.options.show_signature_annotations = true
+handlers.python.options.signature_crossrefs = true
+handlers.python.options.filters = ["!^_"]
+handlers.python.options.heading_level = 2

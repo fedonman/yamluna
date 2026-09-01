@@ -186,7 +186,7 @@ YAML 1.2. An assignment that is neither a pair of integers nor `'major.minor'` r
 
 ## What is not here
 
-The emitter knobs ruamel needs in order to re-decide the layout of nodes it could not
+The emitter knobs ruamel needs to re-decide the layout of nodes it could not
 reproduce, `canonical`, `default_style`, `allow_unicode`,
 `sort_base_mapping_type_on_output`, `block_seq_indent`, `top_level_colon_align` and the
 rest, are absent. Reproduction removes the problem most of them solve, and the ones that

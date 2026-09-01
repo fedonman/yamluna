@@ -318,7 +318,7 @@ Every byte still round-trips: an unedited load and dump of that document is byte
 the comment is not lost or duplicated. What is wrong is the ownership, for one position.
 
 Twelve xfails in
-[`tests/test_mutation.py`](https://github.com/qilimanjaro-tech/yamluna/blob/master/tests/test_mutation.py)
+[`tests/test_mutation.py`](https://github.com/fedonman/yamluna/blob/main/tests/test_mutation.py)
 pin the two known gaps and fail if either starts passing: eight for this one, four for a
 separate emitter gap where inserting into a sequence strands the `-` of the item before an
 own-line comment onto its own line. Until both are closed, prefer `append` and `move_to_end`
@@ -331,5 +331,5 @@ to `insert(0, …)`, and check the diff after an insertion into a commented sequ
   carries and how they map onto `.ca`.
 * [Containers](../api/containers.md) for the generated reference on `Comment`,
   `CommentToken` and the container methods.
-* [`examples/comments.py`](https://github.com/qilimanjaro-tech/yamluna/blob/master/examples/comments.py)
+* [`examples/comments.py`](https://github.com/fedonman/yamluna/blob/main/examples/comments.py)
   is this page as one runnable script, with its real output at the bottom.

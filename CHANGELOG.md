@@ -82,7 +82,7 @@ Python API that replaces `ruamel.yaml`'s `typ='rt'`.
   belongs to the node it describes, so `insert`, `del`, `pop`, `rename`, `move_to_end`,
   `reverse` and `sort` move comments with the entries they describe. `.ca.items` is a
   projection over that store, so ported code that reads `.ca` still works
-  ([behaviour differences](https://qilimanjaro-tech.github.io/yamluna/migrating/differences/) A1–A7).
+  ([behaviour differences](https://fedonman.github.io/yamluna/migrating/differences/) A1–A7).
 - **Blank lines as a first-class trivium with a count**, rather than bare newlines smuggled
   inside another node's comment text (A7, B9).
 - **A tag registry keyed on the fully qualified class path**, so two libraries, or two
@@ -90,7 +90,7 @@ Python API that replaces `ruamel.yaml`'s `typ='rt'`.
   namespace is written into the document with `%TAG` directives; a colliding `(source, name)`
   pair promotes both sources to their full module paths. A bare `!Name` with two registered
   candidates raises rather than guessing
-  ([the design contract](https://qilimanjaro-tech.github.io/yamluna/internals/) §5, C1–C2).
+  ([the design contract](https://fedonman.github.io/yamluna/internals/) §5, C1–C2).
 - **A per-`YAML()` registry.** `yaml.register_class(...)` never touches another instance's
   registry. A module-level `register_class` and a shared `default_registry` remain for the
   one-registry-per-app case.
@@ -109,7 +109,7 @@ Python API that replaces `ruamel.yaml`'s `typ='rt'`.
 ### Fixed, relative to `ruamel.yaml` 0.19.1
 
 Every entry is measured, with a repro and a regression test, in
-[Behaviour differences](https://qilimanjaro-tech.github.io/yamluna/migrating/differences/).
+[Behaviour differences](https://fedonman.github.io/yamluna/migrating/differences/).
 
 - Comments no longer drift or resurrect across mutation (A1–A6), `.ca` is no longer mutated by
   dumping (A8), and `.ca.end` / `yaml_end_comment_extend` round-trip (A9).
@@ -178,7 +178,7 @@ causes, is in [tests/README.md](tests/README.md#known-gaps).
 
 `typ='rt'` only; no safe/base/unsafe; no `!!python/object:`; no component substitution; no
 plug-ins; no `scan()`/`compose()`/`serialize()`; no legacy module-level `load()`/`dump()`.
-See [Migrating from ruamel.yaml](https://qilimanjaro-tech.github.io/yamluna/migrating/)
+See [Migrating from ruamel.yaml](https://fedonman.github.io/yamluna/migrating/)
 for the workaround for each.
 
-[0.1.0]: https://github.com/qilimanjaro-tech/yamluna/releases/tag/v0.1.0
+[0.1.0]: https://github.com/fedonman/yamluna/releases/tag/v0.1.0

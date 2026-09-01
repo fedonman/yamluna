@@ -1,14 +1,14 @@
 [project]
-site_url = "https://qilimanjaro-tech.github.io/yamluna/"
+site_url = "https://fedonman.github.io/yamluna/"
 site_name = "yamluna"
 site_description = "Round-trip YAML for Python: comments, blank lines, quoting and layout survive a load, an edit and a dump."
 site_author = "Vyron Vasileiadis"
 
 copyright = "Copyright &copy; 2026 Vyron Vasileiadis"
 
-repo_url = "https://github.com/qilimanjaro-tech/yamluna"
-repo_name = "qilimanjaro-tech/yamluna"
-edit_uri = "edit/master/docs/"
+repo_url = "https://github.com/fedonman/yamluna"
+repo_name = "fedonman/yamluna"
+edit_uri = "edit/main/docs/"
 
 nav = [
   { "Home" = "index.md" },
@@ -92,7 +92,7 @@ toggle.name = "Switch to system preference"
 
 [[project.extra.social]]
 icon = "fontawesome/brands/github"
-link = "https://github.com/qilimanjaro-tech/yamluna"
+link = "https://github.com/fedonman/yamluna"
 
 [[project.extra.social]]
 icon = "fontawesome/brands/python"

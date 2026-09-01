@@ -86,7 +86,7 @@ print(repr(yaml.dump(yaml.load('seq: [x: 1, y: 2]\n'))))
 ## The patch list
 
 Every change to the vendored source is logged in
-[`crates/yamluna-scanner/FORK.md`](https://github.com/qilimanjaro-tech/yamluna/blob/master/crates/yamluna-scanner/FORK.md),
+[`crates/yamluna-scanner/FORK.md`](https://github.com/fedonman/yamluna/blob/main/crates/yamluna-scanner/FORK.md),
 with the file, the line and the test that pins it. Each one is in one of two piles.
 
 ### Upstreamable bug fixes

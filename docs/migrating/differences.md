@@ -106,7 +106,7 @@ is a new node with empty trivia. `s.insert(3, 'extra')`, measured:
 !!! warning "Two positions where this is not yet true"
 
     Both are pinned by xfails in
-    [`tests/test_mutation.py`](https://github.com/qilimanjaro-tech/yamluna/blob/master/tests/test_mutation.py)
+    [`tests/test_mutation.py`](https://github.com/fedonman/yamluna/blob/main/tests/test_mutation.py)
     that fail the suite if either closes unnoticed. `pytest tests/test_mutation.py` reports
     `158 passed, 12 xfailed`.
 
@@ -410,7 +410,7 @@ Code importing them by name gets `ImportError: cannot import name 'C_VALUE_PRE' 
 
 The contract yamluna holds itself to is the strict one: for a document you did not change,
 `dump(load(text)) == text`, byte for byte. Every item below is an input where ruamel is not. The
-[corpus harness](https://github.com/qilimanjaro-tech/yamluna/blob/master/tests/differential.py)
+[corpus harness](https://github.com/fedonman/yamluna/blob/main/tests/differential.py)
 scores this over 41 hand-written files, one YAML concern each: ruamel 3 of 40, yamluna 40 of 40,
 with `key-duplicate` scored on behaviour rather than bytes because no `dict`-backed API can write
 two equal keys back.
@@ -613,7 +613,7 @@ yamluna  'flow_seq: [\n  a,\n  # inside\n  b,\n]\n'
 ```
 
 Over the whole of
-[`tests/corpus/comment-flow.yaml`](https://github.com/qilimanjaro-tech/yamluna/blob/master/tests/corpus/comment-flow.yaml)
+[`tests/corpus/comment-flow.yaml`](https://github.com/fedonman/yamluna/blob/main/tests/corpus/comment-flow.yaml)
 that is nine comments inside flow collections, of which ruamel loses eight and moves the ninth
 onto a line of its own; 22 lines come back as 8. The loader populates slot 1 of `.ca.items` for
 own-line comments *only* inside a flow sequence, and the emitter re-lays out the collection from
@@ -628,7 +628,7 @@ where it sat: `inner` for one after the opening bracket, `before` on the item it
 for one after an item. The emitter writes it back there. The distinction that decides it is `inner`
 versus `before`, because promoting a flow collection's `inner` trivia to `before` would push the
 opening brace onto the next line, so the projection keeps them apart
-([`_leading_is_before`](https://github.com/qilimanjaro-tech/yamluna/blob/master/python/yamluna/representer.py)).
+([`_leading_is_before`](https://github.com/fedonman/yamluna/blob/main/python/yamluna/representer.py)).
 
 Every comment survives, in place, in both the Rust and the Python path.
 `corpus/comment-flow.yaml` round-trips byte for byte, brackets included, as do all 308

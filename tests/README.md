@@ -1,7 +1,7 @@
 # yamluna acceptance harness
 
 This directory is the adjudicator. The
-[design contract](https://qilimanjaro-tech.github.io/yamluna/internals/) §6 defines acceptance;
+[design contract](https://fedonman.github.io/yamluna/internals/) §6 defines acceptance;
 everything here measures it. When a design question comes up ("should the emitter normalise
 this?"), the answer is whichever choice keeps the corpus byte-identical.
 
@@ -85,7 +85,7 @@ first line is not a `# covers:` comment), so it doubles as the corpus lint.
 | end to end | `YAML().dump(YAML().load(text)) == text` for every corpus file, with every exception named in `KNOWN_LOSSES` | `tests/test_roundtrip.py` |
 | end to end, wide | `YAML().dump_all(YAML().load_all(text)) == text` for all 308 `yaml-test-suite` cases, with every exception named in `KNOWN_GAPS`, over the same cases the Rust harness scores, extracted the same way, so the two numbers subtract | `tests/test_suite_roundtrip.py` |
 | the seam, wide | `emit(parse(text))` through the `_record` classes is byte-identical to `parse`-then-`emit` inside Rust for all 308 suite cases, so the difference between the two round-trip scores is the object model and nothing else | `tests/test_suite_roundtrip.py::test_the_record_seam_loses_nothing_over_the_suite` |
-| differential | every divergence from ruamel is either a deliberate fix recorded on the [behaviour-differences list](https://qilimanjaro-tech.github.io/yamluna/migrating/differences/) or a defect in yamluna (design contract 6.3) | `differential.py` |
+| differential | every divergence from ruamel is either a deliberate fix recorded on the [behaviour-differences list](https://fedonman.github.io/yamluna/migrating/differences/) or a defect in yamluna (design contract 6.3) | `differential.py` |
 | mutation | comments stay attached to the right node across `insert`, `del`, `pop`, `move_to_end` and key rename (design contract 6.4) | `pytest tests` |
 
 ## The corpus

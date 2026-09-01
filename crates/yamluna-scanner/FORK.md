@@ -13,9 +13,9 @@ filed there) or a **yamluna feature** (something a round-trip library needs that
 reason to carry). Line numbers are as of this file being written.
 
 Section numbers in brackets are sections of the
-[design contract](https://qilimanjaro-tech.github.io/yamluna/internals/), which is what each
+[design contract](https://fedonman.github.io/yamluna/internals/), which is what each
 patch answers to. The documentation site covers the same fork at
-[The forked scanner](https://qilimanjaro-tech.github.io/yamluna/internals/scanner/).
+[The forked scanner](https://fedonman.github.io/yamluna/internals/scanner/).
 
 ---
 

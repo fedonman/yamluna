@@ -1,6 +1,6 @@
 # Examples
 
-Three scripts in [`examples/`](https://github.com/qilimanjaro-tech/yamluna/tree/master/examples).
+Three scripts in [`examples/`](https://github.com/fedonman/yamluna/tree/main/examples).
 Each one runs standalone against an installed `yamluna` and imports nothing else, asserts the
 claims it makes, and carries its real output in a comment at the bottom:
 
@@ -19,7 +19,7 @@ CI runs all three on every push, so an example that stops working fails the buil
 
 ## Round trip
 
-[`examples/round_trip.py`](https://github.com/qilimanjaro-tech/yamluna/blob/master/examples/round_trip.py)
+[`examples/round_trip.py`](https://github.com/fedonman/yamluna/blob/main/examples/round_trip.py)
 loads a config, checks it reproduces byte for byte, then makes five edits:
 
 ```python
@@ -99,7 +99,7 @@ type you get back, `SingleQuotedScalarString` instead of `str`. See
 
 ## Comments
 
-[`examples/comments.py`](https://github.com/qilimanjaro-tech/yamluna/blob/master/examples/comments.py)
+[`examples/comments.py`](https://github.com/fedonman/yamluna/blob/main/examples/comments.py)
 is the `.ca` tour. It prints the structure ruamel's API gives you for a document with a
 header, an own-line comment, two end-of-line comments and a tail note:
 
@@ -179,7 +179,7 @@ the rename and the reorder are
 
 ## Custom classes
 
-[`examples/custom_classes.py`](https://github.com/qilimanjaro-tech/yamluna/blob/master/examples/custom_classes.py)
+[`examples/custom_classes.py`](https://github.com/fedonman/yamluna/blob/main/examples/custom_classes.py)
 registers two classes both called `Circuit`, from two different libraries, and shows that both
 survive:
 

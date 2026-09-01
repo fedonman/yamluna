@@ -191,7 +191,7 @@ web:
 
 `<<: [*base, *extra]`, a merge inside a flow mapping, and a comment on the `<<` entry itself
 all round-trip; see
-[`tests/corpus/anchors-merge.yaml`](https://github.com/qilimanjaro-tech/yamluna/blob/master/tests/corpus/anchors-merge.yaml)
+[`tests/corpus/anchors-merge.yaml`](https://github.com/fedonman/yamluna/blob/main/tests/corpus/anchors-merge.yaml)
 for the shapes that are pinned.
 
 ## Recursive anchors

@@ -253,7 +253,7 @@ a YAML 1.2 parser for Rust, with comments, block-versus-flow collection style an
 names added to the token and event streams. Upstream carries none of the three, which is the
 reason for the fork rather than a dependency: with `keep_comments` off, the fork's streams
 are byte-identical to upstream's. Every change is logged in
-[FORK.md](https://github.com/qilimanjaro-tech/yamluna/blob/master/crates/yamluna-scanner/FORK.md).
+[FORK.md](https://github.com/fedonman/yamluna/blob/main/crates/yamluna-scanner/FORK.md).
 
 `yaml-rust2` is a maintained fork of the older `yaml-rust`, and `serde_yaml` is archived
 upstream as of 2024. None of the three gives you a Python object, and none of them is a
@@ -261,7 +261,7 @@ round-trip library in the sense this page means: they parse YAML into Rust value
 the layout on the way. `saphyr` is also what [`py-yaml12`](#py-yaml12) is built on, which is
 why that library and this one agree on every scalar and disagree on everything about the
 file. If you want the Rust side of yamluna, that is
-[`yamluna-core`](https://github.com/qilimanjaro-tech/yamluna/tree/master/crates/yamluna-core),
+[`yamluna-core`](https://github.com/fedonman/yamluna/tree/main/crates/yamluna-core),
 which is where the document model and the emitter live, and
 [Internals](internals/index.md) describes the contract between it and Python.
 

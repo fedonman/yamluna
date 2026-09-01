@@ -5,7 +5,7 @@ comments, blank lines, quoting, anchors, directives and indentation the author p
 in place. The scanner, document model and emitter are Rust; the API is `ruamel.yaml`'s
 `typ='rt'`, minus its bugs.
 
-**Documentation: <https://qilimanjaro-tech.github.io/yamluna/>**
+**Documentation: <https://fedonman.github.io/yamluna/>**
 
 ```python
 from pathlib import Path
@@ -73,7 +73,7 @@ Not on PyPI yet. From a clean checkout you need a Rust toolchain (1.85+, `editio
 and Python 3.11+:
 
 ```bash
-git clone https://github.com/qilimanjaro-tech/yamluna
+git clone https://github.com/fedonman/yamluna
 cd yamluna
 
 uv venv                            # or: python -m venv .venv
@@ -137,7 +137,7 @@ both are the object model rather than the seam. `CommentedMap` is a `dict`, so t
 an empty key (`2JQS`) or an alias that *is* its own mapping's key (`X38W`) are one entry, and
 loading raises `DuplicateKeyError`. Not subclassing `dict` and `list` buys them back, and costs
 `isinstance(x, dict)`, `json.dumps`, `deepcopy`, `pickle` and `==`, the trade
-[the design contract §4.1](https://qilimanjaro-tech.github.io/yamluna/internals/) makes on
+[the design contract §4.1](https://fedonman.github.io/yamluna/internals/) makes on
 purpose.
 
 That the difference is *only* the object model is a gate, not a measurement:
@@ -212,7 +212,7 @@ This is the part that is deliberately not ruamel-compatible.
 table. Two libraries that both define a `Circuit` register the same tag; the second overwrites the
 first; loading gives you whichever class was imported last, holding the other one's attributes, with
 no warning ([behaviour differences,
-C1](https://qilimanjaro-tech.github.io/yamluna/migrating/differences/)).
+C1](https://fedonman.github.io/yamluna/migrating/differences/)).
 
 yamluna keys the registry on the fully qualified class path, so registration cannot overwrite, and
 writes the namespace into the document using YAML's own mechanism: `%TAG` directives. One
@@ -277,19 +277,19 @@ untouched, tag and all.
 The registry is **per `YAML()` instance**. `yaml.register_class(Circuit)` never touches another
 instance's registry, so a library that builds its own `YAML()` cannot poison anybody else's, or
 be poisoned by one ([behaviour differences,
-C2](https://qilimanjaro-tech.github.io/yamluna/migrating/differences/)).
+C2](https://fedonman.github.io/yamluna/migrating/differences/)).
 A module-level `register_class` and a shared `default_registry` exist for the
 "one registry for my whole app" case, opted into with `YAML(registry=default_registry)`.
 
 Full contract:
-[the design contract §5](https://qilimanjaro-tech.github.io/yamluna/internals/). How to use it:
-[Custom classes and tags](https://qilimanjaro-tech.github.io/yamluna/guide/custom-classes/).
+[the design contract §5](https://fedonman.github.io/yamluna/internals/). How to use it:
+[Custom classes and tags](https://fedonman.github.io/yamluna/guide/custom-classes/).
 Runnable: [`examples/custom_classes.py`](examples/custom_classes.py).
 
 ## What it fixes
 
 Every entry in
-[Behaviour differences](https://qilimanjaro-tech.github.io/yamluna/migrating/differences/) is a
+[Behaviour differences](https://fedonman.github.io/yamluna/migrating/differences/) is a
 defect measured against `ruamel.yaml==0.19.1`, with a repro, and a regression test so it cannot
 come back. The headlines:
 
@@ -340,7 +340,7 @@ plug-ins; no `scan()`/`compose()`/`serialize()`; no legacy module-level `load()`
 Those are deliberate omissions, not gaps. `typ='rt'` is the mode with the interesting problem and
 the broken implementation; the others are `json.load` with more spelling. `YAML(typ='safe')` raises
 with a message pointing here. See
-[Migrating from ruamel.yaml](https://qilimanjaro-tech.github.io/yamluna/migrating/) for the
+[Migrating from ruamel.yaml](https://fedonman.github.io/yamluna/migrating/) for the
 workaround for each one.
 
 ## Examples
@@ -356,19 +356,19 @@ at the bottom.
 
 ## Documentation
 
-The site is <https://qilimanjaro-tech.github.io/yamluna/>, built from `docs/` with
+The site is <https://fedonman.github.io/yamluna/>, built from `docs/` with
 [zensical](https://zensical.org).
 
 | | |
 |---|---|
-| [Why yamluna](https://qilimanjaro-tech.github.io/yamluna/why/) | the problem it was built for, and what node-owned comments buy you |
-| [How it compares](https://qilimanjaro-tech.github.io/yamluna/comparison/) | next to `ruamel.yaml`, PyYAML, `strictyaml` and the Rust crates |
-| [Guide](https://qilimanjaro-tech.github.io/yamluna/guide/) | loading, dumping, comments, scalar styles, anchors, custom classes, settings, errors |
-| [Migrating from ruamel.yaml](https://qilimanjaro-tech.github.io/yamluna/migrating/) | ruamel API to yamluna API, and what is missing |
-| [Behaviour differences](https://qilimanjaro-tech.github.io/yamluna/migrating/differences/) | every ruamel defect this library refuses to reproduce, measured |
-| [API reference](https://qilimanjaro-tech.github.io/yamluna/api/) | every public class and function, generated from the docstrings |
-| [Internals](https://qilimanjaro-tech.github.io/yamluna/internals/) | the normative contract between the layers |
-| [Measured ruamel behaviour](https://qilimanjaro-tech.github.io/yamluna/internals/ruamel-behaviour/) | the raw measurements the differences page cites |
+| [Why yamluna](https://fedonman.github.io/yamluna/why/) | the problem it was built for, and what node-owned comments buy you |
+| [How it compares](https://fedonman.github.io/yamluna/comparison/) | next to `ruamel.yaml`, PyYAML, `strictyaml` and the Rust crates |
+| [Guide](https://fedonman.github.io/yamluna/guide/) | loading, dumping, comments, scalar styles, anchors, custom classes, settings, errors |
+| [Migrating from ruamel.yaml](https://fedonman.github.io/yamluna/migrating/) | ruamel API to yamluna API, and what is missing |
+| [Behaviour differences](https://fedonman.github.io/yamluna/migrating/differences/) | every ruamel defect this library refuses to reproduce, measured |
+| [API reference](https://fedonman.github.io/yamluna/api/) | every public class and function, generated from the docstrings |
+| [Internals](https://fedonman.github.io/yamluna/internals/) | the normative contract between the layers |
+| [Measured ruamel behaviour](https://fedonman.github.io/yamluna/internals/ruamel-behaviour/) | the raw measurements the differences page cites |
 
 In the repository, and not on the site:
 

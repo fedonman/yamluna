@@ -10,7 +10,7 @@ compiled extension.
 !!! note "The first release is not published yet"
 
     `yamluna` 0.1.0 is still marked unreleased in
-    [CHANGELOG.md](https://github.com/qilimanjaro-tech/yamluna/blob/master/CHANGELOG.md) and
+    [CHANGELOG.md](https://github.com/fedonman/yamluna/blob/main/CHANGELOG.md) and
     the repository carries no release tag, so that `pip install` has nothing to fetch today.
     Until it does, use [from source](#from-source) below.
 
@@ -24,7 +24,7 @@ version.
 CI runs the test suite on 3.11, 3.12 and 3.13, then installs the wheel it built into a
 fresh 3.13 environment and exercises it, which is what makes the abi3 tag a checked claim
 instead of a build flag. That smoke test is
-[`ci/smoke.py`](https://github.com/qilimanjaro-tech/yamluna/blob/master/ci/smoke.py); it
+[`ci/smoke.py`](https://github.com/fedonman/yamluna/blob/main/ci/smoke.py); it
 loads a commented document, edits it, dumps it, and asserts the comments went with the
 entries they described.
 
@@ -33,7 +33,7 @@ entries they described.
 ## Platforms
 
 The wheel job in
-[`.github/workflows/ci.yml`](https://github.com/qilimanjaro-tech/yamluna/blob/master/.github/workflows/ci.yml)
+[`.github/workflows/ci.yml`](https://github.com/fedonman/yamluna/blob/main/.github/workflows/ci.yml)
 builds and installs a Linux wheel on every push. No source file in `crates/` is conditional
 on the target platform, so a source build works wherever a Rust toolchain and CPython 3.11
 do; macOS and Windows wheels are not built by CI yet.
@@ -44,7 +44,7 @@ You need Rust 1.85 or newer, because the crates are `edition = "2024"`, and CPyt
 newer.
 
 ```bash
-git clone https://github.com/qilimanjaro-tech/yamluna
+git clone https://github.com/fedonman/yamluna
 cd yamluna
 
 uv venv                            # or: python -m venv .venv

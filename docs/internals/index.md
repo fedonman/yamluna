@@ -47,7 +47,7 @@ that live outside the tree. A node names its children by index into that arena, 
 reference, so the whole document is one flat list on both sides of the seam.
 
 The record classes are defined **once, in Python**, in
-[`python/yamluna/_record.py`](https://github.com/qilimanjaro-tech/yamluna/blob/master/python/yamluna/_record.py).
+[`python/yamluna/_record.py`](https://github.com/fedonman/yamluna/blob/main/python/yamluna/_record.py).
 There is no `#[pyclass]` in `yamluna-py`: a second definition of `Node` in Rust would be a
 second contract to keep in step. Rust imports that module once, caches a class object each for
 `Node`, `Trivia` and `Doc`, calls them to build instances on load, and reads their attributes by

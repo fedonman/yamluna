@@ -1,7 +1,7 @@
 # API reference
 
 Every public name in `yamluna`, rendered from the docstrings in
-[`python/yamluna/`](https://github.com/qilimanjaro-tech/yamluna/tree/master/python/yamluna).
+[`python/yamluna/`](https://github.com/fedonman/yamluna/tree/main/python/yamluna).
 These pages say what each class is and what each method does. The [Guide](../guide/index.md)
 says when you would reach for one.
 

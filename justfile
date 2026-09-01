@@ -15,7 +15,18 @@ rust:
 lint:
     cargo clippy --workspace --all-targets -- -D warnings
     cargo fmt --check
-    .venv/bin/ruff check python tests
+    .venv/bin/ruff check python tests examples bench ci
+    .venv/bin/ruff format --check python tests examples bench ci
+
+# reformat in place, and apply ruff's safe fixes
+fmt:
+    cargo fmt
+    .venv/bin/ruff format python tests examples bench ci
+    .venv/bin/ruff check --fix python tests examples bench ci
+
+# type-check the Python tree
+types:
+    .venv/bin/ty check
 
 # python tests, no extension required
 unit:

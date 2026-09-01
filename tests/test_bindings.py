@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
 from yamluna._record import (
     KIND_ALIAS,
     KIND_MAPPING,
@@ -99,7 +100,7 @@ def _walk(doc: Doc) -> list[int]:
 
 
 def _check_trivia(t: Any, where: str) -> None:
-    """Asserts one trivium is either a blank run or a single-line comment."""
+    """Assert one trivium is either a blank run or a single-line comment."""
     assert isinstance(t, Trivia), where
     if t.blank_lines:
         assert t.text is None, f'{where}: a blank run carries no text'
@@ -110,7 +111,10 @@ def _check_trivia(t: Any, where: str) -> None:
         assert t.col >= 0, where
 
 
-def test_every_corpus_file_parses_into_sane_records(corpus_text: str, corpus_path: Path) -> None:
+# One flat pass with a branch per record invariant; splitting it would only scatter them.
+def test_every_corpus_file_parses_into_sane_records(  # noqa: C901
+    corpus_text: str, corpus_path: Path
+) -> None:
     """Every record Rust builds obeys the shape `python/yamluna/_record.py` describes."""
     docs = parse(corpus_text)
     assert isinstance(docs, list) and docs, corpus_path.name
@@ -184,8 +188,7 @@ def test_every_comment_in_the_corpus_survives(corpus_text: str, corpus_path: Pat
 
 
 def test_a_scalar_lexeme_sits_where_the_node_says_it_does(corpus_text: str) -> None:
-    """`raw` sits at the `(line, col)` the node reports, which is the round trip in
-    miniature.
+    """`raw` sits at the `(line, col)` the node reports: the round trip in miniature.
 
     It holds only while `col` is a char column rather than a byte column, so this fails
     first when a position starts being counted in bytes.
@@ -245,7 +248,9 @@ def test_a_mark_on_a_unicode_line_points_at_the_right_character() -> None:
         parse(UNICODE)
     mark = excinfo.value.problem_mark
     # The flow sequence is never closed, so the error lands at the end of the stream.
-    assert mark.index == len(UNICODE)  # chars, and not the 39 bytes of UTF-8
+    # `problem_mark` is `Mark | None` on the base class; a scanner error always carries one.
+    assert mark is not None
+    assert mark.index == len(UNICODE)
     assert mark.buffer is UNICODE or mark.buffer == UNICODE
     assert mark.get_snippet() is not None
 
@@ -255,6 +260,7 @@ def test_the_mark_index_is_a_char_offset_into_the_source() -> None:
     with pytest.raises(ScannerError) as excinfo:
         parse(src)
     mark = excinfo.value.problem_mark
+    assert mark is not None
     assert src[mark.index] == '*'
     assert mark.line == 1
     assert mark.column == 5
@@ -303,7 +309,8 @@ def test_a_tab_after_a_colon_in_block_context_is_still_rejected() -> None:
     """
     with pytest.raises(ScannerError) as excinfo:
         parse('? key:\n:\tkey:\n')
-    assert 'valid YAML whitespace' in excinfo.value.problem
+    # `problem` is `str | None`; a scanner error always sets it.
+    assert 'valid YAML whitespace' in excinfo.value.problem  # ty: ignore[unsupported-operator]
 
 
 # -- errors cross as data -----------------------------------------------------------------
@@ -316,7 +323,7 @@ def test_a_scanner_error_arrives_as_scannererror_with_a_mark() -> None:
     err = excinfo.value
     assert isinstance(err, MarkedYAMLError)
     assert err.problem and 'flow sequence' in err.problem
-    assert err.problem_mark.name == '<unicode string>'
+    assert err.problem_mark.name == '<unicode string>'  # ty: ignore[unresolved-attribute]
     assert 'line 2' in str(err)  # printed 1-based
 
 
@@ -324,7 +331,7 @@ def test_the_stream_name_reaches_the_mark() -> None:
     """The `name` given to `parse` is the file name the error prints."""
     with pytest.raises(ScannerError) as excinfo:
         parse('a: [1, 2\n', name='conf.yaml')
-    assert excinfo.value.problem_mark.name == 'conf.yaml'
+    assert excinfo.value.problem_mark.name == 'conf.yaml'  # ty: ignore[unresolved-attribute]
     assert 'conf.yaml' in str(excinfo.value)
 
 

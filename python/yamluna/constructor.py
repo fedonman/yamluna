@@ -221,25 +221,37 @@ _NULL: Final = frozenset(('', '~', 'null', 'Null', 'NULL'))
 # YAML 1.2 core schema booleans. `true` and `false` are the canonical spellings, so those
 # two, and only those two, may become a bare `bool`.
 _BOOL_12: Final = {
-    'true': True, 'True': True, 'TRUE': True,
-    'false': False, 'False': False, 'FALSE': False,
+    'true': True,
+    'True': True,
+    'TRUE': True,
+    'false': False,
+    'False': False,
+    'FALSE': False,
 }
 # The extra YAML 1.1 spellings, live only under an explicit `%YAML 1.1`.
 _BOOL_11: Final = _BOOL_12 | {
-    'y': True, 'Y': True, 'yes': True, 'Yes': True, 'YES': True, 'on': True,
-    'On': True, 'ON': True,
-    'n': False, 'N': False, 'no': False, 'No': False, 'NO': False, 'off': False,
-    'Off': False, 'OFF': False,
+    'y': True,
+    'Y': True,
+    'yes': True,
+    'Yes': True,
+    'YES': True,
+    'on': True,
+    'On': True,
+    'ON': True,
+    'n': False,
+    'N': False,
+    'no': False,
+    'No': False,
+    'NO': False,
+    'off': False,
+    'Off': False,
+    'OFF': False,
 }
 _CANONICAL_BOOL: Final = frozenset(('true', 'false'))
 
 # Capital `0X`, `0O` and `0B` are integers here; ruamel drops them to strings.
-_INT_RE: Final = re.compile(
-    r'[-+]?(?:0[bB][01_]+|0[oO][0-7_]+|0[xX][0-9a-fA-F_]+|[0-9][0-9_]*)'
-)
-_FLOAT_RE: Final = re.compile(
-    r'[-+]?(?:\.[0-9_]+|[0-9][0-9_]*(?:\.[0-9_]*)?)(?:[eE][-+]?[0-9_]+)?'
-)
+_INT_RE: Final = re.compile(r'[-+]?(?:0[bB][01_]+|0[oO][0-7_]+|0[xX][0-9a-fA-F_]+|[0-9][0-9_]*)')
+_FLOAT_RE: Final = re.compile(r'[-+]?(?:\.[0-9_]+|[0-9][0-9_]*(?:\.[0-9_]*)?)(?:[eE][-+]?[0-9_]+)?')
 _INF_NAN_RE: Final = re.compile(r'[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN)')
 # Cheap gate before the much larger timestamp pattern is tried.
 _DATE_HEAD: Final = re.compile(r'[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}')
@@ -262,8 +274,10 @@ _STYLE_CHAR: Final[dict[int, str | None]] = {
 _QUOTED: Final = (STYLE_SINGLE, STYLE_DOUBLE)
 
 
-def resolve(lexeme: str, version: tuple[int, int] | None = None) -> Any:
-    """Resolves a plain scalar lexeme against the core schema.
+# One return per branch of the core schema's resolution ladder, which is the shape of the
+# schema and not a knot to untangle.
+def resolve(lexeme: str, version: tuple[int, int] | None = None) -> Any:  # noqa: PLR0911
+    """Resolve a plain scalar lexeme against the core schema.
 
     The result carries the lexeme whenever the value alone cannot reproduce it.
 
@@ -286,6 +300,7 @@ def resolve(lexeme: str, version: tuple[int, int] | None = None) -> Any:
         >>> resolve('true'), resolve('TRUE').lexeme()
         (True, 'TRUE')
         ```
+
     """
     if '\n' in lexeme:
         return UNRESOLVED
@@ -308,13 +323,15 @@ def resolve(lexeme: str, version: tuple[int, int] | None = None) -> Any:
 
 
 def _int(lexeme: str) -> Any:
-    """A `ScalarInt` subclass, or a bare `int` when `str(int)` reproduces the lexeme."""
+    """Return a `ScalarInt` subclass, or a bare `int` when `str(int)` reproduces the lexeme."""
     value = _int_from_lexeme(lexeme)
+    # `scalarint` keeps the shape it parsed out of the lexeme private, and offers no
+    # predicate for "the plain one"; this is the only caller that has to ask.
     plain = (
         type(value) is ScalarInt
-        and value._width is None
-        and not value._underscore
-        and value._sign in ('', '-')
+        and value._width is None  # noqa: SLF001
+        and not value._underscore  # noqa: SLF001
+        and value._sign in ('', '-')  # noqa: SLF001
     )
     return int(value) if plain else value
 
@@ -339,7 +356,8 @@ class Constructor:
         'version',
     )
 
-    def __init__(
+    # Every load setting arrives here; the count is the size of ruamel's settings set.
+    def __init__(  # noqa: PLR0913
         self,
         *,
         registry: TagRegistry | None = None,
@@ -349,7 +367,7 @@ class Constructor:
         source: str | None = None,
         name: str = '<unicode string>',
     ) -> None:
-        """Sets up a constructor with the settings one load runs under.
+        """Set up a constructor with the settings one load runs under.
 
         Args:
             registry: The `TagRegistry` that maps a tag to a registered class. With
@@ -363,6 +381,7 @@ class Constructor:
                 no `%YAML` directive of its own.
             source: The document text, used to put a snippet in an error message.
             name: The filename an error reports.
+
         """
         self.registry = registry
         self.preserve_quotes = preserve_quotes
@@ -379,7 +398,7 @@ class Constructor:
 
     @classmethod
     def for_yaml(cls, yaml: Any, **overrides: Any) -> Constructor:
-        """Returns a constructor taking its settings from a `YAML` instance.
+        """Return a constructor taking its settings from a `YAML` instance.
 
         Args:
             yaml: A `yamluna.main.YAML`. Every setting is read with `getattr`, so an
@@ -389,19 +408,19 @@ class Constructor:
 
         Returns:
             A constructor configured for that `YAML`.
+
         """
-        return cls(
-            **{
-                'registry': getattr(yaml, 'registry', None),
-                'preserve_quotes': bool(getattr(yaml, 'preserve_quotes', False)),
-                'allow_duplicate_keys': bool(getattr(yaml, 'allow_duplicate_keys', False)),
-                'version': getattr(yaml, 'version', None),
-                **overrides,
-            }
-        )
+        settings: dict[str, Any] = {
+            'registry': getattr(yaml, 'registry', None),
+            'preserve_quotes': bool(getattr(yaml, 'preserve_quotes', False)),
+            'allow_duplicate_keys': bool(getattr(yaml, 'allow_duplicate_keys', False)),
+            'version': getattr(yaml, 'version', None),
+            **overrides,
+        }
+        return cls(**settings)
 
     def construct_all(self, docs: Iterable[Doc]) -> list[Any]:
-        """Returns one Python tree per document record, in stream order.
+        """Return one Python tree per document record, in stream order.
 
         Args:
             docs: The document records of one stream.
@@ -413,11 +432,12 @@ class Constructor:
             ComposerError: An alias names an anchor its document never defines.
             ConstructorError: A node cannot be built from its tag or its text.
             DuplicateKeyError: A mapping repeats a key, or repeats the merge key `<<`.
+
         """
         return [self.construct(d) for d in docs]
 
     def construct(self, doc: Doc) -> Any:
-        """Returns the object tree of one document record.
+        """Return the object tree of one document record.
 
         Anchors are reset first, so one constructor serves a whole stream. A registered
         class's `from_yaml` hook runs here, so whatever it raises propagates.
@@ -442,6 +462,7 @@ class Constructor:
             DuplicateKeyError: A mapping repeats a key. Under `allow_duplicate_keys` a
                 `DuplicateKeyFutureWarning` naming both positions is issued instead and
                 the last value wins. A repeated merge key `<<` raises either way.
+
         """
         self._nodes = doc.nodes
         self._anchors = {}
@@ -460,24 +481,28 @@ class Constructor:
                     self._set_own_eol(root, node.eol)
                 if doc.trailing:
                     root.ca.end = list(root.ca.end) + self._tokens(doc.trailing)
-            setattr(root, DOC_ATTRIB, Doc(
-                version=doc.version,
-                tag_directives=list(doc.tag_directives),
-                explicit_start=doc.explicit_start,
-                explicit_end=doc.explicit_end,
-                leading=list(doc.leading),
-                trailing=list(doc.trailing),
-                bom=doc.bom,
-                final_line_break=doc.final_line_break,
-                tags_before_version=doc.tags_before_version,
-                directives_raw=doc.directives_raw,
-                stream_tail=doc.stream_tail,
-                line_space=doc.line_space,
-            ))
+            setattr(
+                root,
+                DOC_ATTRIB,
+                Doc(
+                    version=doc.version,
+                    tag_directives=list(doc.tag_directives),
+                    explicit_start=doc.explicit_start,
+                    explicit_end=doc.explicit_end,
+                    leading=list(doc.leading),
+                    trailing=list(doc.trailing),
+                    bom=doc.bom,
+                    final_line_break=doc.final_line_break,
+                    tags_before_version=doc.tags_before_version,
+                    directives_raw=doc.directives_raw,
+                    stream_tail=doc.stream_tail,
+                    line_space=doc.line_space,
+                ),
+            )
         return root
 
     def _promote(self, value: Any, node: Node) -> Any:
-        """A bare builtin root as the scalar class that can hold the document's own facts."""
+        """Return a bare builtin root as the scalar class that can hold the document's own facts."""
         # A mapping or a sequence root carries the directives and the markers itself; a
         # bare `str` or `int` cannot, so it is promoted to the class that can, the same
         # promotion `_anchored` does for a scalar that has to hold an anchor. `None`,
@@ -501,23 +526,27 @@ class Constructor:
 
     # -- dispatch -------------------------------------------------------------------------
 
-    def _build(self, index: int, as_key: bool = False) -> Any:
+    def _build(self, index: int, *, as_key: bool = False) -> Any:
         node = self._nodes[index]
         if node.kind == KIND_ALIAS:
             try:
-                return self._anchors[node.anchor]
+                # An alias always names an anchor, and `''` is never registered as one, so
+                # a node without a name still falls through to the undefined-alias error.
+                return self._anchors[node.anchor or '']
             except KeyError:
                 raise self._error(
-                    'composer', f'found undefined alias {node.anchor!r}', node
+                    kind='composer', message=f'found undefined alias {node.anchor!r}', node=node
                 ) from None
         if node.kind == KIND_SCALAR:
             built = self._anchored(self._scalar(node), node)
         elif node.kind == KIND_SEQUENCE:
-            built = self._sequence(node, as_key)
+            built = self._sequence(node, as_key=as_key)
         elif node.kind == KIND_MAPPING:
-            built = self._mapping(node, as_key)
+            built = self._mapping(node, as_key=as_key)
         else:
-            raise self._error('constructor', f'unknown node kind {node.kind!r}', node)
+            raise self._error(
+                kind='constructor', message=f'unknown node kind {node.kind!r}', node=node
+            )
         # An alias returned above skips this: its site is not where its anchor was
         # written, so the record it would park is the anchor's, and the object holds that
         # one already.
@@ -536,12 +565,15 @@ class Constructor:
             return self._registered_object(registration, node, node.value or '')
         if resolved.startswith(YAML_ORG):
             return self._standard_scalar(resolved[len(YAML_ORG) :], node)
-        scalar = TaggedScalar(node.value or '', _STYLE_CHAR.get(node.style), Tag(*node.tag))
+        # `_tag` returns `None` exactly when `node.tag` is, so a tag here is a 3-tuple;
+        # the correlation between the local and the attribute is what ty cannot see.
+        written_tag = Tag(*node.tag)  # ty: ignore[not-iterable]
+        scalar = TaggedScalar(node.value or '', _STYLE_CHAR.get(node.style), written_tag)
         scalar.lc.line, scalar.lc.col = node.line, node.col
         return scalar
 
     def _plain(self, node: Node) -> Any:
-        """An untagged scalar, resolved against the core schema if the style allows it."""
+        """Return an untagged scalar, resolved against the core schema if the style allows it."""
         if node.style != STYLE_PLAIN:
             return self._string(node)  # A quoted or block scalar is always a string.
         lexeme = node.raw if node.raw is not None else (node.value or '')
@@ -549,7 +581,7 @@ class Constructor:
         return self._string(node) if value is UNRESOLVED else value
 
     def _string(self, node: Node) -> str:
-        """The style's `ScalarString` subclass, or a bare `str` where that loses nothing.
+        """Return the style's `ScalarString` subclass, or a bare `str` where that loses nothing.
 
         A plain scalar comes back as a bare `str` wherever the value reproduces the
         lexeme. One folded over several lines does not, so it keeps its class and with it
@@ -570,7 +602,7 @@ class Constructor:
         return cls(value, lexeme=node.raw)
 
     def _standard_scalar(self, kind: str, node: Node) -> Any:
-        """A `tag:yaml.org,2002:` scalar tag: the type is forced, not resolved."""
+        """Return a `tag:yaml.org,2002:` scalar tag: the type is forced, not resolved."""
         value = node.value if node.value is not None else ''
         if kind == 'null':
             return None
@@ -579,30 +611,32 @@ class Constructor:
                 return base64.b64decode(value)
             except (binascii.Error, ValueError) as exc:
                 raise self._error(
-                    'constructor', f'failed to decode base64 data: {exc}', node
+                    kind='constructor', message=f'failed to decode base64 data: {exc}', node=node
                 ) from None
         if kind == 'bool':
             if (found := _BOOL_11.get(value.strip())) is None:
-                raise self._error('constructor', f'not a boolean: {value!r}', node)
+                raise self._error(
+                    kind='constructor', message=f'not a boolean: {value!r}', node=node
+                )
             return found
         if kind in ('int', 'float', 'timestamp'):
-            build = {
-                'int': _int, 'float': _float_from_lexeme, 'timestamp': _timestamp_from_lexeme
-            }[kind]
+            build = {'int': _int, 'float': _float_from_lexeme, 'timestamp': _timestamp_from_lexeme}[
+                kind
+            ]
             try:
                 return build(value.strip())
             except ValueError:
                 raise self._error(
-                    'constructor', f'not a valid {kind}: {value!r}', node
+                    kind='constructor', message=f'not a valid {kind}: {value!r}', node=node
                 ) from None
         return self._string(node)  # !!str, and any other yaml.org scalar tag.
 
     # -- collections ----------------------------------------------------------------------
 
-    def _sequence(self, node: Node, as_key: bool) -> Any:
+    def _sequence(self, node: Node, *, as_key: bool) -> Any:
         if as_key:
             # A key must hash, so it is a tuple and cannot be filled after the fact.
-            seq: Any = CommentedKeySeq(self._build(i, True) for i in node.children)
+            seq: Any = CommentedKeySeq(self._build(i, as_key=True) for i in node.children)
             self._decorate(seq, node)
             self._place_children(seq, enumerate(node.children))
             # A key is built in one go, so its anchor can only be bound once the key
@@ -623,7 +657,7 @@ class Constructor:
         return self._tagged_container(seq, node)
 
     def _place_children(self, owner: Any, items: Iterable[tuple[int, int]]) -> None:
-        """Records where each child of a key collection was written."""
+        """Record where each child of a key collection was written."""
         # A key is built in one go, since it has to hash before it can be stored, so it
         # misses the per-item bookkeeping the mutable containers do inline. Without this
         # the emitter lays the key's contents out afresh instead of echoing them.
@@ -631,10 +665,10 @@ class Constructor:
             item = self._nodes[child]
             owner.lc.add_idx_line_col(position, [item.line, item.col])
 
-    def _mapping(self, node: Node, as_key: bool) -> Any:
+    def _mapping(self, node: Node, *, as_key: bool) -> Any:
         pairs = list(zip(node.children[::2], node.children[1::2], strict=True))
         if as_key:
-            built = [(self._build(k, True), self._build(v, True)) for k, v in pairs]
+            built = [(self._build(k, as_key=True), self._build(v, as_key=True)) for k, v in pairs]
             key_map: Any = CommentedKeyMap(built)
             self._register(node, key_map)
             self._decorate(key_map, node)
@@ -657,10 +691,10 @@ class Constructor:
             if 2 * entry in merge_positions:
                 if merge_pos is not None:
                     raise self._error(
-                        'duplicatekey',
-                        'found duplicate merge key "<<".  Duplicate merge keys are never '
-                        'allowed, not even when allow_duplicate_keys is True',
-                        key_node,
+                        kind='duplicatekey',
+                        message='found duplicate merge key "<<".  Duplicate merge keys are '
+                        'never allowed, not even when allow_duplicate_keys is True',
+                        node=key_node,
                     )
                 merge_pos = entry
                 merges.extend(self._merge_values(value_index, value_node))
@@ -694,20 +728,20 @@ class Constructor:
         return self._tagged_container(mapping, node)
 
     def _merge_values(self, index: int, node: Node) -> list[Mapping[Any, Any]]:
-        """The mappings behind a `<<`: one alias, or a sequence of them."""
+        """Return the mappings behind a `<<`: one alias, or a sequence of them."""
         value = self._build(index)
         found = list(value) if isinstance(value, list) else [value]
         for item in found:
             if not isinstance(item, Mapping):
                 raise self._error(
-                    'constructor',
-                    f'expected a mapping for merging, but found {type(item).__name__}',
-                    node,
+                    kind='constructor',
+                    message=f'expected a mapping for merging, but found {type(item).__name__}',
+                    node=node,
                 )
         return found
 
     def _tagged_container(self, container: Any, node: Node) -> Any:
-        """Applies the node's tag to an already-built container (registered class, `!!set`).
+        """Apply the node's tag to an already-built container (registered class, `!!set`).
 
         The container was registered under its anchor before it was filled, so a recursive
         anchor works. When the tag replaces it with something else, the anchor is
@@ -743,14 +777,16 @@ class Constructor:
         except _RegistryError as exc:
             # The registry raises for an unresolvable or ambiguous tag and names every
             # candidate; re-raise it as this package's marked error, message intact.
-            raise self._error('constructor', _message(exc), node) from None
+            raise self._error(kind='constructor', message=_message(exc), node=node) from None
 
     def _registered_object(self, registration: Registration, node: Node, state: Any) -> Any:
         cls = registration.cls
         hook = getattr(cls, 'from_yaml', None)
         if hook is not None:
             return hook(self, node)  # ruamel's (constructor, node) signature
-        obj = cls.__new__(cls)
+        # `cls` is whatever the user registered, so `object.__new__`'s overloads have no
+        # signature to match it against.
+        obj = cls.__new__(cls)  # ty: ignore[no-matching-overload]
         setstate = getattr(obj, '__setstate__', None)
         if setstate is not None:
             setstate(state)
@@ -758,23 +794,23 @@ class Constructor:
             obj.__dict__.update(state)
         else:
             raise self._error(
-                'constructor',
-                f'cannot construct {registration.path} from a '
+                kind='constructor',
+                message=f'cannot construct {registration.path} from a '
                 f'{type(state).__name__}: give it a from_yaml classmethod',
-                node,
+                node=node,
             )
         return obj
 
     # -- shared node decoration -----------------------------------------------------------
 
     def _register(self, node: Node, obj: Any) -> Any:
-        """Binds `&name` to `obj` before the container is filled, so recursion terminates."""
+        """Bind `&name` to `obj` before the container is filled, so recursion terminates."""
         if node.anchor:
             self._anchors[node.anchor] = obj
         return obj
 
     def _decorate(self, obj: Any, node: Node) -> None:
-        """Sets a container's style, anchor, tag, position and own trivia from `node`."""
+        """Set a container's style, anchor, tag, position and own trivia from `node`."""
         if node.style == STYLE_FLOW:
             obj.fa.set_flow_style()
         else:
@@ -794,7 +830,7 @@ class Constructor:
             obj.ca.end = list(obj.ca.end) + self._tokens(node.after)
 
     def _anchored(self, value: Any, node: Node) -> Any:
-        """Registers a scalar's anchor, promoting the value if a builtin cannot hold one."""
+        """Register a scalar's anchor, promoting the value if a builtin cannot hold one."""
         if not node.anchor:
             return value
         if not hasattr(value, 'yaml_set_anchor'):
@@ -813,7 +849,7 @@ class Constructor:
 
     @staticmethod
     def _note_null(owner: Any, key: Any, value: Any, node: Node) -> None:
-        """Records how a `None` child was spelled, when it was spelled at all.
+        """Record how a `None` child was spelled, when it was spelled at all.
 
         Only `None` has this problem: every other scalar type carries its own lexeme. See
         `NULL_ATTRIB`.
@@ -830,7 +866,7 @@ class Constructor:
     def _note_source(
         owner: Any, key: Any, value: Any, node: Node, key_node: Node | None = None
     ) -> None:
-        """Keeps the records of one entry's children that could not keep them themselves.
+        """Keep the records of one entry's children that could not keep them themselves.
 
         `_park` slides off a bare `str`, `int` or `None`, and then the parent is the only
         place left. See `SOURCE_ATTRIB`.
@@ -870,7 +906,7 @@ class Constructor:
     def _entry_trivia(
         self, owner: CommentedBase, key: Any, key_node: Node, value_node: Node, value: Any
     ) -> None:
-        """Writes one entry's trivia into `owner`'s store, allocating a record only if needed.
+        """Write one entry's trivia into `owner`'s store, allocating a record only if needed.
 
         For a sequence element `key_node` and `value_node` are the same node, so the
         element gets `C_ELEM_PRE` and `C_ELEM_EOL`, which are the key slots, and its own
@@ -890,7 +926,10 @@ class Constructor:
         value_eol = None if same or value_node.eol is None else self._token(value_node.eol)
         if not (pre or post or key_eol or value_eol):
             return
-        record = owner._ca_record(key)
+        # The public route is `owner.ca.set(key, slot, value)`, which does one
+        # `_ca_record` lookup per slot. The loader writes all four slots of every entry, so
+        # this takes the record once and fills it, and reaches the private hook to do it.
+        record = owner._ca_record(key)  # noqa: SLF001
         record[C_KEY_PRE] = pre or None
         record[C_KEY_EOL] = key_eol
         record[C_VALUE_EOL] = value_eol
@@ -901,10 +940,7 @@ class Constructor:
         out: list[CommentToken] = []
         for item in trivia:
             if item.blank_lines:
-                out += [
-                    CommentToken('\n', CommentMark(item.col))
-                    for _ in range(item.blank_lines)
-                ]
+                out += [CommentToken('\n', CommentMark(item.col)) for _ in range(item.blank_lines)]
             elif item.text is not None:
                 out.append(self._token(item))
         return out
@@ -922,7 +958,7 @@ class Constructor:
         return CommentToken(text, CommentMark(trivia.col))
 
     def _prepend_pre(self, obj: CommentedBase, tokens: list[CommentToken]) -> None:
-        """Puts `tokens` in front of the own-line comments `obj` already carries."""
+        """Put `tokens` in front of the own-line comments `obj` already carries."""
         if not tokens:
             return
         current = obj.ca.comment
@@ -932,7 +968,7 @@ class Constructor:
             current[1] = tokens + list(current[1] or [])
 
     def _set_own_eol(self, obj: CommentedBase, trivia: Trivia) -> None:
-        """Sets `obj`'s own end-of-line comment, leaving its own-line comments alone."""
+        """Set `obj`'s own end-of-line comment, leaving its own-line comments alone."""
         current = obj.ca.comment
         if current is None:
             obj.ca.comment = [self._token(trivia), None]
@@ -942,7 +978,7 @@ class Constructor:
     # -- errors ---------------------------------------------------------------------------
 
     def _duplicate(self, key: Any, first: Node, second: Node) -> None:
-        """Raises or warns for a key the mapping already holds, naming both positions."""
+        """Raise or warn for a key the mapping already holds, naming both positions."""
         # The two entries collapse into one `dict` entry, and for an alias used as a key
         # of its own mapping, or for two empty keys, they are one key object reached
         # twice. No wrapper rescues those: a wrapper keyed on identity cannot separate an
@@ -955,18 +991,18 @@ class Constructor:
             f'again at line {second.line + 1}, column {second.col + 1}'
         )
         if not self.allow_duplicate_keys:
-            raise self._error('duplicatekey', f'found duplicate key {where}', second)
+            raise self._error(
+                kind='duplicatekey', message=f'found duplicate key {where}', node=second
+            )
         warnings.warn(
             f'duplicate key {where}; the last value wins',
             DuplicateKeyFutureWarning,
             stacklevel=2,
         )
 
-    def _error(self, kind: str, message: str, node: Node) -> MarkedYAMLError:
-        """The marked error of `kind`, positioned at `node` and carrying the source snippet."""
-        return make_error(
-            kind, message, node.line, node.col, source=self.source, name=self.name
-        )
+    def _error(self, *, kind: str, message: str, node: Node) -> MarkedYAMLError:
+        """Return the error of `kind`, positioned at `node` and carrying the source snippet."""
+        return make_error(kind, message, node.line, node.col, source=self.source, name=self.name)
 
     # -- tags -----------------------------------------------------------------------------
 
@@ -982,7 +1018,7 @@ class Constructor:
 
 
 def _park(value: Any, node: Node) -> Any:
-    """Parks on `value` the record it was built from, and returns `value`.
+    """Park on `value` the record it was built from, and return `value`.
 
     A bare `str`, `int` or `None` is left alone; the parent keeps its record under
     `SOURCE_ATTRIB` instead.
@@ -1021,12 +1057,12 @@ def _has_document_facts(doc: Doc) -> bool:
 
 
 def _message(exc: Exception) -> str:
-    """The registry's message, whichever `ConstructorError` it happened to raise."""
-    return str(exc) if str(exc) else repr(exc)
+    """Return the registry's message, whichever `ConstructorError` it happened to raise."""
+    return str(exc) or repr(exc)
 
 
 def construct(doc: Doc, yaml: Any = None, **options: Any) -> Any:
-    """Returns the Python tree of one document record.
+    """Return the Python tree of one document record.
 
     Args:
         doc: The document record to build.
@@ -1040,12 +1076,13 @@ def construct(doc: Doc, yaml: Any = None, **options: Any) -> Any:
         ComposerError: An alias names an anchor the document never defines.
         ConstructorError: A node cannot be built from its tag or its text.
         DuplicateKeyError: A mapping repeats a key, or repeats the merge key `<<`.
+
     """
     return _for(yaml, options).construct(doc)
 
 
 def construct_all(docs: Iterable[Doc], yaml: Any = None, **options: Any) -> list[Any]:
-    """Returns one Python tree per document record of a stream.
+    """Return one Python tree per document record of a stream.
 
     Args:
         docs: The document records, in stream order.
@@ -1060,10 +1097,11 @@ def construct_all(docs: Iterable[Doc], yaml: Any = None, **options: Any) -> list
         ComposerError: An alias names an anchor its document never defines.
         ConstructorError: A node cannot be built from its tag or its text.
         DuplicateKeyError: A mapping repeats a key, or repeats the merge key `<<`.
+
     """
     return _for(yaml, options).construct_all(docs)
 
 
 def _for(yaml: Any, options: dict[str, Any]) -> Constructor:
-    """The constructor for `yaml` and `options`, with `options` winning."""
+    """Return the constructor for `yaml` and `options`, with `options` winning."""
     return Constructor(**options) if yaml is None else Constructor.for_yaml(yaml, **options)

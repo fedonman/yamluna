@@ -9,26 +9,29 @@ from __future__ import annotations
 
 import importlib.util
 import io
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
+
 import yamluna
 from yamluna import YAML, ComposerError, YAMLStreamError, default_registry
 from yamluna.main import _decode, _read, _write
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 EXTENSION_BUILT = importlib.util.find_spec('yamluna._yamluna') is not None
 
 
 @pytest.fixture
 def pipeline() -> None:
-    """Skips the test unless the whole load and dump path exists."""
+    """Skip the test unless the whole load and dump path exists."""
     for module in ('yamluna._yamluna', 'yamluna.constructor', 'yamluna.representer'):
         pytest.importorskip(module, reason=f'{module} does not exist yet: maturin develop')
 
 
 def klass(name: str, module: str) -> type:
-    """Returns a new class with a chosen `__module__`, so registry paths are predictable.
+    """Return a new class with a chosen `__module__`, so registry paths are predictable.
 
     Args:
         name: The class name, which is also the default tag name.
@@ -37,6 +40,7 @@ def klass(name: str, module: str) -> type:
 
     Returns:
         The new class.
+
     """
     return type(name, (), {'__module__': module})
 
@@ -145,8 +149,10 @@ def test_two_instances_register_the_same_tag_name_without_interfering() -> None:
 
     # ruamel: both land in a class-level dict, the second wins, and which one that is
     # depends on import order.  Here each instance answers with its own class.
-    assert one.registry.resolve('!Circuit').cls is libx
-    assert two.registry.resolve('!Circuit').cls is liby
+    assert (from_one := one.registry.resolve('!Circuit')) is not None
+    assert (from_two := two.registry.resolve('!Circuit')) is not None
+    assert from_one.cls is libx
+    assert from_two.cls is liby
     assert YAML().registry.resolve('!Circuit') is None
     assert default_registry.resolve('!Circuit') is None
 
@@ -167,7 +173,7 @@ def test_register_is_the_decorator_form() -> None:
         pass
 
     assert yaml.registry.registration_for(Gate) is not None
-    assert yaml.registry.resolve('!Gate').cls is Gate
+    assert yaml.registry.resolve('!Gate').cls is Gate  # ty: ignore[unresolved-attribute]
 
 
 def test_register_class_forwards_tag_and_source() -> None:
@@ -175,6 +181,7 @@ def test_register_class_forwards_tag_and_source() -> None:
     cls = klass('Circuit', 'libx.circuits')
     assert yaml.register_class(cls, tag='Circ', source='pinned') is cls
     record = yaml.registry.registration_for(cls)
+    assert record is not None
     assert (record.tag_name, record.source, record.pinned) == ('Circ', 'pinned', True)
     assert record.uri == 'tag:pinned/Circ'
 
@@ -182,10 +189,12 @@ def test_register_class_forwards_tag_and_source() -> None:
 def test_the_module_level_registry_is_opt_in() -> None:
     thing = klass('ModuleLevelThing', 'libz')
     assert yamluna.register_class(thing) is thing
-    assert default_registry.resolve('!ModuleLevelThing').cls is thing
+    assert (from_default := default_registry.resolve('!ModuleLevelThing')) is not None
+    assert from_default.cls is thing
     assert YAML().registry.resolve('!ModuleLevelThing') is None
     shared = YAML(registry=default_registry)
-    assert shared.registry.resolve('!ModuleLevelThing').cls is thing
+    assert (from_shared := shared.registry.resolve('!ModuleLevelThing')) is not None
+    assert from_shared.cls is thing
 
 
 # -- streams --------------------------------------------------------------------------
@@ -217,7 +226,7 @@ def test_file_objects_are_read_text_or_binary(tmp_path: Path) -> None:
 
 def test_a_stream_that_cannot_be_read_says_so() -> None:
     with pytest.raises(YAMLStreamError, match='read'):
-        _read(object())  # type: ignore[arg-type]
+        _read(object())  # ty: ignore[invalid-argument-type]
 
 
 def test_the_bom_survives_decoding() -> None:
@@ -271,7 +280,7 @@ def test_writing_to_a_path(tmp_path: Path) -> None:
 
 def test_a_stream_that_cannot_be_written_says_so() -> None:
     with pytest.raises(YAMLStreamError, match='write'):
-        _write('a: 1\n', 'out.yaml', 'utf-8')  # type: ignore[arg-type]
+        _write('a: 1\n', 'out.yaml', 'utf-8')  # ty: ignore[invalid-argument-type]
 
 
 # -- the context-manager dump form -----------------------------------------------------
@@ -305,9 +314,11 @@ def test_a_per_dump_stream_is_refused_inside_the_block() -> None:
 def test_nothing_is_written_when_the_block_raises() -> None:
     stream = io.StringIO()
     yaml = YAML(output=stream)
-    with pytest.raises(RuntimeError), yaml:
+    msg = 'boom'
+    # Two statements on purpose: the dump has to happen inside the block that then raises.
+    with pytest.raises(RuntimeError), yaml:  # noqa: PT012
         yaml.dump({'a': 1})
-        raise RuntimeError('boom')
+        raise RuntimeError(msg)
     assert stream.getvalue() == ''
 
 

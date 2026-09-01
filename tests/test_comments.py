@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import pytest
+
 from yamluna.comments import (
     C_ELEM_EOL,
     C_KEY_PRE,
@@ -41,7 +42,7 @@ from yamluna.comments import (
 
 
 def seq(*values: Any, comments: dict[int, str] | None = None) -> CommentedSeq:
-    """Returns a `CommentedSeq` of `values`.
+    """Return a `CommentedSeq` of `values`.
 
     Args:
         values: The elements, in order.
@@ -49,6 +50,7 @@ def seq(*values: Any, comments: dict[int, str] | None = None) -> CommentedSeq:
 
     Returns:
         The new sequence.
+
     """
     s = CommentedSeq(values)
     for idx, text in (comments or {}).items():
@@ -57,7 +59,7 @@ def seq(*values: Any, comments: dict[int, str] | None = None) -> CommentedSeq:
 
 
 def cmap(comments: dict[str, str] | None = None, **items: Any) -> CommentedMap:
-    """Returns a `CommentedMap` of `items`.
+    """Return a `CommentedMap` of `items`.
 
     Args:
         comments: End-of-line comment text per key.
@@ -65,6 +67,7 @@ def cmap(comments: dict[str, str] | None = None, **items: Any) -> CommentedMap:
 
     Returns:
         The new mapping.
+
     """
     m = CommentedMap(items)
     for key, text in (comments or {}).items():
@@ -73,7 +76,7 @@ def cmap(comments: dict[str, str] | None = None, **items: Any) -> CommentedMap:
 
 
 def eol(node: Any, key: Any) -> str | None:
-    """Returns the end-of-line comment text of one entry, or `None` when it has none."""
+    """Return the end-of-line comment text of one entry, or `None` when it has none."""
     record = node.ca.items.get(key)
     if record is None:
         return None
@@ -82,7 +85,7 @@ def eol(node: Any, key: Any) -> str | None:
 
 
 def eols(node: Any) -> dict[Any, str | None]:
-    """Returns every end-of-line comment of `node`, keyed by key or index, in order."""
+    """Return every end-of-line comment of `node`, keyed by key or index, in order."""
     return {k: eol(node, k) for k in node._ca_order() if eol(node, k) is not None}
 
 
@@ -117,8 +120,9 @@ def test_json_dumps() -> None:
 
 def test_arbitrary_attributes() -> None:
     for node in (CommentedMap(), CommentedSeq(), CommentedSet(), TaggedScalar('x')):
-        node.whatever = 42
-        assert node.whatever == 42
+        # Accepting an attribute nothing declared is exactly what is under test here.
+        node.whatever = 42  # ty: ignore[invalid-assignment]
+        assert node.whatever == 42  # ty: ignore[unresolved-attribute]
 
 
 def test_nested_containers_keep_working() -> None:
@@ -260,7 +264,8 @@ def test_seq_setitem_keeps_the_slot_comment() -> None:
     assert eols(s) == {0: '# slot 0'}
 
 
-def test_seq_binding_survives_random_mutation() -> None:
+# One branch per mutation the fuzz loop can pick, each of them three lines.
+def test_seq_binding_survives_random_mutation() -> None:  # noqa: C901
     """Every element carries a comment naming it; no sequence of edits may separate them."""
     import random
 
@@ -316,7 +321,7 @@ def test_seq_store_stays_the_same_length_as_the_list() -> None:
 
 
 def test_map_delete_does_not_resurrect_a_comment() -> None:
-    """ruamel 0.19.1 keeps the record keyed by the removed key and re-attaches it."""
+    """Ruamel 0.19.1 keeps the record keyed by the removed key and re-attaches it."""
     m = cmap(comments={'k': 'for k'}, k=1, j=2)
     del m['k']
     m['k'] = 99
@@ -393,7 +398,7 @@ def test_map_mlget() -> None:
 
 def test_scalar_string_subclass_is_preserved_on_assignment() -> None:
     class Literal(str):
-        pass
+        __slots__ = ()
 
     m = CommentedMap(a=Literal('x'))
     m['a'] = 'plain'

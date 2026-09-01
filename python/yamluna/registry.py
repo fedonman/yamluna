@@ -20,16 +20,16 @@ from typing import Final, NamedTuple
 
 from .error import ConstructorError
 
-__all__ = ["ConstructorError", "Registration", "TagDirective", "TagRegistry", "WirePlan"]
+__all__ = ['ConstructorError', 'Registration', 'TagDirective', 'TagRegistry', 'WirePlan']
 
 # Everything outside this character class is folded to `-` when deriving a `%TAG` handle.
-_ILLEGAL_IN_HANDLE: Final = re.compile(r"[^A-Za-z0-9-]+")
+_ILLEGAL_IN_HANDLE: Final = re.compile(r'[^A-Za-z0-9-]+')
 
 # The wire identity of a registered class: `tag:{source}/{tag_name}`, where the source is a
 # dotted module-ish path. A tag of any other shape belongs to somebody else and round-trips
 # untouched.
 _NAMESPACE: Final = re.compile(
-    r"tag:([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*)/([^/]+)"
+    r'tag:([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*)/([^/]+)'
 )
 
 
@@ -43,8 +43,8 @@ class TagDirective(NamedTuple):
     """The prefix the handle stands for, such as `tag:libx/`."""
 
     def __str__(self) -> str:
-        """The directive as a document writes it: `%TAG ! tag:libx/`."""
-        return f"%TAG {self.handle} {self.prefix}"
+        """Return the directive as a document writes it: `%TAG ! tag:libx/`."""
+        return f'%TAG {self.handle} {self.prefix}'
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +72,7 @@ class Registration:
     @property
     def uri(self) -> str:
         """The global tag this class is written as, `tag:libx/Circuit`."""
-        return f"tag:{self.source}/{self.tag_name}"
+        return f'tag:{self.source}/{self.tag_name}'
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,8 +87,8 @@ class WirePlan:
 
 
 def _path_of(cls: type) -> str:
-    """The registry key for `cls`: its module path joined to its qualified name."""
-    return f"{cls.__module__}.{cls.__qualname__}"
+    """Return the registry key for `cls`: its module path joined to its qualified name."""
+    return f'{cls.__module__}.{cls.__qualname__}'
 
 
 def _sanitise(source: str) -> str:
@@ -97,15 +97,15 @@ def _sanitise(source: str) -> str:
     A source of pure punctuation folds to nothing and comes back as `tag`, so the handle
     is always usable.
     """
-    return _ILLEGAL_IN_HANDLE.sub("-", source).strip("-") or "tag"
+    return _ILLEGAL_IN_HANDLE.sub('-', source).strip('-') or 'tag'
 
 
 def _alloc(base: str, taken: set[str]) -> str:
-    """`base`, or `base` with the first free digit suffix, added to `taken`."""
+    """Return `base`, or `base` with the first free digit suffix, and add it to `taken`."""
     handle, n = base, 1
     while handle in taken:
         n += 1
-        handle = f"{base}{n}"
+        handle = f'{base}{n}'
     taken.add(handle)
     return handle
 
@@ -135,15 +135,15 @@ def _split(tag: str) -> tuple[str | None, str]:
     The handle is `None` when no directive can apply, as for a verbatim `!<uri>` tag or an
     already-resolved absolute one; the suffix is then the whole URI.
     """
-    if tag.startswith("!<") and tag.endswith(">"):
+    if tag.startswith('!<') and tag.endswith('>'):
         return None, tag[2:-1]
-    if not tag.startswith("!"):
+    if not tag.startswith('!'):
         return None, tag
     rest = tag[1:]
-    if rest.startswith("!"):
-        return "!!", rest[1:]
-    head, sep, suffix = rest.partition("!")
-    return (f"!{head}!", suffix) if sep else ("!", rest)
+    if rest.startswith('!'):
+        return '!!', rest[1:]
+    head, sep, suffix = rest.partition('!')
+    return (f'!{head}!', suffix) if sep else ('!', rest)
 
 
 class TagRegistry:
@@ -156,15 +156,17 @@ class TagRegistry:
     Example:
         ```python
         registry = TagRegistry()
-        registry.register_class(Circuit)      # libx.circuits.Circuit
+        registry.register_class(Circuit)  # libx.circuits.Circuit
         plan = registry.plan([Circuit])
-        plan.directives                       # (TagDirective('!', 'tag:libx/'),)
-        plan.tags[Circuit]                    # '!Circuit'
+        plan.directives  # (TagDirective('!', 'tag:libx/'),)
+        plan.tags[Circuit]  # '!Circuit'
         registry.resolve('!Circuit', plan.directives).cls is Circuit
         ```
+
     """
 
     def __init__(self) -> None:
+        """Start a registry with nothing registered in it."""
         # Keyed on the qualified path, never on the tag name. ruamel keys its constructor
         # table on `'!' + cls.__name__`, so two `Circuit` classes overwrite each other and
         # import order decides which one wins. A path key cannot collide.
@@ -198,15 +200,16 @@ class TagRegistry:
             @registry.register
             class Circuit: ...
             ```
+
         """
-        declared = source or getattr(cls, "yaml_source", None)
-        name = tag or getattr(cls, "yaml_tag", None) or cls.__name__
+        declared = source or getattr(cls, 'yaml_source', None)
+        name = tag or getattr(cls, 'yaml_tag', None) or cls.__name__
         record = Registration(
             cls=cls,
             path=_path_of(cls),
-            tag_name=name.removeprefix("!"),  # ruamel writes yaml_tag = '!Circuit'
-            source=declared or cls.__module__.partition(".")[0],
-            declared_source=declared or cls.__module__.partition(".")[0],
+            tag_name=name.removeprefix('!'),  # ruamel writes yaml_tag = '!Circuit'
+            source=declared or cls.__module__.partition('.')[0],
+            declared_source=declared or cls.__module__.partition('.')[0],
             pinned=declared is not None,
         )
         self._by_path[record.path] = record  # re-registration replaces, never duplicates
@@ -221,11 +224,12 @@ class TagRegistry:
 
         Returns:
             One `Registration` per registered class, each with `source` already promoted.
+
         """
         return sorted(self._by_path.values(), key=lambda r: r.path)
 
     def registration_for(self, cls: type) -> Registration | None:
-        """The registration for `cls`.
+        """Return the registration for `cls`.
 
         Args:
             cls: The class to look up. Matched on its qualified path, so a class object
@@ -233,13 +237,14 @@ class TagRegistry:
 
         Returns:
             The `Registration`, or `None` when nothing is registered under that path.
+
         """
         return self._by_path.get(_path_of(cls))
 
     # -- emitting: classes to %TAG directives and tag strings ----------------------
 
     def plan(self, classes: Iterable[type]) -> WirePlan:
-        """The `%TAG` directives and tag strings a document using `classes` needs.
+        """Return the `%TAG` directives and tag strings a document using `classes` needs.
 
         Repeats count. Pass one entry per node and the most-used source wins the primary
         `!` handle; pass a set and the source with the most distinct classes wins. Ties
@@ -254,6 +259,7 @@ class TagRegistry:
         Returns:
             A `WirePlan`. Both of its fields are empty when none of `classes` is
             registered, so a document of plain data gets no `%TAG` line at all.
+
         """
         used: dict[type, Registration] = {}
         counts: Counter[str] = Counter()
@@ -267,13 +273,13 @@ class TagRegistry:
             return WirePlan((), {})  # nothing registered, so no %TAG line
 
         primary, *rest = sorted(counts, key=lambda s: (-counts[s], s))
-        handles = {primary: "!"}
+        handles = {primary: '!'}
         taken: set[str] = set()
         for src in sorted(rest):
-            handles[src] = f"!{_alloc(_sanitise(src), taken)}!"
+            handles[src] = f'!{_alloc(_sanitise(src), taken)}!'
         return WirePlan(
             directives=tuple(
-                TagDirective(handles[s], f"tag:{s}/") for s in [primary, *sorted(rest)]
+                TagDirective(handles[s], f'tag:{s}/') for s in [primary, *sorted(rest)]
             ),
             tags={cls: handles[r.source] + r.tag_name for cls, r in used.items()},
         )
@@ -285,7 +291,7 @@ class TagRegistry:
         tag: str,
         directives: Mapping[str, str] | Iterable[tuple[str, str]] = (),
     ) -> Registration | None:
-        """The class `tag` names, given the `%TAG` directives in scope.
+        """Return the class `tag` names, given the `%TAG` directives in scope.
 
         Args:
             tag: The tag exactly as the source wrote it: `!Circuit`, `!liby!Circuit`,
@@ -304,17 +310,18 @@ class TagRegistry:
                 but names no class there, or it matches more than one registered class. The
                 message names every candidate by qualified path and wire identity and says
                 how to disambiguate. The registry never guesses.
+
         """
         handle, suffix = _split(tag)
         in_scope = dict(directives)
         if handle is not None and handle in in_scope:
             return self._by_uri(in_scope[handle] + suffix, tag)
-        if handle == "!" and suffix:
+        if handle == '!' and suffix:
             return self._by_name(suffix, tag)
         return None  # verbatim, absolute, !!secondary, or an undeclared handle
 
     def _by_uri(self, uri: str, written: str) -> Registration | None:
-        """The registration an absolute `uri` names.
+        """Return the registration an absolute `uri` names.
 
         `written` is the tag as the source wrote it, and is what any error quotes back.
         """
@@ -332,15 +339,16 @@ class TagRegistry:
             # somebody else's document and round-trips untouched, which is what lets a
             # `YAML()` with an empty registry load a file full of `!Circuit`.
             if any(r.source == source for r in self._by_path.values()):
-                raise ConstructorError(
-                    f"unresolved tag {written!r} (= {uri!r}): no class is registered as "
-                    f"{name!r} in source {source!r}"
+                msg = (
+                    f'unresolved tag {written!r} (= {uri!r}): no class is registered as '
+                    f'{name!r} in source {source!r}'
                 )
+                raise ConstructorError(msg)
             return None
         raise self._ambiguous(written, found)
 
     def _by_name(self, name: str, written: str) -> Registration | None:
-        """The one registration whose tag name is `name`, across every source."""
+        """Return the one registration whose tag name is `name`, across every source."""
         found = self._matching(lambda r: r.tag_name == name)
         if len(found) == 1:
             return found[0]
@@ -354,11 +362,11 @@ class TagRegistry:
 
     @staticmethod
     def _ambiguous(written: str, found: list[Registration]) -> ConstructorError:
-        """The error for a tag matching several registrations, naming every candidate."""
-        candidates = ", ".join(f"{r.path} (= {r.uri})" for r in found)
+        """Return the error for a tag matching several registrations, naming every candidate."""
+        candidates = ', '.join(f'{r.path} (= {r.uri})' for r in found)
         return ConstructorError(
-            f"ambiguous tag {written!r}: {len(found)} registered candidates: "
-            f"{candidates}; yamluna will not guess. Add a %TAG directive naming the "
+            f'ambiguous tag {written!r}: {len(found)} registered candidates: '
+            f'{candidates}; yamluna will not guess. Add a %TAG directive naming the '
             f"source (e.g. '%TAG ! tag:{found[0].source}/') or re-register with an "
-            f"explicit source= to disambiguate."
+            f'explicit source= to disambiguate.'
         )

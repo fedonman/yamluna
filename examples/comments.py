@@ -46,14 +46,16 @@ doc = yaml.load(SRC)
 # the top of the block when you reorder what is under it.
 
 print('root .ca.comment ', doc.ca.comment)
-print("root .ca.items   ", dict(doc.ca.items))
-print("beta .ca.comment ", doc['beta'].ca.comment)
-print("beta .ca.items   ", dict(doc['beta'].ca.items))
+print('root .ca.items   ', dict(doc.ca.items))
+print('beta .ca.comment ', doc['beta'].ca.comment)
+print('beta .ca.items   ', dict(doc['beta'].ca.items))
 print('root .ca.end     ', doc.ca.end)
 
 header, blank, about_alpha = doc.ca.comment[1]
-assert blank.is_blank_line and not header.is_blank_line
-assert about_alpha.value == '# about alpha\n' and about_alpha.column == 0
+assert blank.is_blank_line
+assert not header.is_blank_line
+assert about_alpha.value == '# about alpha\n'
+assert about_alpha.column == 0
 assert doc.ca.items['alpha'][2].value == '# eol alpha'  # slot 2: value eol
 assert doc['beta'].ca.items[0][0].value == '# eol one'  # slot 0: element eol
 assert yaml.dump(doc) == SRC  # reading .ca does not disturb the document
@@ -86,10 +88,12 @@ services:
 
 cfg = yaml.load(CFG)
 del cfg['services']['worker']  # takes '# internal only' with it, and nothing else
-assert '# internal only' not in yaml.dump(cfg)
-assert '# scheduled jobs' in yaml.dump(cfg)
+without_worker = yaml.dump(cfg)
+assert without_worker is not None  # dump without a stream returns the text
+assert '# internal only' not in without_worker
+assert '# scheduled jobs' in without_worker
 print()
-print(yaml.dump(cfg))
+print(without_worker)
 
 cfg = yaml.load(CFG)
 cfg['services'].rename('cron', 'scheduler')  # a rename carries the entry's comments

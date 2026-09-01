@@ -10,8 +10,8 @@ from _records import doc, mapping, seq, scalar, comment, blank
 
 d = doc(mapping([('a', seq(['1', '2'])), ('b', scalar('x', STYLE_DOUBLE))]))
 
-d.nodes[d.root].kind            # KIND_MAPPING
-d.nodes[d.root].children        # [1, 2, 5, 6], which is k, v, k, v
+d.nodes[d.root].kind  # KIND_MAPPING
+d.nodes[d.root].children  # [1, 2, 5, 6], which is k, v, k, v
 ```
 
 Rules of the API, all of them:
@@ -36,8 +36,7 @@ Run `python tests/_records.py` for the self-check at the bottom.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from yamluna._record import (
     KIND_ALIAS,
@@ -56,6 +55,9 @@ from yamluna._record import (
     Node,
     Trivia,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 __all__ = [
     'KIND_ALIAS',
@@ -87,7 +89,7 @@ Child = Node | str
 
 
 def scalar(value: str, style: int = STYLE_PLAIN, **kw: Any) -> Node:
-    """Builds a scalar node, as in `scalar('x', STYLE_DOUBLE, raw='"x"')`.
+    """Build a scalar node, as in `scalar('x', STYLE_DOUBLE, raw='"x"')`.
 
     Args:
         value: The cooked value, with escapes resolved and a block scalar folded.
@@ -97,12 +99,13 @@ def scalar(value: str, style: int = STYLE_PLAIN, **kw: Any) -> Node:
 
     Returns:
         A `Node` of kind `KIND_SCALAR`.
+
     """
     return Node(KIND_SCALAR, style, value=value, **kw)
 
 
 def seq(items: Iterable[Child], style: int = STYLE_BLOCK, **kw: Any) -> Node:
-    """Builds a sequence node from its items.
+    """Build a sequence node from its items.
 
     Args:
         items: The children. A `str` item becomes a plain scalar.
@@ -112,12 +115,16 @@ def seq(items: Iterable[Child], style: int = STYLE_BLOCK, **kw: Any) -> Node:
     Returns:
         A `Node` of kind `KIND_SEQUENCE` whose `children` still hold Node objects, until
         `doc` flattens them.
+
     """
-    return Node(KIND_SEQUENCE, style, children=[_child(i) for i in items], **kw)
+    # `children` is `list[Any]` for the same reason it is in `mapping`: these hold Node
+    # objects until `doc` flattens them into arena indices.
+    children: list[Any] = [_child(i) for i in items]
+    return Node(KIND_SEQUENCE, style, children=children, **kw)
 
 
 def mapping(pairs: Iterable[tuple[Child, Child]], style: int = STYLE_BLOCK, **kw: Any) -> Node:
-    """Builds a mapping node from `(key, value)` pairs, flattened into `k, v, k, v`.
+    """Build a mapping node from `(key, value)` pairs, flattened into `k, v, k, v`.
 
     Args:
         pairs: The entries in source order. A `str` key or value becomes a plain scalar.
@@ -127,6 +134,7 @@ def mapping(pairs: Iterable[tuple[Child, Child]], style: int = STYLE_BLOCK, **kw
 
     Returns:
         A `Node` of kind `KIND_MAPPING` with twice as many children as pairs.
+
     """
     children: list[Any] = []
     for key, value in pairs:
@@ -135,7 +143,7 @@ def mapping(pairs: Iterable[tuple[Child, Child]], style: int = STYLE_BLOCK, **kw
 
 
 def alias(name: str, **kw: Any) -> Node:
-    """Builds `*name`, an alias node.
+    """Build `*name`, an alias node.
 
     Args:
         name: The anchor being referenced, without the `*`. It is stored in
@@ -144,12 +152,13 @@ def alias(name: str, **kw: Any) -> Node:
 
     Returns:
         A `Node` of kind `KIND_ALIAS`.
+
     """
     return Node(KIND_ALIAS, anchor=name, **kw)
 
 
-def comment(text: str, own_line: bool = True, col: int = 0) -> Trivia:
-    """Builds a comment trivium.
+def comment(text: str, *, own_line: bool = True, col: int = 0) -> Trivia:
+    """Build a comment trivium.
 
     Args:
         text: The comment including its `#` and excluding the line break.
@@ -159,24 +168,26 @@ def comment(text: str, own_line: bool = True, col: int = 0) -> Trivia:
 
     Returns:
         A `Trivia` carrying the comment.
+
     """
     return Trivia(text, own_line, col)
 
 
 def blank(count: int = 1) -> Trivia:
-    """Builds a run of blank lines.
+    """Build a run of blank lines.
 
     Args:
         count: How many blank lines the run holds.
 
     Returns:
         A `Trivia` with `blank_lines` set and no text.
+
     """
     return Trivia(blank_lines=count)
 
 
 def doc(root: Node | str | None = None, **kw: Any) -> Doc:
-    """Flattens a builder tree into a `Doc`.
+    """Flatten a builder tree into a `Doc`.
 
     Args:
         root: The root node, or a `str` for a plain scalar root. `doc()` with no root is
@@ -187,6 +198,7 @@ def doc(root: Node | str | None = None, **kw: Any) -> Doc:
     Returns:
         A `Doc` whose `nodes` are in depth-first pre-order with the root at index 0, and
         whose `root` is that index or `None` for the empty document.
+
     """
     nodes: list[Node] = []
     index = None if root is None else _flatten(_child(root), nodes, {})
@@ -194,13 +206,14 @@ def doc(root: Node | str | None = None, **kw: Any) -> Doc:
 
 
 def docs(*roots: Node | str) -> list[Doc]:
-    """Builds one `Doc` per root, which is what `parse` returns for a multi-document stream.
+    """Build one `Doc` per root, which is what `parse` returns for a multi-document stream.
 
     Args:
         *roots: One root node, or `str` for a plain scalar root, per document.
 
     Returns:
         The documents in the order the roots were given.
+
     """
     return [doc(r) for r in roots]
 
@@ -210,7 +223,7 @@ def _child(node: Child) -> Node:
 
 
 def _flatten(node: Node, nodes: list[Node], seen: dict[int, int]) -> int:
-    """Appends `node`'s subtree to `nodes` in pre-order and returns `node`'s index."""
+    """Append `node`'s subtree to `nodes` in pre-order and returns `node`'s index."""
     # A Node reused in two places is flattened once, so both parents point at one index.
     if id(node) in seen:
         return seen[id(node)]
@@ -218,13 +231,16 @@ def _flatten(node: Node, nodes: list[Node], seen: dict[int, int]) -> int:
     seen[id(node)] = index
     # Claim the index before recursing: the children have to land after their parent.
     nodes.append(node)
-    children = [_flatten(c, nodes, seen) for c in node.children]
+    # `node.children` still holds Node objects here, which is the type lie the module
+    # docstring names; this is the line that pays it off.
+    unflattened: list[Any] = node.children
+    children = [_flatten(c, nodes, seen) for c in unflattened]
     nodes[index] = _rewire(node, children)
     return index
 
 
 def _rewire(n: Node, children: list[int]) -> Node:
-    """A copy of `n` with its Node children replaced by arena indices."""
+    """Return a copy of `n` with its Node children replaced by arena indices."""
     # A fresh Node rather than an assignment, so a builder result can be flattened twice
     # and a shared subtree is not mutated out from under its other parent.
     return Node(
@@ -247,7 +263,7 @@ def _rewire(n: Node, children: list[int]) -> Node:
 
 
 def _selfcheck() -> None:
-    """Checks the flattening rules the module docstring states, and prints `ok`."""
+    """Check the flattening rules the module docstring states, and prints `ok`."""
     d = doc(mapping([('a', seq(['1', '2'])), ('b', scalar('x', STYLE_DOUBLE, raw='"x"'))]))
     assert d.root == 0, d
     root = d.nodes[0]
@@ -272,7 +288,7 @@ def _selfcheck() -> None:
     # Merge entries and trivia ride along.
     m = doc(mapping([('<<', alias('base'))], merge=[0], before=[blank(1), comment('# hi')]))
     assert m.nodes[0].merge == [0] and m.nodes[2].anchor == 'base', m
-    assert m.nodes[0].before == [Trivia(blank_lines=1), Trivia('# hi', True, 0)], m
+    assert m.nodes[0].before == [Trivia(blank_lines=1), Trivia('# hi', own_line=True, col=0)], m
 
     assert doc().root is None and doc().nodes == []
     assert doc(explicit_start=True, version=(1, 2)).version == (1, 2)
@@ -280,7 +296,7 @@ def _selfcheck() -> None:
 
     # The repr elides defaults and names the constants.
     assert repr(scalar('a')) == "Node(value='a')", repr(scalar('a'))
-    assert repr(d.nodes[0]) == "Node(kind=MAPPING, style=BLOCK, children=[1, 2, 5, 6])"
+    assert repr(d.nodes[0]) == 'Node(kind=MAPPING, style=BLOCK, children=[1, 2, 5, 6])'
     assert repr(comment('# hi', own_line=False)) == "Trivia(text='# hi', own_line=False)"
     assert repr(EmitOptions()).startswith('EmitOptions(map_indent=2, seq_indent=2, width=80')
 

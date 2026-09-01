@@ -12,10 +12,12 @@ PYTHONPATH=python .venv/bin/pytest tests/test_errors.py
 """
 
 import warnings
+from typing import Any
 
 import pytest
 from ruamel.yaml.error import MarkedYAMLError as RuamelMarkedYAMLError
 from ruamel.yaml.error import StringMark as RuamelStringMark
+
 from yamluna.error import (
     ComposerError,
     ConstructorError,
@@ -70,11 +72,12 @@ def test_snippet_ascii():
 def test_str_reports_1_based_line_and_column():
     m = Mark('doc.yaml', None, 1, 8, ASCII)
     assert str(m).startswith('  in "doc.yaml", line 2, column 9:\n')
-    assert str(m).endswith(m.get_snippet())
+    # `get_snippet` is `str | None`, and a `None` fails the assertion the same way.
+    assert str(m).endswith(m.get_snippet())  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize('text', [ASCII, UNICODE])
-@pytest.mark.parametrize('line,column', [(0, 0), (0, 3), (1, 0), (1, 6), (2, 4)])
+@pytest.mark.parametrize(('line', 'column'), [(0, 0), (0, 3), (1, 0), (1, 6), (2, 4)])
 def test_matches_ruamel_mark(text, line, column):
     ours = Mark('n', None, line, column, text)
     theirs = RuamelStringMark('n', ours.index, line, column, text, ours.index)
@@ -87,7 +90,7 @@ def test_snippet_multibyte_is_char_indexed():
     # Column 7 on line 1 is the emoji itself.
     m = Mark('u.yaml', None, 1, 7, UNICODE)
     assert UNICODE[m.pointer] == '😀'
-    first, caret = m.get_snippet().split('\n')
+    first, caret = m.get_snippet().split('\n')  # ty: ignore[unresolved-attribute]
     assert first == '    emoji: 😀 tail'
     assert caret == ' ' * 11 + '^ (line: 2)'
     # The same position expressed in bytes points somewhere else entirely.
@@ -101,7 +104,7 @@ def test_explicit_index_must_be_char_offset():
     byte_index = len(UNICODE[:char_index].encode())
     assert byte_index > char_index
     good = Mark('u.yaml', char_index, 1, 7, UNICODE)
-    assert good.get_snippet().splitlines()[0] == '    emoji: 😀 tail'
+    assert good.get_snippet().splitlines()[0] == '    emoji: 😀 tail'  # ty: ignore[unresolved-attribute]
     # A byte offset points at a different character, and the caret lands off target.
     bad = Mark('u.yaml', byte_index, 1, 7, UNICODE)
     assert UNICODE[bad.pointer] != '😀'
@@ -161,14 +164,14 @@ def test_long_line_is_elided_like_ruamel():
     text = 'key: ' + 'x' * 200
     m = Mark('long', None, 0, 120, text)
     ours = m.get_snippet()
-    assert ours.startswith('     ... ')
-    assert ours.splitlines()[0].endswith(' ... ')
+    assert ours.startswith('     ... ')  # ty: ignore[unresolved-attribute]
+    assert ours.splitlines()[0].endswith(' ... ')  # ty: ignore[unresolved-attribute]
     theirs = RuamelStringMark('long', m.index, 0, 120, text, m.index)
     assert ours == theirs.get_snippet()
 
 
 @pytest.mark.parametrize(
-    'kind,cls',
+    ('kind', 'cls'),
     [
         ('scanner', ScannerError),
         ('parser', ParserError),
@@ -189,9 +192,7 @@ def test_make_error_classifies_by_kind(kind, cls):
 
 
 def test_make_error_message():
-    err = make_error(
-        'scanner', 'found unexpected end of stream', 1, 7, None, UNICODE, 'u.yaml'
-    )
+    err = make_error('scanner', 'found unexpected end of stream', 1, 7, None, UNICODE, 'u.yaml')
     assert str(err) == (
         'found unexpected end of stream\n'
         '  in "u.yaml", line 2, column 8:\n'
@@ -199,7 +200,8 @@ def test_make_error_message():
         '           ^ (line: 2)'
     )
     assert err.problem == 'found unexpected end of stream'
-    assert err.problem_mark.index == UNICODE.index('😀')
+    # `problem_mark` is `Mark | None` on the base class; this error always carries one.
+    assert err.problem_mark.index == UNICODE.index('😀')  # ty: ignore[unresolved-attribute]
     assert err.context is None and err.context_mark is None
 
 
@@ -209,21 +211,31 @@ def test_make_error_without_source():
 
 
 def test_make_error_note():
-    err = make_error('duplicate_key', 'duplicate key "a"', 2, 0, None, ASCII, 'd.yaml',
-                     '\n        see the docs\n        ')
+    err = make_error(
+        'duplicate_key',
+        'duplicate key "a"',
+        2,
+        0,
+        None,
+        ASCII,
+        'd.yaml',
+        '\n        see the docs\n        ',
+    )
     assert str(err).endswith('\nsee the docs\n')
 
 
 def test_marked_error_str_matches_ruamel():
     ctx = Mark('d.yaml', None, 0, 0, ASCII)
     prb = Mark('d.yaml', None, 2, 5, ASCII)
-    kwargs = dict(
-        context='while parsing a block mapping',
-        context_mark=ctx,
-        problem='expected <block end>',
-        problem_mark=prb,
-        note='  a note\n',
-    )
+    # Heterogeneous on purpose: the same five values feed both constructors below, and
+    # `**kwargs` has no narrower element type that survives being unpacked into either.
+    kwargs: dict[str, Any] = {
+        'context': 'while parsing a block mapping',
+        'context_mark': ctx,
+        'problem': 'expected <block end>',
+        'problem_mark': prb,
+        'note': '  a note\n',
+    }
     ours = MarkedYAMLError(**kwargs)
     theirs = RuamelMarkedYAMLError(
         kwargs['context'],

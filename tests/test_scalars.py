@@ -17,6 +17,7 @@ import math
 import pickle
 
 import pytest
+
 from yamluna import scalarbool, scalarfloat, scalarint, scalarstring
 from yamluna.scalarbool import ScalarBoolean
 from yamluna.scalarfloat import ScalarFloat
@@ -92,9 +93,11 @@ def test_int_formats_without_a_lexeme() -> None:
 
 
 def test_int_caps_is_remembered() -> None:
-    assert scalarint.from_lexeme('0x1F').caps is True
-    assert scalarint.from_lexeme('0x1f').caps is False
-    assert scalarint.from_lexeme('0x10').caps is False
+    # A hex lexeme makes `from_lexeme` answer a `HexInt`, which its declared `ScalarInt`
+    # return type has no way to say; `caps` lives on the subclass.
+    assert scalarint.from_lexeme('0x1F').caps is True  # ty: ignore[unresolved-attribute]
+    assert scalarint.from_lexeme('0x1f').caps is False  # ty: ignore[unresolved-attribute]
+    assert scalarint.from_lexeme('0x10').caps is False  # ty: ignore[unresolved-attribute]
 
 
 def test_int_in_place_arithmetic_keeps_the_format_but_drops_the_lexeme() -> None:
@@ -145,14 +148,17 @@ def test_float_lexeme_round_trip(lexeme: str) -> None:
     assert isinstance(got, float)
 
 
-@pytest.mark.parametrize(('lexeme', 'value'), [
-    ('.inf', math.inf),
-    ('.Inf', math.inf),
-    ('.INF', math.inf),
-    ('inf', math.inf),
-    ('-.inf', -math.inf),
-    ('+.inf', math.inf),
-])
+@pytest.mark.parametrize(
+    ('lexeme', 'value'),
+    [
+        ('.inf', math.inf),
+        ('.Inf', math.inf),
+        ('.INF', math.inf),
+        ('inf', math.inf),
+        ('-.inf', -math.inf),
+        ('+.inf', math.inf),
+    ],
+)
 def test_float_infinities_round_trip(lexeme: str, value: float) -> None:
     got = scalarfloat.from_lexeme(lexeme)
     assert got.lexeme() == lexeme
@@ -195,15 +201,32 @@ def test_float_rejects_non_floats() -> None:
 # --------------------------------------------------------------------------- booleans
 
 BOOL_LEXEMES = {
-    'true': True, 'True': True, 'TRUE': True, 'yes': True, 'Yes': True, 'YES': True,
-    'on': True, 'On': True, 'ON': True, 'y': True, 'Y': True,
-    'false': False, 'False': False, 'FALSE': False, 'no': False, 'NO': False,
-    'off': False, 'Off': False, 'OFF': False, 'n': False, 'N': False,
+    'true': True,
+    'True': True,
+    'TRUE': True,
+    'yes': True,
+    'Yes': True,
+    'YES': True,
+    'on': True,
+    'On': True,
+    'ON': True,
+    'y': True,
+    'Y': True,
+    'false': False,
+    'False': False,
+    'FALSE': False,
+    'no': False,
+    'NO': False,
+    'off': False,
+    'Off': False,
+    'OFF': False,
+    'n': False,
+    'N': False,
 }
 
 
 @pytest.mark.parametrize(('lexeme', 'value'), BOOL_LEXEMES.items(), ids=list(BOOL_LEXEMES))
-def test_bool_lexeme_round_trip(lexeme: str, value: bool) -> None:
+def test_bool_lexeme_round_trip(lexeme: str, value: bool) -> None:  # noqa: FBT001
     got = scalarbool.from_lexeme(lexeme)
     assert got.lexeme() == lexeme
     assert bool(got) is value
@@ -212,8 +235,8 @@ def test_bool_lexeme_round_trip(lexeme: str, value: bool) -> None:
 
 
 def test_bool_without_a_lexeme() -> None:
-    assert ScalarBoolean(True).lexeme() == 'true'
-    assert ScalarBoolean(False).lexeme() == 'false'
+    assert ScalarBoolean(True).lexeme() == 'true'  # noqa: FBT003
+    assert ScalarBoolean(False).lexeme() == 'false'  # noqa: FBT003
     assert ScalarBoolean(3) == 1  # normalised, the way bool() normalises
 
 
@@ -276,6 +299,7 @@ def test_timestamp_rejects_non_timestamps() -> None:
 
 
 # --------------------------------------------------------------------------- strings
+
 
 def test_string_styles_round_trip() -> None:
     cases = [

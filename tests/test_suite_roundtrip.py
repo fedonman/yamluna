@@ -31,16 +31,16 @@ diff per case, for working on a gap rather than gating on it.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import pytest
-from ruamel.yaml import YAML as _RuamelYAML
+import ruamel.yaml
 
-SUITE_DIR = (
-    Path(__file__).parents[1] / 'crates/yamluna-scanner/tests/yaml-test-suite/src'
-)
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+SUITE_DIR = Path(__file__).parents[1] / 'crates/yamluna-scanner/tests/yaml-test-suite/src'
 
 # The suite writes white space it wants you to see with visible stand-ins. Same table,
 # same order, as `visual_to_raw` in `proptest_roundtrip.rs`, so both harnesses decode a
@@ -64,13 +64,14 @@ class SuiteCase(NamedTuple):
 
 
 def visual_to_raw(yaml: str) -> str:
-    """Turns the suite's visible stand-ins back into the bytes they stand for.
+    """Turn the suite's visible stand-ins back into the bytes they stand for.
 
     Args:
         yaml: A case's source as the suite file writes it, with stand-ins in place.
 
     Returns:
         The same source with every stand-in replaced by the character it names.
+
     """
     for pattern, replacement in _VISUAL:
         yaml = yaml.replace(pattern, replacement)
@@ -78,7 +79,7 @@ def visual_to_raw(yaml: str) -> str:
 
 
 def suite_cases() -> list[SuiteCase]:
-    """Reads every case in the suite that is expected to parse.
+    """Read every case in the suite that is expected to parse.
 
     A `fail: true` case and a `skip` case are dropped, and every field except `fail` is
     inherited from the previous case in the file, exactly as the Rust harness reads them.
@@ -91,8 +92,9 @@ def suite_cases() -> list[SuiteCase]:
         AssertionError: The suite directory is empty, or a suite file does not hold a
             list of cases.
         YAMLError: A suite file is not loadable.
+
     """
-    meta = _RuamelYAML(typ='safe')
+    meta = ruamel.yaml.YAML(typ='safe')
     meta.allow_duplicate_keys = True
     out: list[SuiteCase] = []
     paths = sorted(SUITE_DIR.glob('*.yaml'))
@@ -114,28 +116,28 @@ def suite_cases() -> list[SuiteCase]:
 
 KNOWN_GAPS: dict[str, str] = {
     '2JQS': 'PERMANENT: an empty key is the null key, so `: a` above `: b` is two entries '
-            'carrying the one key `None`, and a `dict` holds one of them; the suite tags '
-            'the case `duplicate-key` itself.  Same shape as X38W with the alias taken '
-            'away, so the same answer: `DuplicateKeyError` naming both positions.  Telling '
-            'the two nulls apart needs the entry source position, and keying a `Mapping` on '
-            'position would break `doc[None]` for every well-formed document to rescue an '
-            'ill-formed one; special-casing the empty key alone would accept `a: 1` above '
-            '`a: 2` next.  `allow_duplicate_keys=True` does not help either: the dump is '
-            'written from the tree, which by then holds one entry.  ruamel raises the same '
-            'error.  Pinned by '
-            'test_constructor.py::test_two_empty_keys_are_one_null_key',
+    'carrying the one key `None`, and a `dict` holds one of them; the suite tags '
+    'the case `duplicate-key` itself.  Same shape as X38W with the alias taken '
+    'away, so the same answer: `DuplicateKeyError` naming both positions.  Telling '
+    'the two nulls apart needs the entry source position, and keying a `Mapping` on '
+    'position would break `doc[None]` for every well-formed document to rescue an '
+    'ill-formed one; special-casing the empty key alone would accept `a: 1` above '
+    '`a: 2` next.  `allow_duplicate_keys=True` does not help either: the dump is '
+    'written from the tree, which by then holds one entry.  ruamel raises the same '
+    'error.  Pinned by '
+    'test_constructor.py::test_two_empty_keys_are_one_null_key',
     'X38W': 'PERMANENT: an alias used as a key of the mapping its anchor is defined in '
-            '(`{&a [x]: 1, *a : 2}`) is that key, one object reached twice, so the '
-            'two entries carry one key and a `dict` holds one of them.  YAML requires a '
-            "mapping's keys to be unique and an alias is the node it names, so the document "
-            'is ill-formed; `DuplicateKeyError` is the answer rather than a workaround to '
-            'find.  No wrapper helps: identity cannot separate an object from itself, and '
-            'keying on source position instead would break `doc[key]` everywhere.  ruamel '
-            'raises the same error; PyYAML never gets that far (`found unhashable key`).  '
-            'Pinned by test_constructor.py::'
-            'test_an_alias_to_a_key_of_its_own_mapping_is_a_duplicate.  The space before '
-            'the `:` is load-bearing: `:` is a legal anchor character, so `*a:` scans as an '
-            "alias named `a:`",
+    '(`{&a [x]: 1, *a : 2}`) is that key, one object reached twice, so the '
+    'two entries carry one key and a `dict` holds one of them.  YAML requires a '
+    "mapping's keys to be unique and an alias is the node it names, so the document "
+    'is ill-formed; `DuplicateKeyError` is the answer rather than a workaround to '
+    'find.  No wrapper helps: identity cannot separate an object from itself, and '
+    'keying on source position instead would break `doc[key]` everywhere.  ruamel '
+    'raises the same error; PyYAML never gets that far (`found unhashable key`).  '
+    'Pinned by test_constructor.py::'
+    'test_an_alias_to_a_key_of_its_own_mapping_is_a_duplicate.  The space before '
+    'the `:` is load-bearing: `:` is a legal anchor character, so `*a:` scans as an '
+    'alias named `a:`',
 }
 """Suite cases that do not survive a `load_all` followed by a `dump_all`, and why.
 
@@ -167,7 +169,7 @@ def test_yaml_test_suite_round_trips_through_python(
             ok = got == case.yaml
             detail = f'    out: {got!r}'
         # A raise is a failure to round-trip rather than a skip.
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             ok = False
             detail = f'    raised: {type(exc).__name__}: {exc}'
         if ok and known:
@@ -225,9 +227,7 @@ def test_the_record_seam_loses_nothing_over_the_suite() -> None:
     headline number, and names the case.
     """
     yamluna = pytest.importorskip('yamluna')
-    ext = pytest.importorskip(
-        'yamluna._yamluna', reason='extension not built yet: maturin develop'
-    )
+    ext = pytest.importorskip('yamluna._yamluna', reason='extension not built yet: maturin develop')
     opts = yamluna._record.EmitOptions(preserve_quotes=True)
 
     lost = []
@@ -236,15 +236,12 @@ def test_the_record_seam_loses_nothing_over_the_suite() -> None:
             reference = ext._roundtrip_in_rust(case.yaml, opts)
             through_records = ext.emit(ext.parse(case.yaml, allow_duplicate_keys=True), opts)
         # A raise on one side only is itself a seam loss.
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             lost.append(f'  {case.id}: {type(exc).__name__}: {exc}')
             continue
         if through_records != reference:
             lost.append(
-                f'  {case.id}\n    rust:    {reference!r}\n'
-                f'    records: {through_records!r}'
+                f'  {case.id}\n    rust:    {reference!r}\n    records: {through_records!r}'
             )
 
-    assert not lost, 'the record seam loses {} of 308 cases:\n{}'.format(
-        len(lost), '\n'.join(lost)
-    )
+    assert not lost, 'the record seam loses {} of 308 cases:\n{}'.format(len(lost), '\n'.join(lost))

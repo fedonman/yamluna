@@ -39,7 +39,8 @@ config = yaml.load(SRC)
 assert yaml.dump(config) == SRC, 'round trip must be byte-identical'
 
 # 2. The containers are a dict and a list, so ordinary Python works on them.
-assert isinstance(config, dict) and isinstance(config['ports'], list)
+assert isinstance(config, dict)
+assert isinstance(config['ports'], list)
 assert config['replicas'] == 3
 assert config['database']['motd'] == 'welcome\nto demo\n'
 
@@ -52,6 +53,7 @@ config['features'].append('beta')
 del config['legacy_mode']
 
 out = yaml.dump(config)
+assert out is not None  # dump without a stream returns the text
 assert '# remove me before 2.0' not in out  # went with the key it described
 assert '# shown in the UI' in out  # the neighbour's did not move
 print(out)

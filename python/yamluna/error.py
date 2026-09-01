@@ -82,11 +82,14 @@ class Mark:
         column: 0-based column.
         buffer: The source text the position is in. `None` means no snippet is printed.
         pointer: Character offset the caret points at. Defaults to `index`.
+
     """
 
-    __slots__ = ('name', 'index', 'line', 'column', 'buffer', 'pointer')
+    __slots__ = ('buffer', 'column', 'index', 'line', 'name', 'pointer')
 
-    def __init__(
+    # ruamel's positional signature, which ported code calls as `Mark(name, index, line,
+    # column, buffer, pointer)`; the class docstring documents the arguments.
+    def __init__(  # noqa: PLR0913, PLR0917
         self,
         name: object,
         index: int | None,
@@ -95,6 +98,7 @@ class Mark:
         buffer: str | None = None,
         pointer: int | None = None,
     ) -> None:
+        """Store the position, deriving `index` and `pointer` when they are `None`."""
         self.name = name
         self.line = line
         self.column = column
@@ -112,7 +116,7 @@ class Mark:
         self.pointer = pointer
 
     def get_snippet(self, indent: int = 4, max_length: int = 75) -> str | None:
-        """The source around this position, with a caret on the line below it.
+        """Return the source around this position, with a caret on the line below it.
 
         Args:
             indent: Spaces put in front of both lines.
@@ -122,6 +126,7 @@ class Mark:
         Returns:
             Two lines, the source text and the caret line, or `None` when this mark carries
             no buffer.
+
         """
         if self.buffer is None:
             return None
@@ -165,6 +170,13 @@ class Mark:
     __repr__ = __str__
 
     def __eq__(self, other: object) -> bool:
+        """Return whether `other` is a `Mark` at the same place in the same stream.
+
+        The comparison is the stream name, the line, the column and `index`. The buffer
+        and the caret are left out, but `index` is derived from the buffer when the caller
+        does not pass one, so a mark built with the source text and a mark built without it
+        do not compare equal even when they name the same line and column.
+        """
         # Position and stream name only. `buffer` and `pointer` are there for printing.
         if not isinstance(other, Mark):
             return NotImplemented
@@ -199,18 +211,22 @@ class CommentMark:
 
     Args:
         column: 0-based column of the `#`.
+
     """
 
     __slots__ = ('column',)
 
     def __init__(self, column: int) -> None:
+        """Store the 0-based `column` of the `#`."""
         self.column = column
 
 
 class _Marked:
     """The context, problem, mark and note rendering the marked errors and warnings share."""
 
-    def __init__(
+    # ruamel's positional signature, which ported code and the Rust core's `make_error`
+    # both call as `cls(context, context_mark, problem, problem_mark, note)`.
+    def __init__(  # noqa: PLR0913, PLR0917
         self,
         context: str | None = None,
         context_mark: Mark | None = None,
@@ -242,9 +258,7 @@ class _Marked:
             lines.append(self.problem)
         if self.problem_mark is not None:
             lines.append(str(self.problem_mark))
-        for extra in (self.note, self.warn):
-            if extra:
-                lines.append(textwrap.dedent(extra))
+        lines.extend(textwrap.dedent(extra) for extra in (self.note, self.warn) if extra)
         return '\n'.join(lines)
 
 
@@ -265,10 +279,22 @@ class MarkedYAMLError(_Marked, YAMLError):
         problem: What went wrong.
         problem_mark: Where it went wrong.
         note: Extra text, printed last and dedented.
+
     """
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        super().__init__(*args, **kwargs)
+    # `_Marked`'s signature, spelled out rather than forwarded through `*args`, so that the
+    # arguments keep their types across the call. Same order and defaults as ruamel's.
+    def __init__(  # noqa: PLR0913, PLR0917
+        self,
+        context: str | None = None,
+        context_mark: Mark | None = None,
+        problem: str | None = None,
+        problem_mark: Mark | None = None,
+        note: str | None = None,
+        warn: str | None = None,
+    ) -> None:
+        """Store the context, problem, marks and note, and drop `warn`."""
+        super().__init__(context, context_mark, problem, problem_mark, note, warn)
         self.warn = None  # ruamel accepts and ignores `warn` on errors
 
 
@@ -390,7 +416,9 @@ _KINDS: dict[str, type[MarkedYAMLError]] = {
 }
 
 
-def make_error(
+# The Rust core calls this positionally through the C API (`crates/yamluna-py/src/lib.rs`
+# caches it as `make_error`), so the parameter order is part of the FFI contract.
+def make_error(  # noqa: PLR0913, PLR0917
     kind: str,
     message: str,
     line: int,
@@ -419,6 +447,7 @@ def make_error(
     Returns:
         An instance of the class `kind` names, with `problem` set to `message` and
         `problem_mark` at the position.
+
     """
     # The only place a kind becomes a class. The Rust side sends the discriminant so that
     # neither side of the boundary ever has to match on the text of a message.

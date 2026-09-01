@@ -36,6 +36,7 @@ from _records import (
     scalar,
     seq,
 )
+
 from yamluna import scalarbool, scalarfloat, scalarint, timestamp
 from yamluna.comments import (
     C_ELEM_EOL,
@@ -68,7 +69,7 @@ from yamluna.scalarstring import (
 
 
 def root(data: Any, **kw: Any) -> Node:
-    """Returns the root node of `represent(data)`.
+    """Return the root node of `represent(data)`.
 
     Args:
         data: The Python tree to represent.
@@ -76,6 +77,7 @@ def root(data: Any, **kw: Any) -> Node:
 
     Returns:
         The document's root record node.
+
     """
     d = represent(data, **kw)
     assert d.root == 0, d
@@ -83,7 +85,7 @@ def root(data: Any, **kw: Any) -> Node:
 
 
 def one(data: Any, **kw: Any) -> Node:
-    """Returns the value node of `represent({'k': data})`, to test one scalar in isolation.
+    """Return the value node of `represent({'k': data})`, to test one scalar in isolation.
 
     Args:
         data: The value to put under the key `k`.
@@ -91,13 +93,14 @@ def one(data: Any, **kw: Any) -> Node:
 
     Returns:
         The record node written for `data`.
+
     """
     d = represent({'k': data}, **kw)
     return d.nodes[d.nodes[0].children[1]]
 
 
 def token(text: str, column: int = 0) -> CommentToken:
-    """Returns a `CommentToken` holding `text`, starting at `column`."""
+    """Return a `CommentToken` holding `text`, starting at `column`."""
     return CommentToken(text, CommentMark(column))
 
 
@@ -153,7 +156,7 @@ class TestLexemePreservation:
         # neither the YAML 1.1 nor the 1.2 integer production and only ruamel reads back.
         assert one(scalarint.HexInt(-31, caps=True)).value == '-0x1F'
         assert one(scalarfloat.ScalarFloat(1.5)).value == '1.5'
-        assert one(scalarbool.ScalarBoolean(True)).value == 'true'
+        assert one(scalarbool.ScalarBoolean(True)).value == 'true'  # noqa: FBT003
         assert one(LiteralScalarString('a\n')).raw is None
 
     def test_edited_string_drops_the_lexeme_but_keeps_the_style(self) -> None:
@@ -166,8 +169,9 @@ class TestBuiltinScalars:
     """Trees users build by hand: no lexeme anywhere, so style is chosen here."""
 
     def test_plain_types(self) -> None:
-        assert (one(True).value, one(True).style) == ('true', STYLE_PLAIN)
-        assert one(False).value == 'false'
+        # `one` represents whatever it is handed; here the booleans are the data.
+        assert (one(True).value, one(True).style) == ('true', STYLE_PLAIN)  # noqa: FBT003
+        assert one(False).value == 'false'  # noqa: FBT003
         assert one(None).value == ''
         assert one(7).value == '7'
         assert one(-3).value == '-3'
@@ -175,7 +179,8 @@ class TestBuiltinScalars:
         assert one(float('inf')).value == '.inf'
         assert one(float('nan')).value == '.nan'
         assert one(datetime.date(2002, 12, 14)).value == '2002-12-14'
-        assert one(datetime.datetime(2002, 12, 14, 1, 2, 3)).value == '2002-12-14T01:02:03'
+        # Naive on purpose: a timestamp written with no zone emits with no offset.
+        assert one(datetime.datetime(2002, 12, 14, 1, 2, 3)).value == '2002-12-14T01:02:03'  # noqa: DTZ001
 
     def test_root_none_is_a_null_document(self) -> None:
         assert root(None).value == 'null'
@@ -188,13 +193,44 @@ class TestBuiltinScalars:
     @pytest.mark.parametrize(
         'text',
         [
-            'true', 'True', 'FALSE', 'null', 'Null', '~',  # resolver words
-            '1', '1.0', '0x1f', '+12', '1_000', '.inf', '.nan',  # numbers
-            '2002-12-14', '2001-12-14t21:59:43.10-05:00',  # timestamps
-            '', ' x', 'x ',  # empty / whitespace at an edge
-            '- x', '#c', ': ', '? x', ', x', '[x', '{x', '&a', '*a', '!t', '|x', '>x',
-            "'x", '"x', '%d', '@x', '`x',  # indicators
-            'a: b', 'a #c', 'a:',  # a plain scalar cannot contain ': ' or ' #' or end in ':'
+            'true',
+            'True',
+            'FALSE',
+            'null',
+            'Null',
+            '~',  # resolver words
+            '1',
+            '1.0',
+            '0x1f',
+            '+12',
+            '1_000',
+            '.inf',
+            '.nan',  # numbers
+            '2002-12-14',
+            '2001-12-14t21:59:43.10-05:00',  # timestamps
+            '',
+            ' x',
+            'x ',  # empty / whitespace at an edge
+            '- x',
+            '#c',
+            ': ',
+            '? x',
+            ', x',
+            '[x',
+            '{x',
+            '&a',
+            '*a',
+            '!t',
+            '|x',
+            '>x',
+            "'x",
+            '"x',
+            '%d',
+            '@x',
+            '`x',  # indicators
+            'a: b',
+            'a #c',
+            'a:',  # a plain scalar cannot contain ': ' or ' #' or end in ':'
         ],
     )
     def test_gets_quoted(self, text: str) -> None:
@@ -304,13 +340,14 @@ class TestStructure:
 
 
 def assert_no_dangling_alias(written: Doc) -> None:
-    """Asserts that every `*name` has its `&name` ahead of it.
+    """Assert that every `*name` has its `&name` ahead of it.
 
     Args:
         written: The represented document to check.
 
     Raises:
         AssertionError: An alias has no anchor before it, or carries a tag.
+
     """
     # A node's index in the arena is its position in the document, so one pass in index
     # order is the same walk the emitter makes.
@@ -380,13 +417,14 @@ class TestAnchors:
         assert written.nodes[2].anchor == 'n' and written.nodes[4] == alias('n')
         assert_no_dangling_alias(written)
 
-    @pytest.mark.parametrize('edit', [
-        pytest.param(lambda t: t.pop('a'), id='anchor-deleted'),
-        pytest.param(lambda t: t.__setitem__('a', 'x'), id='anchor-replaced'),
-    ])
-    def test_an_alias_is_dropped_when_its_anchor_goes(
-        self, construct: Any, edit: Any
-    ) -> None:
+    @pytest.mark.parametrize(
+        'edit',
+        [
+            pytest.param(lambda t: t.pop('a'), id='anchor-deleted'),
+            pytest.param(lambda t: t.__setitem__('a', 'x'), id='anchor-replaced'),
+        ],
+    )
+    def test_an_alias_is_dropped_when_its_anchor_goes(self, construct: Any, edit: Any) -> None:
         """An alias whose anchor left the tree falls back to the plain `None` it holds.
 
         A `*name` with no `&name` ahead of it is not YAML, so losing the alias beats
@@ -416,8 +454,13 @@ class TestAnchors:
         a['b'] = b
         d = represent([a, b])
         assert [n.kind for n in d.nodes] == [
-            KIND_SEQUENCE, KIND_MAPPING, KIND_SCALAR, KIND_MAPPING, KIND_SCALAR,
-            KIND_ALIAS, KIND_ALIAS,
+            KIND_SEQUENCE,
+            KIND_MAPPING,
+            KIND_SCALAR,
+            KIND_MAPPING,
+            KIND_SCALAR,
+            KIND_ALIAS,
+            KIND_ALIAS,
         ]
 
 
@@ -494,10 +537,15 @@ class TestTrivia:
     def test_blank_lines_are_counted(self) -> None:
         m = CommentedMap({'a': 1})
         m._ca_record('a')[C_KEY_PRE] = [
-            token('\n'), token('\n'), token('# c\n'), token('\n'),
+            token('\n'),
+            token('\n'),
+            token('# c\n'),
+            token('\n'),
         ]
         assert d_before(represent(m)) == [
-            Trivia(blank_lines=2), Trivia('# c'), Trivia(blank_lines=1)
+            Trivia(blank_lines=2),
+            Trivia('# c'),
+            Trivia(blank_lines=1),
         ]
 
     def test_a_single_multi_newline_token_is_counted_too(self) -> None:
@@ -511,7 +559,7 @@ class TestTrivia:
         m._ca_record('a')[C_VALUE_EOL] = token('# eol')
         d = represent(m)
         assert d.nodes[1].before[0].own_line is True
-        assert d.nodes[2].eol.own_line is False
+        assert d.nodes[2].eol.own_line is False  # ty: ignore[unresolved-attribute]
 
     def test_collection_leading_and_after(self) -> None:
         """A value's own `ca.comment[1]` is its `before`: `.ca` has no separate slot."""
@@ -575,7 +623,7 @@ class TestTrivia:
 
 
 def d_before(document: Doc) -> list[Trivia]:
-    """Returns the `before` trivia of the first key of a one-entry mapping."""
+    """Return the `before` trivia of the first key of a one-entry mapping."""
     return document.nodes[1].before
 
 
@@ -590,11 +638,13 @@ SOURCE = __name__.partition('.')[0]
 
 class Circuit:
     def __init__(self, qubits: int = 2) -> None:
+        """Store the qubit count, which is the one attribute the default path represents."""
         self.qubits = qubits
 
 
 class Gate:
     def __init__(self, name: str = 'h') -> None:
+        """Store the gate name, so a second registered class has a field of its own."""
         self.name = name
 
 
@@ -602,6 +652,7 @@ class Hooked:
     yaml_tag = 'Hooked'
 
     def __init__(self, value: str = 'v') -> None:
+        """Store the value the `to_yaml` hook writes as a scalar."""
         self.value = value
 
     @classmethod
@@ -611,6 +662,7 @@ class Hooked:
 
 class Boxed:
     def __init__(self, items: list[int] | None = None) -> None:
+        """Store the items the `to_yaml` hook writes as a flow sequence."""
         self.items = items or [1, 2]
 
     @classmethod
@@ -650,8 +702,9 @@ class TestTags:
 
     def test_to_yaml_hook(self) -> None:
         d = represent({'h': Hooked('x')}, registry=self.registry(Hooked))
-        assert d.nodes[2] == Node(KIND_SCALAR, STYLE_PLAIN, tag=('!', 'Hooked', '!Hooked'),
-                                  value='x')
+        assert d.nodes[2] == Node(
+            KIND_SCALAR, STYLE_PLAIN, tag=('!', 'Hooked', '!Hooked'), value='x'
+        )
 
     def test_to_yaml_hook_building_a_collection(self) -> None:
         d = represent({'b': Boxed([7])}, registry=self.registry(Boxed))
@@ -662,7 +715,7 @@ class TestTags:
     def test_a_hook_that_returns_the_wrong_thing_is_an_error(self) -> None:
         class Bad:
             @classmethod
-            def to_yaml(cls, representer: Any, node: Any) -> Any:
+            def to_yaml(cls, _representer: Any, _node: Any) -> Any:
                 return 'not an index'
 
         with pytest.raises(RepresenterError, match='represent_'):
@@ -689,8 +742,9 @@ class TestTags:
 
 # -- the round trip -----------------------------------------------------------------------
 
+
 def _tag(suffix: str) -> tuple[str, str, str]:
-    """Returns the `!!suffix` form of a `tag:yaml.org,2002:` tag, as the loader records it."""
+    """Return the `!!suffix` form of a `tag:yaml.org,2002:` tag, as the loader records it."""
     return ('!!', suffix, f'tag:yaml.org,2002:{suffix}')
 
 
@@ -706,69 +760,119 @@ ROUND_TRIP: dict[str, Doc] = {
     'nested': doc(mapping([('a', seq([mapping([('b', 'c')])]))])),
     'empty-collections': doc(mapping([('a', mapping([])), ('b', seq([]))])),
     'flow': doc(mapping([('a', seq(['1'], STYLE_FLOW))], STYLE_BLOCK)),
-    'quoted': doc(mapping([
-        ('a', scalar('x y', STYLE_SINGLE, raw="'x y'")),
-        ('b', scalar('q\n', STYLE_DOUBLE, raw='"q\\n"')),
-    ])),
-    'block-scalars': doc(mapping([
-        ('a', scalar('one\ntwo\n', STYLE_LITERAL, raw='|\n  one\n  two\n')),
-        ('b', scalar('folded text\n', STYLE_FOLDED, raw='>\n  folded text\n')),
-    ])),
-    'lexemes': doc(mapping([
-        ('i', scalar('0x1f', raw='0x1f')),
-        ('f', scalar('1_000.5', raw='1_000.5')),
-        ('b', scalar('yes', raw='yes')),
-        ('t', scalar('2002-12-14', raw='2002-12-14')),
-    ])),
+    'quoted': doc(
+        mapping(
+            [
+                ('a', scalar('x y', STYLE_SINGLE, raw="'x y'")),
+                ('b', scalar('q\n', STYLE_DOUBLE, raw='"q\\n"')),
+            ]
+        )
+    ),
+    'block-scalars': doc(
+        mapping(
+            [
+                ('a', scalar('one\ntwo\n', STYLE_LITERAL, raw='|\n  one\n  two\n')),
+                ('b', scalar('folded text\n', STYLE_FOLDED, raw='>\n  folded text\n')),
+            ]
+        )
+    ),
+    'lexemes': doc(
+        mapping(
+            [
+                ('i', scalar('0x1f', raw='0x1f')),
+                ('f', scalar('1_000.5', raw='1_000.5')),
+                ('b', scalar('yes', raw='yes')),
+                ('t', scalar('2002-12-14', raw='2002-12-14')),
+            ]
+        )
+    ),
     # The tag, the anchor and the lexeme of a scalar whose Python value can hold none of
     # them: `!!str 123` is a bare `str`, `!!binary` a `bytes`, `&empty` an anchored `None`.
     # The parent parks the record (constructor.SOURCE_ATTRIB) and the representer reads it
     # back, so what the loader preserved is not reformatted on the way out.
-    'standard-tags': doc(mapping([
-        ('str', scalar('123', raw='123', tag=_STR)),
-        ('int', scalar('42', STYLE_DOUBLE, raw='"42"', tag=_tag('int'))),
-        ('float', scalar('1.5', STYLE_DOUBLE, raw='"1.5"', tag=_tag('float'))),
-        ('bool', scalar('true', STYLE_DOUBLE, raw='"true"', tag=_tag('bool'))),
-        # not `null` as the key: that is a plain scalar, and it resolves to `None`.
-        ('nil', scalar('', STYLE_DOUBLE, raw='""', tag=_tag('null'))),
-        ('non-specific', scalar('plain', raw='plain', tag=('', '!', '!'))),
-    ])),
-    'binary': doc(mapping([
-        ('block', scalar('aGVs\nbG8=\n', STYLE_LITERAL, raw='|\n  aGVs\n  bG8=', tag=_BINARY)),
-        ('quoted', scalar('aGVsbG8=', STYLE_DOUBLE, raw='"aGVsbG8="', tag=_BINARY)),
-        ('empty', scalar('', STYLE_DOUBLE, raw='""', tag=_BINARY)),
-    ])),
-    'tagged-properties': doc(mapping([
-        ('tag-first', scalar('v', raw='v', tag=_STR, anchor='ta', tag_first=True)),
-        ('anchor-first', scalar('v', raw='v', tag=_STR, anchor='at')),
-        ('anchored-null', scalar('', raw='', anchor='empty')),
-    ])),
-    'tagged-in-a-sequence': doc(seq([
-        scalar('1', raw='1', tag=_tag('str')),
-        scalar('aGk=', STYLE_DOUBLE, raw='"aGk="', tag=_BINARY),
-    ])),
-    'comments': doc(mapping([
-        (scalar('a', before=[comment('# about a')]), scalar('1', eol=comment('# eol a', False, 6))),
-        ('b', '2'),
-    ])),
-    'blank-lines': doc(mapping([
-        ('a', '1'),
-        (scalar('b', before=[blank(2), comment('# about b')]), '2'),
-    ])),
-    'anchor-alias': doc(mapping([
-        ('base', mapping([('x', '1')], anchor='b')),
-        ('use', alias('b')),
-    ])),
+    'standard-tags': doc(
+        mapping(
+            [
+                ('str', scalar('123', raw='123', tag=_STR)),
+                ('int', scalar('42', STYLE_DOUBLE, raw='"42"', tag=_tag('int'))),
+                ('float', scalar('1.5', STYLE_DOUBLE, raw='"1.5"', tag=_tag('float'))),
+                ('bool', scalar('true', STYLE_DOUBLE, raw='"true"', tag=_tag('bool'))),
+                # not `null` as the key: that is a plain scalar, and it resolves to `None`.
+                ('nil', scalar('', STYLE_DOUBLE, raw='""', tag=_tag('null'))),
+                ('non-specific', scalar('plain', raw='plain', tag=('', '!', '!'))),
+            ]
+        )
+    ),
+    'binary': doc(
+        mapping(
+            [
+                (
+                    'block',
+                    scalar('aGVs\nbG8=\n', STYLE_LITERAL, raw='|\n  aGVs\n  bG8=', tag=_BINARY),
+                ),
+                ('quoted', scalar('aGVsbG8=', STYLE_DOUBLE, raw='"aGVsbG8="', tag=_BINARY)),
+                ('empty', scalar('', STYLE_DOUBLE, raw='""', tag=_BINARY)),
+            ]
+        )
+    ),
+    'tagged-properties': doc(
+        mapping(
+            [
+                ('tag-first', scalar('v', raw='v', tag=_STR, anchor='ta', tag_first=True)),
+                ('anchor-first', scalar('v', raw='v', tag=_STR, anchor='at')),
+                ('anchored-null', scalar('', raw='', anchor='empty')),
+            ]
+        )
+    ),
+    'tagged-in-a-sequence': doc(
+        seq(
+            [
+                scalar('1', raw='1', tag=_tag('str')),
+                scalar('aGk=', STYLE_DOUBLE, raw='"aGk="', tag=_BINARY),
+            ]
+        )
+    ),
+    'comments': doc(
+        mapping(
+            [
+                (
+                    scalar('a', before=[comment('# about a')]),
+                    scalar('1', eol=comment('# eol a', own_line=False, col=6)),
+                ),
+                ('b', '2'),
+            ]
+        )
+    ),
+    'blank-lines': doc(
+        mapping(
+            [
+                ('a', '1'),
+                (scalar('b', before=[blank(2), comment('# about b')]), '2'),
+            ]
+        )
+    ),
+    'anchor-alias': doc(
+        mapping(
+            [
+                ('base', mapping([('x', '1')], anchor='b')),
+                ('use', alias('b')),
+            ]
+        )
+    ),
     'unused-anchor': doc(mapping([('other', mapping([('y', '2')], anchor='unused'))])),
-    'merge': doc(mapping([
-        ('base', mapping([('x', '1')], anchor='b')),
-        ('derived', mapping([('<<', alias('b')), ('y', '3')], merge=[0])),
-    ])),
+    'merge': doc(
+        mapping(
+            [
+                ('base', mapping([('x', '1')], anchor='b')),
+                ('derived', mapping([('<<', alias('b')), ('y', '3')], merge=[0])),
+            ]
+        )
+    ),
 }
 
 
 def normalise(document: Doc) -> Doc:
-    """Clears `raw` wherever the value alone reproduces it.
+    """Clear `raw` wherever the value alone reproduces it.
 
     A plain scalar whose builtin re-renders its lexeme exactly comes back as a bare `str`,
     `int` or `bool`, which has nowhere to keep a lexeme and needs none: `value` is the
@@ -779,6 +883,7 @@ def normalise(document: Doc) -> Doc:
 
     Returns:
         The same document.
+
     """
     for node in document.nodes:
         if node.style == STYLE_PLAIN and node.raw == node.value:
@@ -788,13 +893,14 @@ def normalise(document: Doc) -> Doc:
 
 @pytest.fixture(scope='session')
 def construct() -> Any:
-    """Returns a callable that constructs a `Doc` into a Python tree.
+    """Return a callable that constructs a `Doc` into a Python tree.
 
     Skips the test until `yamluna.constructor` exists. The callable loads with
     `preserve_quotes=True`, so a quoted scalar keeps the class that carries its lexeme.
 
     Returns:
         A function taking a `Doc` and keyword options for `construct`.
+
     """
     module = pytest.importorskip('yamluna.constructor', reason='constructor.py is not written yet')
 
@@ -805,7 +911,7 @@ def construct() -> Any:
 
 
 def assert_round_trips(original: Doc, construct: Any, **kw: Any) -> None:
-    """Asserts that `original` survives being constructed and represented again.
+    """Assert that `original` survives being constructed and represented again.
 
     Args:
         original: The record document a load could have produced.
@@ -814,6 +920,7 @@ def assert_round_trips(original: Doc, construct: Any, **kw: Any) -> None:
 
     Raises:
         AssertionError: The represented records differ from `original`.
+
     """
     assert normalise(represent(construct(original), **kw)) == normalise(original)
 
@@ -825,13 +932,24 @@ def test_records_survive_construct_then_represent(name: str, construct: Any) -> 
 
 
 def test_round_trip_with_trivia_on_every_slot(construct: Any) -> None:
-    original = doc(mapping([
-        (scalar('a', before=[blank(1), comment('# about a')]),
-         scalar('1', eol=comment('# eol a', False, 7))),
-        (scalar('b', eol=comment('# on the key', False, 3)),
-         mapping([('c', '2')],
-                 before=[comment('# leading b')], after=[comment('# after b', col=2)])),
-    ]))
+    original = doc(
+        mapping(
+            [
+                (
+                    scalar('a', before=[blank(1), comment('# about a')]),
+                    scalar('1', eol=comment('# eol a', own_line=False, col=7)),
+                ),
+                (
+                    scalar('b', eol=comment('# on the key', own_line=False, col=3)),
+                    mapping(
+                        [('c', '2')],
+                        before=[comment('# leading b')],
+                        after=[comment('# after b', col=2)],
+                    ),
+                ),
+            ]
+        )
+    )
     assert_round_trips(original, construct)
 
 
@@ -851,11 +969,17 @@ def test_an_edited_value_drops_the_parked_tag_and_lexeme(construct: Any) -> None
     Overwrite the entry and the record no longer applies. The new value is formatted from
     scratch, tag and all, exactly as it would be in a tree nobody loaded.
     """
-    tree = construct(doc(mapping([
-        ('kept', scalar('123', raw='123', tag=_STR)),
-        ('edited', scalar('456', raw='456', tag=_STR)),
-        ('binary', scalar('aGk=', STYLE_DOUBLE, raw='"aGk="', tag=_BINARY)),
-    ])))
+    tree = construct(
+        doc(
+            mapping(
+                [
+                    ('kept', scalar('123', raw='123', tag=_STR)),
+                    ('edited', scalar('456', raw='456', tag=_STR)),
+                    ('binary', scalar('aGk=', STYLE_DOUBLE, raw='"aGk="', tag=_BINARY)),
+                ]
+            )
+        )
+    )
     tree['edited'] = 'a string'
     tree['binary'] = b'bye'
     written = represent(tree).nodes

@@ -155,3 +155,34 @@ it (40 files that are not known losses, plus `key-duplicate`, which is), 2 are `
 again refusing to load at all under the default `allow_duplicate_keys=False`, and 2 are the
 tests of the *unbuilt* extension's error messages, which cannot run on a built checkout. None
 of them is a gap.
+
+## Lint and types
+
+`ruff` does both the linting and the formatting, and `ty` does the type checking. Both are
+CI gates, alongside `cargo clippy -D warnings` and `cargo fmt --check` on the Rust side.
+
+```bash
+just lint    # clippy, cargo fmt --check, ruff check, ruff format --check
+just types   # ty check
+just fmt     # reformat in place and apply ruff's safe fixes
+```
+
+`ruff` runs with `select = ["ALL"]`, and the ignore list in `pyproject.toml` is six entries
+long. Each says why it is there: two are conventions where ruff ships both halves of a pair
+and one has to be picked, three are rules the formatter owns and would fight, and one is a
+project decision about where error messages live. There is no pydocstyle `convention`,
+because both of the ones ruff ships silently disable a rule this project wants: `google`
+turns off `D401`, which is what holds every docstring summary to the imperative mood, and
+`pep257` turns off `D417`, which is what stops a documented function from quietly leaving
+one of its parameters undocumented.
+
+Directory-level waivers are for what a directory really is. Tests may `assert`, may reach
+into private state, may compare against a bare literal, and take their name as their
+documentation; the examples print; the benchmark shells out. Everything else is waived one
+line at a time, with a reason, and the largest group by far is the signatures that copy
+`ruamel.yaml` exactly and therefore cannot be changed to satisfy a boolean-trap rule.
+
+`ty` checks the whole tree, tests and examples included, which is why `tests/_expect.py`
+exists: `TagRegistry.resolve`, `TagRegistry.registration_for` and
+`MarkedYAMLError.problem_mark` all answer `None` for an input they do not recognise, and a
+test that knows better says so with `found(...)` rather than crashing on `NoneType`.

@@ -89,5 +89,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      # `ci/smoke.py` is executed by the wheel job, so it gets linted like everything else.
+      # `select = ["ALL"]` in pyproject.toml, with a short ignore list that each carries its
+      # reason. `ci/smoke.py` is executed by the wheel job, so it is linted like everything else.
       - run: uvx ruff check python tests bench examples ci
+      - run: uvx ruff format --check python tests bench examples ci
+
+  types:
+    name: ty
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - run: uv venv --python 3.13
+      # `ty` resolves third-party imports out of the environment, and the tests import the
+      # compiled extension, so the project is installed rather than just its dependencies.
+      - run: uv pip install -e . --group dev
+      - run: .venv/bin/ty check

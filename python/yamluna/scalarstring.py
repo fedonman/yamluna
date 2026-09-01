@@ -26,7 +26,11 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Callable, MutableMapping, MutableSequence
-from typing import Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Self, SupportsIndex, TypeVar, overload
+
+if TYPE_CHECKING:
+    from yamluna.comments import Anchor as _AnchorClass
+    from yamluna.comments import LineCol
 
 # `PreservedScalarString` is ruamel's old name for `LiteralScalarString`.
 __all__ = [
@@ -43,7 +47,7 @@ __all__ = [
 ]
 
 
-def _anchor_class() -> type:
+def _anchor_class() -> type[_AnchorClass]:
     """Return the package's `Anchor` class, or a fallback when nothing supplies one."""
     # Two module names are tried because this package keeps `Anchor` in `yamluna.comments`
     # while ruamel keeps it in an `anchor` module of its own.
@@ -56,7 +60,7 @@ def _anchor_class() -> type:
     class Anchor:
         """`&name` on a node, defined here only when neither module has the class."""
 
-        __slots__ = ('value', 'always_dump')
+        __slots__ = ('always_dump', 'value')
         attrib: ClassVar[str] = '_yaml_anchor'
 
         def __init__(self) -> None:
@@ -66,7 +70,9 @@ def _anchor_class() -> type:
         def __repr__(self) -> str:
             return f'Anchor({self.value!r}{", (always dump)" if self.always_dump else ""})'
 
-    return Anchor
+    # The fallback stands in for `yamluna.comments.Anchor` when that module is absent, so
+    # it is that class as far as every caller is concerned.
+    return Anchor  # ty: ignore[invalid-return-type]
 
 
 Anchor = _anchor_class()
@@ -74,21 +80,30 @@ Anchor = _anchor_class()
 
 # `_Attr` and `_Anchored` live in this module because `ScalarString` is the canonical
 # anchored scalar; the int, float, bool and timestamp modules import them from here.
-class _Attr:
+_T = TypeVar('_T')
+
+
+class _Attr(Generic[_T]):
     """An optional attribute that reads as `None` until it is first assigned."""
 
     __slots__ = ('_name',)
 
-    def __init__(self, name: str | None = None) -> None:
+    def __init__(self, name: str = '') -> None:
         self._name = name  # defaults to '_' + the attribute name
 
     def __set_name__(self, owner: type, name: str) -> None:
         self._name = self._name or '_' + name
 
-    def __get__(self, obj: Any, owner: type | None = None) -> Any:
+    @overload
+    def __get__(self, obj: None, owner: type | None = None) -> Self: ...
+
+    @overload
+    def __get__(self, obj: object, owner: type | None = None) -> _T | None: ...
+
+    def __get__(self, obj: object | None, owner: type | None = None) -> Self | _T | None:
         return self if obj is None else getattr(obj, self._name, None)
 
-    def __set__(self, obj: Any, value: Any) -> None:
+    def __set__(self, obj: object, value: _T) -> None:
         setattr(obj, self._name, value)
 
 
@@ -100,17 +115,22 @@ class _Anchored:
 
     __slots__ = ()
 
+    # Declared, never assigned here: the storage is the `_SCALAR_SLOTS` of the subclasses,
+    # or the `__dict__` of the `int` subclasses, which cannot carry slots at all.
+    _yaml_anchor: _AnchorClass
+    _lexeme: str | None
+
     # The private names match the `*_attrib` constants in `yamluna.comments` wherever the
     # meaning matches, so generic loader code that writes `setattr(node, LineCol.attrib, ...)`
     # reaches a scalar as well as a collection.
-    lc = _Attr('_yaml_line_col')
+    lc: _Attr[LineCol] = _Attr('_yaml_line_col')
     """Source position of the scalar as a `LineCol`.
 
     Reads as `None` until something assigns it. Loading a document leaves it unset, as
     ruamel does for scalars.
     """
 
-    comment = _Attr()
+    comment: _Attr[object] = _Attr()
     """Comment(s) attached to the scalar.
 
     Reads as `None` until something assigns it. Loading a document leaves it unset; the
@@ -118,15 +138,19 @@ class _Anchored:
     """
 
     @property
-    def anchor(self) -> Any:
+    def anchor(self) -> _AnchorClass:
         """The scalar's `Anchor`, created empty on first access."""
         a = getattr(self, '_yaml_anchor', None)
         if a is None:
             a = Anchor()
-            self._yaml_anchor = a  # type: ignore[attr-defined]
+            # The slot is on the concrete subclass, from `_SCALAR_SLOTS`; this mixin has
+            # `__slots__ = ()`. The assignment reaches the inherited slot at runtime, but
+            # a checker looking at the mixin alone sees no slot to assign to.
+            self._yaml_anchor = a  # ty: ignore[missing-slot]
         return a
 
-    def yaml_anchor(self, any: bool = False) -> Any:
+    # ruamel's signature, called positionally: `any` shadows the builtin and is a flag.
+    def yaml_anchor(self, any: bool = False) -> _AnchorClass | None:  # noqa: A002, FBT001, FBT002
         """Return the scalar's `Anchor`, or `None` when there is nothing to dump.
 
         Unlike reading `anchor`, this never creates one.
@@ -137,18 +161,25 @@ class _Anchored:
         Returns:
             The `Anchor`, or `None` when the scalar has never been given one, or has one
             whose `always_dump` is false and `any` is false.
+
         """
         a = getattr(self, '_yaml_anchor', None)
         if a is None:
             return None
         return a if (any or a.always_dump) else None
 
-    def yaml_set_anchor(self, value: str | None, always_dump: bool = False) -> None:
+    def yaml_set_anchor(
+        self,
+        value: str | None,
+        # ruamel's signature, called positionally.
+        always_dump: bool = False,  # noqa: FBT001, FBT002
+    ) -> None:
         """Name the scalar's anchor, creating one if it has none.
 
         Args:
             value: The anchor name without its `&`. `None` clears the name.
             always_dump: Write `&value` even when no alias points at this scalar.
+
         """
         self.anchor.value = value
         self.anchor.always_dump = always_dump
@@ -163,7 +194,12 @@ class _Anchored:
 # facts this package carries but never reads (where the `&anchor` and the tag were written)
 # ride back to the emitter.
 _SCALAR_SLOTS = (
-    '_yaml_anchor', '_yaml_line_col', '_comment', '_lexeme', '_yaml_doc', '_yaml_node',
+    '_yaml_anchor',
+    '_yaml_line_col',
+    '_comment',
+    '_lexeme',
+    '_yaml_doc',
+    '_yaml_node',
 )
 
 
@@ -179,6 +215,7 @@ class ScalarString(_Anchored, str):
             what the source really said: the emitter reproduces it verbatim.
         anchor: An anchor name to attach, marked to be written even when nothing aliases
             this scalar.
+
     """
 
     __slots__ = _SCALAR_SLOTS
@@ -193,6 +230,7 @@ class ScalarString(_Anchored, str):
         lexeme: str | None = None,
         anchor: str | None = None,
     ) -> Self:
+        """Build the scalar, keeping `lexeme` and attaching `anchor` when given."""
         self = str.__new__(cls, value)
         self._lexeme = lexeme
         if anchor is not None:
@@ -206,10 +244,11 @@ class ScalarString(_Anchored, str):
             The characters the source used, quotes and block header included. `None` when
             this string was built or edited in Python, in which case the emitter renders it
             afresh from `style` and the cooked value.
+
         """
         return self._lexeme
 
-    def replace(self, old: Any, new: Any, count: Any = -1, /) -> Self:
+    def replace(self, old: str, new: str, count: SupportsIndex = -1, /) -> Self:
         """Return a copy with `old` replaced by `new`, keeping the style.
 
         Args:
@@ -220,6 +259,7 @@ class ScalarString(_Anchored, str):
         Returns:
             A new instance of the same class. Its `lexeme()` is `None`, because the text no
             longer matches what the source said, so the emitter renders it afresh.
+
         """
         return type(self)(str.replace(self, old, new, count))
 
@@ -273,7 +313,7 @@ class FoldedScalarString(ScalarString):
     __slots__ = ('_fold_pos',)
     style = '>'
 
-    fold_pos = _Attr()
+    fold_pos: _Attr[list[int]] = _Attr()
     """Offsets in the cooked value where the source folded a line.
 
     Reads as `None` until something assigns it. A scalar loaded from a file keeps its folds
@@ -381,6 +421,7 @@ def from_lexeme(raw: str, value: str | None = None) -> ScalarString:
         "'it''s'"
 
         ```
+
     """
     cls = _BY_STYLE.get(raw[:1], PlainScalarString)
     if value is None:
@@ -389,7 +430,8 @@ def from_lexeme(raw: str, value: str | None = None) -> ScalarString:
         elif cls is SingleQuotedScalarString:
             value = raw[1:-1].replace("''", "'")
         else:
-            raise ValueError(f'cooked value required for a {cls.style!r} scalar')
+            msg = f'cooked value required for a {cls.style!r} scalar'
+            raise ValueError(msg)
     return cls(value, lexeme=raw)
 
 
@@ -418,8 +460,9 @@ def preserve_literal(s: str) -> LiteralScalarString:
 
 
 def walk_tree(
-    base: Any,
-    map: dict[str, Callable[[str], Any]] | None = None,
+    base: object,
+    # `map` is ruamel's parameter name and callers pass it by keyword.
+    map: dict[str, Callable[[str], Any]] | None = None,  # noqa: A002
 ) -> None:
     r"""Convert the strings in a loaded tree, in place and recursively.
 
@@ -434,9 +477,10 @@ def walk_tree(
         ```python
         walk_tree(data, map={'\n': preserve_literal, ':': SingleQuotedScalarString})
         ```
+
     """
     if map is None:
-        map = {'\n': preserve_literal}
+        map = {'\n': preserve_literal}  # noqa: A001
 
     if isinstance(base, MutableMapping):
         items: Any = base.items()

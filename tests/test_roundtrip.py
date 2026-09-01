@@ -19,10 +19,13 @@ stale excuse behind.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 KNOWN_LOSSES: dict[str, str] = {
     'key-duplicate': (
@@ -50,7 +53,6 @@ Four kinds of entry, and the distinction matters:
 """
 
 
-
 def test_the_known_losses_are_all_real_corpus_files() -> None:
     """A renamed or deleted corpus file must not leave an excuse behind."""
     stems = {p.stem for p in (Path(__file__).parent / 'corpus').glob('*.yaml')}
@@ -74,7 +76,8 @@ def test_a_known_loss_still_loses(
         pytest.skip('not a known loss')
     try:
         output: str | None = yamluna_roundtrip(corpus_text)
-    except Exception:
+    # The point of a known loss is that it fails somehow; how it fails is not the subject.
+    except Exception:  # noqa: BLE001
         output = None
     assert output != corpus_text, (
         f'{corpus_path.stem} now round-trips: drop it from KNOWN_LOSSES '
@@ -92,14 +95,13 @@ def test_dumping_twice_is_a_fixed_point(
     """
     try:
         once = yamluna_roundtrip(corpus_text)
-    except Exception:
+    # A file that does not load at all has no fixed point to check.
+    except Exception:  # noqa: BLE001
         pytest.skip('does not load')
     assert yamluna_roundtrip(once) == once
 
 
-def test_no_comment_is_ever_lost(
-    corpus_text: str, corpus_path: Path, yamluna_roundtrip: Callable[[str], str]
-) -> None:
+def test_no_comment_is_ever_lost(corpus_text: str, yamluna_roundtrip: Callable[[str], str]) -> None:
     """Every `#` run of the source comes back, in source order, even in a lossy file.
 
     No exemptions: a file may lose its layout, its tags or its null spellings and still
@@ -108,13 +110,14 @@ def test_no_comment_is_ever_lost(
     """
     try:
         output = yamluna_roundtrip(corpus_text)
-    except Exception:
+    # Same again: a file that does not load is not a file that lost a comment.
+    except Exception:  # noqa: BLE001
         pytest.skip('does not load')
     assert _comments(output) == _comments(corpus_text)
 
 
 def _comments(text: str) -> list[str]:
-    """The `#` runs of a text, read straight off the lines."""
+    """Return the `#` runs of a text, read straight off the lines."""
     # Crude on purpose, and independent of the trivia model: a reader that used the model
     # would agree with a store that is right and an emitter that is wrong.
     return [line[line.index('#') :].rstrip() for line in text.splitlines() if '#' in line]

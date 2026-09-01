@@ -54,9 +54,15 @@ assert doc['prod'] is doc['defaults'], 'the alias did not resolve to the anchore
 doc['items'].append(3)
 del doc['name']
 edited = yaml.dump(doc)
+assert edited is not None  # dump without a stream returns the text
 assert '# eol comment' not in edited, edited  # went with the key it described
-assert '# one' in edited and '# tail' in edited, edited  # the others did not move
-assert '&defaults' in edited and '*defaults' in edited, edited  # still an alias, not a clone
+assert '# one' in edited, edited  # the others did not move
+assert '# tail' in edited, edited
+assert '&defaults' in edited, edited  # still an alias, not a clone
+assert '*defaults' in edited, edited
+
+
+QUBITS = 2
 
 
 class Circuit:
@@ -67,11 +73,12 @@ class Circuit:
 
 
 yaml.register_class(Circuit)
-text = yaml.dump(yamluna.CommentedMap({'main': Circuit(qubits=2)}))
+text = yaml.dump(yamluna.CommentedMap({'main': Circuit(qubits=QUBITS)}))
+assert text is not None  # dump without a stream returns the text
 assert '%TAG !' in text, text  # the namespace went out as a directive
 assert '!Circuit' in text, text
 back = yaml.load(text)
 assert isinstance(back['main'], Circuit), type(back['main'])
-assert back['main'].qubits == 2, back['main'].qubits
+assert back['main'].qubits == QUBITS, back['main'].qubits
 
 print(f'wheel smoke test OK: yamluna {yamluna.__version__} on {sys.version.split()[0]}')

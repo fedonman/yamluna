@@ -23,7 +23,7 @@ from __future__ import annotations
 import copy
 import datetime
 import re
-from typing import Any, Self
+from typing import Any, Self, SupportsIndex
 
 from yamluna.scalarstring import _SCALAR_SLOTS, _Anchored
 
@@ -54,18 +54,29 @@ class TimeStamp(_Anchored, datetime.datetime):
         args: The usual `datetime` positional arguments, from year through `tzinfo`.
         lexeme: The source text. When present `lexeme()` returns it unchanged.
         kw: The usual `datetime` keyword arguments, `fold` included.
+
     """
 
     __slots__ = ('_yaml', *_SCALAR_SLOTS)
 
-    def __new__(cls, *args: Any, lexeme: str | None = None, **kw: Any) -> Self:
+    _yaml: dict[str, Any]
+
+    # `args` and `kw` are forwarded verbatim to `datetime.datetime.__new__`.
+    def __new__(
+        cls,
+        *args: Any,  # noqa: ANN401
+        lexeme: str | None = None,
+        **kw: Any,  # noqa: ANN401
+    ) -> Self:
+        """Build the timestamp, keeping `lexeme` when given."""
         self = datetime.datetime.__new__(cls, *args, **kw)
         self._lexeme = lexeme
-        self._yaml: dict[str, Any] = {'t': False, 'tz': None, 'delta': 0, 'date_only': False}
+        self._yaml = {'t': False, 'tz': None, 'delta': 0, 'date_only': False}
         return self
 
+    # Not `Self`: the carry below goes through `__add__`, which rebuilds a `TimeStamp`.
     @classmethod
-    def from_lexeme(cls, text: str) -> Self:
+    def from_lexeme(cls, text: str) -> TimeStamp:
         """Parse a YAML timestamp.
 
         Args:
@@ -88,31 +99,40 @@ class TimeStamp(_Anchored, datetime.datetime):
             '2001-12-14t21:59:43.10-05:00'
 
             ```
+
         """
         m = _TIMESTAMP_RE.match(text)
         if m is None:
-            raise ValueError(f'not a timestamp lexeme: {text!r}')
+            msg = f'not a timestamp lexeme: {text!r}'
+            raise ValueError(msg)
 
         micro, carry = 0, 0
         if fraction := m['fraction']:
             # Round half up on the 7th digit, in integers so it is exact, and carry into the
             # seconds when .9999995 rounds over.
             digits = fraction[:7].ljust(7, '0')
-            carry, micro = divmod(int(digits[:6]) + (int(digits[6]) > 4), 1_000_000)
+            carry, micro = divmod(int(digits[:6]) + (digits[6] >= '5'), 1_000_000)
 
         tzinfo = None
         if m['tz_sign']:
             offset = datetime.timedelta(
-                hours=int(m['tz_hour']), minutes=int(m['tz_minute'] or 0),
+                hours=int(m['tz_hour']),
+                minutes=int(m['tz_minute'] or 0),
             )
             tzinfo = datetime.timezone(-offset if m['tz_sign'] == '-' else offset)
         elif m['tz'] == 'Z':
             tzinfo = datetime.UTC
 
         self = cls(
-            int(m['year']), int(m['month']), int(m['day']),
-            int(m['hour'] or 0), int(m['minute'] or 0), int(m['second'] or 0),
-            micro, tzinfo, lexeme=text,
+            int(m['year']),
+            int(m['month']),
+            int(m['day']),
+            int(m['hour'] or 0),
+            int(m['minute'] or 0),
+            int(m['second'] or 0),
+            micro,
+            tzinfo,
+            lexeme=text,
         )
         if carry:
             # Adding the carry goes through `__add__`, which drops the lexeme.
@@ -128,6 +148,7 @@ class TimeStamp(_Anchored, datetime.datetime):
             The text the source used, when this timestamp was loaded from a document.
             Otherwise the ISO form, as a date alone if the source had no time, and with the
             source's own `T` or space separator when it had one.
+
         """
         if self._lexeme is not None:
             return self._lexeme
@@ -136,29 +157,36 @@ class TimeStamp(_Anchored, datetime.datetime):
         return self.isoformat('T' if self._yaml['t'] else ' ')
 
     def __str__(self) -> str:
+        """Return the lexeme, where `datetime` would return its ISO form."""
         return self.lexeme()
 
     def __repr__(self) -> str:
+        """Return `TimeStamp(lexeme)`."""
         return f'TimeStamp({self.lexeme()})'
 
-    def __add__(self, other: Any) -> Any:
+    def __add__(self, other: datetime.timedelta) -> TimeStamp:
+        """Return `self + other`, keeping the formatting flags and dropping the lexeme."""
         # `datetime.__add__` builds the result without going through `__new__`'s keywords,
         # so the formatting flags have to be copied across afterwards.
         return _carry(self, datetime.datetime.__add__(self, other))
 
-    def __deepcopy__(self, memo: Any) -> TimeStamp:
+    def __deepcopy__(self, memo: dict[int, Any]) -> TimeStamp:
+        """Return a deep copy, lexeme and formatting flags included."""
         return _carry(self, self, lexeme=True, yaml=copy.deepcopy(self._yaml, memo))
 
-    def __reduce_ex__(self, protocol: int) -> tuple[Any, ...]:
+    def __reduce_ex__(self, protocol: SupportsIndex) -> tuple[Any, ...]:
+        """Return the pickle recipe, lexeme and formatting flags included."""
         # `datetime` carries only the packed date bytes through pickling, and it overrides
         # `__reduce_ex__` as well as `__reduce__`, so this is the hook that keeps the lexeme.
         _, args = datetime.datetime.__reduce_ex__(self, protocol)
         return (_unpickle, (args, self._lexeme, dict(self._yaml)))
 
     def __reduce__(self) -> tuple[Any, ...]:
+        """Return the pickle recipe, as `__reduce_ex__` does."""
         return self.__reduce_ex__(2)
 
-    def replace(self, *args: Any, **kw: Any) -> TimeStamp:
+    # `args` and `kw` are forwarded verbatim to `datetime.datetime.replace`.
+    def replace(self, *args: Any, **kw: Any) -> TimeStamp:  # noqa: ANN401
         """Return a copy with the given fields changed, as `datetime.replace` does.
 
         Args:
@@ -169,6 +197,7 @@ class TimeStamp(_Anchored, datetime.datetime):
             A `TimeStamp` keeping the separator, zone and date-only flags of this one. Its
             `lexeme()` falls back to the ISO rendering, because the source text no longer
             describes the value.
+
         """
         return _carry(self, datetime.datetime.replace(self, *args, **kw))
 
@@ -182,18 +211,26 @@ def _carry(
 ) -> TimeStamp:
     """Rebuild `result` as a `TimeStamp` with `src`'s formatting metadata."""
     out = TimeStamp(
-        result.year, result.month, result.day, result.hour, result.minute,
-        result.second, result.microsecond, result.tzinfo, fold=result.fold,
-        lexeme=src._lexeme if lexeme else None,
+        result.year,
+        result.month,
+        result.day,
+        result.hour,
+        result.minute,
+        result.second,
+        result.microsecond,
+        result.tzinfo,
+        fold=result.fold,
+        lexeme=src._lexeme if lexeme else None,  # noqa: SLF001
     )
-    out._yaml = yaml if yaml is not None else dict(src._yaml)
+    # `_carry` and `_unpickle` are this module's own helpers for the class defined above.
+    out._yaml = yaml if yaml is not None else dict(src._yaml)  # noqa: SLF001
     return out
 
 
 def _unpickle(args: tuple[Any, ...], lexeme: str | None, yaml: dict[str, Any]) -> TimeStamp:
     """Rebuild a pickled `TimeStamp` from `datetime`'s packed bytes plus the saved metadata."""
     ts = TimeStamp(*args, lexeme=lexeme)
-    ts._yaml = yaml
+    ts._yaml = yaml  # noqa: SLF001
     return ts
 
 
@@ -201,6 +238,8 @@ from_lexeme = TimeStamp.from_lexeme
 
 
 if __name__ == '__main__':
+    # Run by hand as a self-check: `assert` is both the check and the report here, and
+    # nobody runs a self-check under `python -O`.
     for text in (
         '2002-12-14',
         '2001-12-14t21:59:43.10-05:00',
@@ -209,11 +248,11 @@ if __name__ == '__main__':
         '2001-12-15 2:59:43.10',
     ):
         ts = from_lexeme(text)
-        assert ts.lexeme() == text, (text, ts.lexeme())
-        assert str(ts) == text
-        assert copy.deepcopy(ts).lexeme() == text
+        assert ts.lexeme() == text, (text, ts.lexeme())  # noqa: S101
+        assert str(ts) == text  # noqa: S101
+        assert copy.deepcopy(ts).lexeme() == text  # noqa: S101
     a = from_lexeme('2001-12-14t21:59:43.10-05:00')
     b = from_lexeme('2001-12-15T02:59:43.10Z')
-    assert a == b, (a.isoformat(), b.isoformat())
-    assert from_lexeme('2001-12-15T02:59:43.9999995Z').second == 44
-    print('timestamp ok')
+    assert a == b, (a.isoformat(), b.isoformat())  # noqa: S101
+    assert from_lexeme('2001-12-15T02:59:43.9999995Z').second == 44  # noqa: PLR2004, S101
+    print('timestamp ok')  # noqa: T201

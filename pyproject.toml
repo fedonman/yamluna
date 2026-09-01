@@ -23,7 +23,7 @@ dynamic = ["version"]
 Repository = "https://github.com/qilimanjaro-tech/yamluna"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruamel.yaml==0.19.1", "maturin>=1.7,<2", "ruff", "mypy"]
+dev = ["pytest>=8", "ruamel.yaml==0.19.1", "maturin>=1.7,<2", "ruff", "ty"]
 # The documentation site. `mkdocstrings[python]` is what renders docs/api/*.md;
 # without it those pages build clean and come out empty.
 docs = ["zensical", "mkdocstrings[python]"]
@@ -42,17 +42,67 @@ pythonpath = ["python"]
 line-length = 100
 target-version = "py311"
 
+[tool.ruff.format]
+# The codebase is single-quoted; the formatter keeps it that way rather than rewriting
+# every string literal. `docstring-code-format` also formats the ```python blocks inside
+# docstrings, which are what the documentation site renders.
+quote-style = "single"
+docstring-code-format = true
+
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
-# `__slots__` order is the FFI record layout and is read positionally, so sorting the slots
-# of `_record.py`'s classes alphabetically is wrong.
-ignore = ["RUF023"]
+select = ["ALL"]
+ignore = [
+  # Two pairs where ruff ships both conventions and one has to be picked.
+  "D203",    # incompatible with D211, which is the convention here
+  "D213",    # incompatible with D212, which is the convention here
+  # Rules the formatter owns. Enabling them makes `ruff check` and `ruff format` disagree.
+  "COM812",  # trailing commas
+  "ISC001",  # implicit string concatenation on one line
+  "D413",    # blank line after the last docstring section: its fix adds a line that
+             # `docstring-code-format` then removes, so the two never agree
+  # Project decisions.
+  "CPY001",  # no per-file copyright header; the licence is in the repository root
+  "TRY003",  # a raise carries its own message, and the messages here are long on purpose:
+             # they name the offending value and say what to do about it. One exception
+             # subclass per message would bury that.
+]
+
+# No `[tool.ruff.lint.pydocstyle] convention`. Setting one silently disables rules, and the
+# two that ship would each cost something this project wants: `google` disables `D401`, so
+# nothing would hold the docstrings to the imperative mood they are all written in, and
+# `pep257` disables `D417`, so a documented function could quietly stop documenting one of
+# its parameters. With no convention both are enforced.
+
+[tool.ruff.lint.flake8-quotes]
+inline-quotes = "single"
+
+[tool.ruff.lint.isort]
+known-first-party = ["yamluna"]
 
 [tool.ruff.lint.per-file-ignores]
-# The `# --- real output` blocks are the scripts' verbatim stdout; they are not reflowable.
-"examples/*.py" = ["E501"]
+# These three modules convert between YAML and arbitrary Python objects. `Any` is the type
+# of the thing they hold or hand back, not a placeholder for one nobody wrote down: a
+# `CommentedMap` value, a scalar the user assigned, an object handed to the representer.
+# Narrower annotations are used wherever one exists.
+"python/yamluna/comments.py" = ["ANN401"]
+"python/yamluna/constructor.py" = ["ANN401"]
+"python/yamluna/representer.py" = ["ANN401"]
+# `__slots__` order is the FFI record layout and is read positionally, so sorting the slots
+# of `_record.py`'s classes alphabetically is wrong.
+"python/yamluna/_record.py" = ["RUF023"]
+# Tests: `assert` is the point, reaching into private state is the point, a bare literal in
+# an assertion is clearer than a named constant, and a test's name is its documentation.
+"tests/**" = [
+  "S101", "SLF001", "PLR2004", "PT018", "INP001", "T201", "D100", "D101", "D102", "D103",
+  "D104", "ANN", "PLC0415", "S301", "S311", "ERA001",
+]
+# The examples are teaching material: they print, they assert, and their trailing
+# `# --- real output` blocks are verbatim stdout and are not reflowable.
+"examples/**" = ["S101", "T201", "INP001", "E501", "D", "ANN", "ERA001", "PLR2004"]
+# Developer tools, run by hand or by CI, not imported by anything.
+"bench/**" = ["S101", "T201", "INP001", "D", "ANN", "PLR2004", "S603", "S607"]
+"ci/**" = ["S101", "T201", "INP001", "D", "ANN"]
 
-[tool.mypy]
-python_version = "3.11"
-strict = true
-files = ["python/yamluna"]
+[tool.ty.environment]
+python-version = "3.11"
+python = ".venv"

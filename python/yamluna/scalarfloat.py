@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Any, Self
+from typing import IO, Any, Self, SupportsFloat, SupportsIndex
 
 from yamluna.scalarstring import _SCALAR_SLOTS, _Anchored
 
@@ -39,7 +39,7 @@ _NAN_RE = re.compile(r'^\.?(?:nan|NaN|NAN)$')
 
 
 def _leading_zeros(text: str) -> int:
-    """ruamel's `_m_lead0`: zeros before the first significant digit."""
+    """Count the zeros before the first significant digit, ruamel's `_m_lead0`."""
     count = 0
     for ch in text:
         if ch == '0':
@@ -67,6 +67,7 @@ class ScalarFloat(_Anchored, float):
             fields are not consulted.
         anchor: An anchor name to attach, marked to be written even when nothing aliases
             this scalar.
+
     """
 
     __slots__ = (
@@ -81,9 +82,10 @@ class ScalarFloat(_Anchored, float):
         '_underscore',
     )
 
-    def __new__(
+    # ruamel's constructor: every layout field is one keyword argument.
+    def __new__(  # noqa: PLR0913
         cls,
-        value: Any = 0.0,
+        value: str | bytes | SupportsFloat | SupportsIndex = 0.0,
         *,
         width: int | None = None,
         prec: int | None = None,
@@ -96,6 +98,7 @@ class ScalarFloat(_Anchored, float):
         lexeme: str | None = None,
         anchor: str | None = None,
     ) -> Self:
+        """Build the float, keeping `lexeme` and attaching `anchor` when given."""
         self = float.__new__(cls, value)
         self._width = width
         self._prec = prec
@@ -123,6 +126,7 @@ class ScalarFloat(_Anchored, float):
 
         Raises:
             ValueError: `text` is not a float lexeme.
+
         """
         return from_lexeme(text)
 
@@ -134,6 +138,7 @@ class ScalarFloat(_Anchored, float):
             `.nan`, `.inf`, `-.inf`, or `repr(value)`; a float built in Python is rendered
             from its value alone, so `width`, `prec` and the other layout fields you passed
             do not shape the output.
+
         """
         # ponytail: ruamel's field-driven float formatter is forty lines of mantissa surgery
         # that only pays off for a float built by hand with an explicit width or precision.
@@ -148,13 +153,15 @@ class ScalarFloat(_Anchored, float):
         return repr(value)
 
     def __repr__(self) -> str:
+        """Return `ScalarFloat(lexeme)`."""
         return f'{type(self).__name__}({self.lexeme()})'
 
-    def dump(self, out: Any = None) -> None:
+    def dump(self, out: IO[str] | None = None) -> None:
         """Print the lexeme and every layout field, ruamel's debugging helper.
 
         Args:
             out: An open text file to print to. `None` prints to standard output.
+
         """
         print(
             f'ScalarFloat({self.lexeme()}| w:{self._width}, p:{self._prec}, '
@@ -185,6 +192,7 @@ def from_lexeme(text: str) -> ScalarFloat:
         '1.0e+3'
 
         ```
+
     """
     if (m := _INF_RE.match(text)) is not None:
         return ScalarFloat(-math.inf if m['sign'] == '-' else math.inf, lexeme=text)
@@ -193,7 +201,8 @@ def from_lexeme(text: str) -> ScalarFloat:
 
     m = _FLOAT_RE.match(text)
     if m is None:
-        raise ValueError(f'not a float lexeme: {text!r}')
+        msg = f'not a float lexeme: {text!r}'
+        raise ValueError(msg)
     mantissa, sign = m['mantissa'], m['sign']
     kw: dict[str, Any] = {
         'lexeme': text,
@@ -214,12 +223,26 @@ def from_lexeme(text: str) -> ScalarFloat:
 
 
 if __name__ == '__main__':
-    for lexeme in ('1.0e+3', '.5', '3.', '1e3', '1_000.0', '+1.5e-3', '-.inf', '.inf',
-                   '.nan', '0.0', '-0.5', '1.0E10'):
+    # Run by hand as a self-check: `assert` is both the check and the report here, and
+    # nobody runs a self-check under `python -O`.
+    for lexeme in (
+        '1.0e+3',
+        '.5',
+        '3.',
+        '1e3',
+        '1_000.0',
+        '+1.5e-3',
+        '-.inf',
+        '.inf',
+        '.nan',
+        '0.0',
+        '-0.5',
+        '1.0E10',
+    ):
         got = from_lexeme(lexeme)
-        assert got.lexeme() == lexeme, (lexeme, got.lexeme())
+        assert got.lexeme() == lexeme, (lexeme, got.lexeme())  # noqa: S101
         expected = float(lexeme.replace('_', '').replace('.inf', 'inf').replace('.nan', 'nan'))
-        assert math.isnan(got) if math.isnan(expected) else got == expected, lexeme
-    assert ScalarFloat(1.5).lexeme() == '1.5'
-    assert ScalarFloat(math.inf).lexeme() == '.inf'
-    print('scalarfloat ok')
+        assert math.isnan(got) if math.isnan(expected) else got == expected, lexeme  # noqa: S101
+    assert ScalarFloat(1.5).lexeme() == '1.5'  # noqa: S101
+    assert ScalarFloat(math.inf).lexeme() == '.inf'  # noqa: S101
+    print('scalarfloat ok')  # noqa: T201

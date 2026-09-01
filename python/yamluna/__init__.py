@@ -12,7 +12,7 @@ from pathlib import Path
 
 from yamluna import YAML
 
-yaml = YAML()                    # typ='rt' is the only mode
+yaml = YAML()  # typ='rt' is the only mode
 yaml.preserve_quotes = True
 config = yaml.load(Path('config.yaml'))
 config['answer'] = 42

@@ -34,13 +34,16 @@ for a whole application, and an instance shares it only when you construct it wi
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import IO, Any, Final
+from typing import IO, TYPE_CHECKING, Any, Final, Self, cast
 
 from ._record import Doc, EmitOptions
 from .error import ComposerError, YAMLStreamError
 from .registry import TagRegistry
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
+    from types import ModuleType
 
 __all__ = ['YAML', 'default_registry', 'register_class']
 
@@ -74,23 +77,26 @@ _NO_EXTENSION: Final = (
 
 _BAD_TYP: Final = (
     "yamluna supports typ='rt' only; got {typ!r}. The safe/base/unsafe modes, "
-    "!!python/object:, component substitution, plug-ins and the low-level "
-    "scan/compose/serialize pipeline are deliberate omissions, not gaps -- see "
+    '!!python/object:, component substitution, plug-ins and the low-level '
+    'scan/compose/serialize pipeline are deliberate omissions, not gaps -- see '
     '"What it is not" in the README.'
 )
 
 
-def _extension() -> Any:
-    """Returns the Rust extension module, or raises an `ImportError` saying how to build it."""
+def _extension() -> ModuleType:
+    """Return the Rust extension module, or raise an `ImportError` saying how to build it."""
     try:
-        from . import _yamluna
+        # Deliberately lazy: importing yamluna, registering classes and building the object
+        # model all work with no extension built, and only load and dump need it. ty cannot
+        # resolve the name because maturin compiles the module and it ships no stub.
+        from . import _yamluna  # noqa: PLC0415  # ty: ignore[unresolved-import]
     except ImportError as exc:  # pragma: no cover: covered by the "not built" test
         raise ImportError(_NO_EXTENSION) from exc
     return _yamluna
 
 
 def _decode(data: bytes) -> str:
-    """Decodes source bytes, keeping a byte-order mark as a leading `\\ufeff`.
+    r"""Decode source bytes, keeping a byte-order mark as a leading `\ufeff`.
 
     Falls back to UTF-8 when the bytes carry no mark, which is what YAML requires.
     """
@@ -103,7 +109,18 @@ def _decode(data: bytes) -> str:
 
 
 def _read(stream: ReadStream) -> str:
-    """Reads the source text out of `stream`. `ReadStream` says what that may be."""
+    """Read the source text out of `stream`.
+
+    Args:
+        stream: The YAML source. See `ReadStream` for what that may be.
+
+    Returns:
+        The source text.
+
+    Raises:
+        YAMLStreamError: `stream` is not a `str`, `bytes`, a path, or an object with a
+            `.read()` method.
+    """
     if isinstance(stream, str):
         return stream
     if isinstance(stream, bytes | bytearray):
@@ -112,32 +129,36 @@ def _read(stream: ReadStream) -> str:
         return _decode(Path(stream).read_bytes())
     read = getattr(stream, 'read', None)
     if read is None:
-        raise YAMLStreamError(
+        msg = (
             f'cannot read YAML from {type(stream).__name__}: expected str, bytes, a '
             'path, or an object with a .read() method'
         )
+        raise YAMLStreamError(msg)
     data = read()
     return data if isinstance(data, str) else _decode(bytes(data))
 
 
 def _write(text: str, stream: WriteStream, encoding: str) -> str | None:
-    """Writes `text` to `stream`, or returns it when `stream` is `None`."""
+    """Write `text` to `stream`, or return it when `stream` is `None`."""
     if stream is None:
         return text
     if isinstance(stream, os.PathLike):
         Path(stream).write_bytes(text.encode(encoding))
         return None
     if not hasattr(stream, 'write'):
-        raise YAMLStreamError(
+        msg = (
             f'cannot write YAML to {type(stream).__name__}: expected a path, an object '
             'with a .write() method, or None to get the text back'
         )
+        raise YAMLStreamError(msg)
     try:
         # A binary stream is detected by trying the text write first: `BytesIO.write(str)`
         # raises `TypeError` before writing anything, so the fallback cannot double-write.
-        stream.write(text)  # type: ignore[arg-type]
+        # Which of the two a stream is is a runtime fact, so each branch casts to the one
+        # it is about to try.
+        cast('IO[str]', stream).write(text)
     except TypeError:
-        stream.write(text.encode(encoding))  # type: ignore[arg-type]
+        cast('IO[bytes]', stream).write(text.encode(encoding))
     return None
 
 
@@ -149,7 +170,7 @@ class YAML:
 
     Example:
         ```python
-        yaml = YAML()                       # typ='rt' is the only mode
+        yaml = YAML()  # typ='rt' is the only mode
         yaml.preserve_quotes = True
         yaml.indent(mapping=2, sequence=4, offset=2)
         data = yaml.load(Path('config.yaml'))
@@ -165,6 +186,7 @@ class YAML:
             yaml.dump(first)
             yaml.dump(second)
         ```
+
     """
 
     __slots__ = (
@@ -194,7 +216,7 @@ class YAML:
         output: WriteStream = None,
         registry: TagRegistry | None = None,
     ) -> None:
-        """Creates a reader and writer with ruamel's round-trip defaults.
+        """Create a reader and writer with ruamel's round-trip defaults.
 
         Args:
             typ: The mode. Only `'rt'`, or a one-element sequence holding it, is accepted.
@@ -206,6 +228,7 @@ class YAML:
 
         Raises:
             ValueError: `typ` is anything other than `'rt'`.
+
         """
         requested = list(typ) if isinstance(typ, list | tuple) else [typ]
         if requested != ['rt']:
@@ -302,6 +325,7 @@ class YAML:
         self._empty: dict[int, Doc] = {}
 
     def __repr__(self) -> str:
+        """Return `repr(self)`, which names the mode and nothing else."""
         return f'YAML(typ={self.typ!r})'
 
     # -- settings -------------------------------------------------------------------
@@ -322,6 +346,7 @@ class YAML:
         Raises:
             ValueError: The assigned value is neither a pair of integers nor a
                 `'major.minor'` string.
+
         """
         return self._version
 
@@ -334,9 +359,8 @@ class YAML:
             parts = value.split('.') if isinstance(value, str) else list(value)
             major, minor = (int(p) for p in parts)
         except (TypeError, ValueError):
-            raise ValueError(
-                f'version must be (major, minor) or "major.minor", got {value!r}'
-            ) from None
+            msg = f'version must be (major, minor) or "major.minor", got {value!r}'
+            raise ValueError(msg) from None
         self._version = (major, minor)
 
     def indent(
@@ -345,7 +369,7 @@ class YAML:
         sequence: int | None = None,
         offset: int | None = None,
     ) -> None:
-        """Sets the emitter's indentation, with ruamel's signature.
+        """Set the emitter's indentation, with ruamel's signature.
 
         These lay out nodes you created. A node that came from a document and was not
         restyled reproduces its own layout, so this cannot re-indent a file you loaded.
@@ -357,6 +381,7 @@ class YAML:
                 that holds them. `None` leaves `sequence_indent` as it was.
             offset: Columns the `-` itself is indented by, inside `sequence`. `None`
                 leaves `sequence_dash_offset` as it was.
+
         """
         if mapping is not None:
             self.map_indent = mapping
@@ -366,7 +391,7 @@ class YAML:
             self.sequence_dash_offset = offset
 
     def _emit_options(self) -> EmitOptions:
-        """Returns the settings as the FFI record, with every `None` resolved to its default."""
+        """Return the settings as the FFI record, with every `None` resolved to its default."""
         return EmitOptions(
             map_indent=2 if self.map_indent is None else self.map_indent,
             seq_indent=2 if self.sequence_indent is None else self.sequence_indent,
@@ -385,7 +410,7 @@ class YAML:
     def register_class(
         self, cls: type, *, tag: str | None = None, source: str | None = None
     ) -> type:
-        """Registers `cls` with this instance's registry.
+        """Register `cls` with this instance's registry.
 
         Instances of `cls` then dump with a tag, and that tag loads back as an instance.
         No other `YAML` sees the registration unless it was given the same registry.
@@ -406,9 +431,9 @@ class YAML:
         Example:
             ```python
             @yaml.register_class
-            class Circuit:
-                ...
+            class Circuit: ...
             ```
+
         """
         return self.registry.register_class(cls, tag=tag, source=source)
 
@@ -417,8 +442,10 @@ class YAML:
 
     # -- loading ----------------------------------------------------------------------
 
-    def load(self, stream: ReadStream) -> Any:
-        """Loads the one document in `stream`.
+    # The root of a loaded document is an arbitrary Python object, so `Any` is its type
+    # rather than a placeholder for one nobody wrote down. Same for `dump`'s `data`.
+    def load(self, stream: ReadStream) -> Any:  # noqa: ANN401
+        """Load the one document in `stream`.
 
         Args:
             stream: The YAML source. A `str` is the document text, not a path; pass a
@@ -448,19 +475,16 @@ class YAML:
             yaml = YAML()
             config = yaml.load(Path('config.yaml'))
             ```
+
         """
         documents = self.load_all(stream)
         if len(documents) > 1:
-            raise ComposerError(
-                'expected a single document in the stream',
-                None,
-                'but found another document',
-                None,
-            )
+            context = 'expected a single document in the stream'
+            raise ComposerError(context, None, 'but found another document', None)
         return documents[0] if documents else None
 
     def load_all(self, stream: ReadStream) -> list[Any]:
-        """Loads every document in `stream`, in order.
+        """Load every document in `stream`, in order.
 
         Args:
             stream: The YAML source. A `str` is the document text, not a path; pass a
@@ -478,13 +502,15 @@ class YAML:
             ConstructorError: A node cannot be built, for the reasons `load` lists.
             DuplicateKeyError: A mapping repeats a key while `allow_duplicate_keys` is
                 false, or repeats the `<<` merge key at all.
+
         """
         # A list rather than ruamel's generator: the parser reads the whole stream in one
         # FFI call anyway, so a generator would only delay the errors.
         parse = _extension().parse
         text = _read(stream)
         docs: list[Doc] = parse(text, allow_duplicate_keys=self.allow_duplicate_keys)
-        from . import constructor
+        # Lazy so that `import yamluna` costs nothing until a document is actually loaded.
+        from . import constructor  # noqa: PLC0415
 
         built = [constructor.construct(doc, self) for doc in docs]
         # A document that constructed to `None` has nowhere to keep its record; keep it.
@@ -494,8 +520,8 @@ class YAML:
 
     # -- dumping ----------------------------------------------------------------------
 
-    def dump(self, data: Any, stream: WriteStream = None) -> str | None:
-        """Writes `data` to `stream`, or returns the text when `stream` is `None`.
+    def dump(self, data: Any, stream: WriteStream = None) -> str | None:  # noqa: ANN401
+        r"""Write `data` to `stream`, or return the text when `stream` is `None`.
 
         Inside the context-manager form the document is collected instead of written, and
         the whole block goes out as one stream when the block ends.
@@ -517,20 +543,22 @@ class YAML:
             RepresenterError: An object has no built-in representation and no registered
                 class, or a `to_yaml` hook returned something other than a node index.
             EmitterError: The model cannot be written as YAML.
-            ValueError: `line_break` is not `'\\n'`, `'\\r\\n'` or `'\\r'`.
+            ValueError: `line_break` is not `'\n'`, `'\r\n'` or `'\r'`.
+
         """
         if self._cm_docs is not None:
             if stream is not None:
-                raise YAMLStreamError(
+                msg = (
                     'pass the stream to YAML(output=...) instead: inside the '
                     'context-manager form every dump goes to that one stream'
                 )
+                raise YAMLStreamError(msg)
             self._cm_docs.append(data)
             return None
         return self.dump_all([data], stream)
 
     def dump_all(self, documents: Iterable[Any], stream: WriteStream = None) -> str | None:
-        """Writes `documents` as one multi-document stream, or returns the text.
+        r"""Write `documents` as one multi-document stream, or return the text.
 
         A `None` document is written back as the empty document at that position in the
         stream this instance loaded last, directives, markers and comments included.
@@ -549,10 +577,12 @@ class YAML:
             RepresenterError: An object has no built-in representation and no registered
                 class, or a `to_yaml` hook returned something other than a node index.
             EmitterError: The model cannot be written as YAML.
-            ValueError: `line_break` is not `'\\n'`, `'\\r\\n'` or `'\\r'`.
+            ValueError: `line_break` is not `'\n'`, `'\r\n'` or `'\r'`.
+
         """
         emit = _extension().emit  # before representer, so "not built" is the first error
-        from . import representer
+        # Lazy so that `import yamluna` costs nothing until a document is actually dumped.
+        from . import representer  # noqa: PLC0415
 
         # A document that loaded as `None` has no content the user could have edited, so
         # its record is the whole document and is handed back untouched.
@@ -573,8 +603,8 @@ class YAML:
 
     # -- the context-manager dump form -------------------------------------------------
 
-    def __enter__(self) -> YAML:
-        """Starts collecting documents for a single stream.
+    def __enter__(self) -> Self:
+        """Start collecting documents for a single stream.
 
         Returns:
             This instance, so `with YAML(output=...) as yaml:` binds it.
@@ -582,17 +612,19 @@ class YAML:
         Raises:
             YAMLStreamError: The instance was constructed without `output`, so the block
                 has nowhere to write.
+
         """
         if self._output is None:
-            raise YAMLStreamError(
+            msg = (
                 'the context-manager form needs somewhere to write: YAML(output=path '
                 'or stream). Without it, use yaml.dump(data) and keep the returned text.'
             )
+            raise YAMLStreamError(msg)
         self._cm_docs = []
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
-        """Writes everything the block dumped, then stops collecting.
+        """Write everything the block dumped, then stop collecting.
 
         A block that ends by raising writes nothing, and the exception propagates.
         """
@@ -610,7 +642,7 @@ A plain `YAML()` does not consult it. Construct the instance as
 
 
 def register_class(cls: type, *, tag: str | None = None, source: str | None = None) -> type:
-    """Registers `cls` with `default_registry`.
+    """Register `cls` with `default_registry`.
 
     Only a `YAML` constructed with `registry=default_registry` sees the registration.
 
@@ -624,5 +656,6 @@ def register_class(cls: type, *, tag: str | None = None, source: str | None = No
 
     Returns:
         `cls`, so this also works as a decorator.
+
     """
     return default_registry.register_class(cls, tag=tag, source=source)

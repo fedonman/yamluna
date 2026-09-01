@@ -51,16 +51,24 @@ import statistics
 import sys
 import textwrap
 import timeit
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'python'))
 
 import ruamel.yaml
+
 import yamluna
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 REPEATS = 5
+
+# The two libraries this script compares. They share the `load`/`dump` pair it calls and
+# nothing else, so a factory is typed as returning either one.
+RoundTrip = yamluna.YAML | ruamel.yaml.YAML
 
 
 # ------------------------------------------------------------------------------------
@@ -120,8 +128,7 @@ def make_nested(depth: int = 6, breadth: int = 3, leaves: int = 4) -> str:
     def rec(level: int, indent: str, tag: str) -> None:
         pad = indent + '  '
         if level == 0:
-            for i in range(leaves):
-                out.append(f'{pad}leaf_{tag}_{i}: value-{tag}-{i}')
+            out.extend(f'{pad}leaf_{tag}_{i}: value-{tag}-{i}' for i in range(leaves))
             return
         for b in range(breadth):
             out.append(f'{pad}branch_{tag}_{b}:')
@@ -184,11 +191,10 @@ def make_scalars(count: int = 1200) -> str:
         lambda i: 'true' if i % 2 else 'false',
         lambda i: f'2024-0{i % 9 + 1}-15T0{i % 9 + 1}:00:00Z',
         lambda i: f'0x{i:04x}',
-        lambda i: 'null',
+        lambda _: 'null',
         lambda i: f'a-plain-scalar-that-is-long-enough-to-matter-{i}-' + 'x' * 40,
     ]
-    for i in range(count):
-        out.append(f'  - {styles[i % len(styles)](i)}')
+    out.extend(f'  - {styles[i % len(styles)](i)}' for i in range(count))
     out.append('block:')
     for i in range(count // 20):
         out.append(f'  text_{i}: |')
@@ -226,7 +232,7 @@ def ruamel_rt() -> ruamel.yaml.YAML:
     return y
 
 
-def ops(make: Callable[[], object], text: str) -> dict[str, Callable[[], object]]:
+def ops(make: Callable[[], RoundTrip], text: str) -> dict[str, Callable[[], object]]:
     """Builds the three timed operations for one library on one document.
 
     `dump` is timed against an object loaded once up front, so it measures emitting on
@@ -256,7 +262,7 @@ def ops(make: Callable[[], object], text: str) -> dict[str, Callable[[], object]
     return {'load': load, 'dump': dump, 'load+dump': both}
 
 
-def measure(fn: Callable[[], object], quick: bool) -> float:
+def measure(fn: Callable[[], object], *, quick: bool) -> float:
     """Times `fn` and returns the median seconds per call.
 
     Args:
@@ -274,7 +280,7 @@ def measure(fn: Callable[[], object], quick: bool) -> float:
     return statistics.median(t / n for t in timer.repeat(repeats, n))
 
 
-def roundtrips(make: Callable[[], object], text: str) -> bool:
+def roundtrips(make: Callable[[], RoundTrip], text: str) -> bool:
     """Reports whether `make()` dumps `text` back byte for byte after loading it."""
     yaml = make()
     out = io.StringIO()
@@ -287,7 +293,7 @@ def roundtrips(make: Callable[[], object], text: str) -> bool:
 # ------------------------------------------------------------------------------------
 
 
-def section_compare(docs: dict[str, str], quick: bool) -> None:
+def section_compare(docs: dict[str, str], *, quick: bool) -> None:
     """Prints the load, dump and round-trip table, then a byte-identical check.
 
     Args:
@@ -302,13 +308,12 @@ def section_compare(docs: dict[str, str], quick: bool) -> None:
         theirs = ops(ruamel_rt, text)
         size = f'{len(text) / 1024:.0f} KiB'
         for op in ('load', 'dump', 'load+dump'):
-            a = measure(mine[op], quick)
-            b = measure(theirs[op], quick)
+            a = measure(mine[op], quick=quick)
+            b = measure(theirs[op], quick=quick)
             ratio = b / a
             verdict = f'{ratio:.1f}x faster' if ratio >= 1 else f'{1 / ratio:.1f}x SLOWER'
             print(
-                f'| `{name}` | {size} | {op} '
-                f'| {a * 1000:.2f} ms | {b * 1000:.2f} ms | {verdict} |'
+                f'| `{name}` | {size} | {op} | {a * 1000:.2f} ms | {b * 1000:.2f} ms | {verdict} |'
             )
             size = ''
     print()
@@ -322,7 +327,7 @@ def section_compare(docs: dict[str, str], quick: bool) -> None:
     print()
 
 
-def section_layers(docs: dict[str, str], quick: bool) -> None:
+def section_layers(docs: dict[str, str], *, quick: bool) -> None:
     """Prints where a yamluna round trip spends its time, in three layers.
 
     Each column is the same work with more of the library stacked on top:
@@ -343,21 +348,26 @@ def section_layers(docs: dict[str, str], quick: bool) -> None:
         docs: The benchmark documents, keyed by name.
         quick: Take fewer timing batches.
     """
+    # Imported here, not at module scope: bench.py stays importable and `--help` keeps
+    # working against a checkout with nothing compiled.
+    from yamluna import _yamluna  # noqa: PLC0415  # ty: ignore[unresolved-import]
+
     # A criterion bench under crates/yamluna-core/benches/ would measure the first
     # column and nothing else. Measuring all three from here puts them on the same
     # input, in the same process, on the same clock, so the differences between the
     # columns are the attribution rather than a comparison of unlike runs.
-    from yamluna import _yamluna
-
-    opts = yamluna_rt()._emit_options()
+    #
+    # `_emit_options` is private: the point of the table is to time the layers under
+    # the public API, which has no equivalent.
+    opts = yamluna_rt()._emit_options()  # noqa: SLF001
 
     print('## where a yamluna round trip spends its time\n')
     print('| document | Rust only | + FFI records | + object model | object model share |')
     print('| --- | ---: | ---: | ---: | ---: |')
     for name, text in docs.items():
-        rust = measure(lambda t=text: _yamluna._roundtrip_in_rust(t, opts), quick)
-        records = measure(lambda t=text: _yamluna.emit(_yamluna.parse(t), opts), quick)
-        full = measure(ops(yamluna_rt, text)['load+dump'], quick)
+        rust = measure(lambda t=text: _yamluna._roundtrip_in_rust(t, opts), quick=quick)  # noqa: SLF001
+        records = measure(lambda t=text: _yamluna.emit(_yamluna.parse(t), opts), quick=quick)
+        full = measure(ops(yamluna_rt, text)['load+dump'], quick=quick)
         print(
             f'| `{name}` | {rust * 1000:.2f} ms | {records * 1000:.2f} ms '
             f'| {full * 1000:.2f} ms | {(full - records) / full:.0%} |'
@@ -385,7 +395,7 @@ def parallel(work: Callable[[], object], threads: int, total: int) -> float:
     return timeit.default_timer() - start
 
 
-def section_threads(docs: dict[str, str], quick: bool) -> None:
+def section_threads(docs: dict[str, str], *, quick: bool) -> None:
     """Prints how load throughput scales with thread count, for both libraries.
 
     `yamluna._yamluna.parse` runs the scanner, the loader and the trivia attachment
@@ -399,7 +409,9 @@ def section_threads(docs: dict[str, str], quick: bool) -> None:
         docs: The benchmark documents, keyed by name. Only `nested` is timed.
         quick: Measure 1 and 4 threads instead of 1, 2, 4 and 8.
     """
-    from yamluna import _yamluna
+    # Imported here, not at module scope: bench.py stays importable and `--help` keeps
+    # working against a checkout with nothing compiled.
+    from yamluna import _yamluna  # noqa: PLC0415  # ty: ignore[unresolved-import]
 
     text = docs['nested']
     counts = [1, 2, 4, 8] if not quick else [1, 4]
@@ -450,7 +462,10 @@ def header(docs: dict[str, str]) -> None:
     print(f'- cpu: {_cpu_model()}')
     print(f'- python: {platform.python_version()} ({platform.python_implementation()})')
     print(f'- yamluna: {yamluna.__version__}')
-    print(f'- ruamel.yaml: {".".join(str(p) for p in ruamel.yaml.version_info[:3])}')
+    # Read off the imported module, not out of installer metadata: the header should say
+    # what actually ran. `version_info` is untyped in ruamel, hence the suppression.
+    version_info = ruamel.yaml.version_info[:3]  # ty: ignore[not-subscriptable, invalid-argument-type]
+    print(f'- ruamel.yaml: {".".join(str(p) for p in version_info)}')
     sizes = ', '.join(f'{n} {len(t) / 1024:.0f} KiB' for n, t in docs.items())
     print(f'- inputs: {sizes}')
     print()
@@ -487,9 +502,9 @@ def main(argv: list[str]) -> int:
     header(docs)
     only_threads = '--threads' in argv
     if not only_threads:
-        section_compare(docs, quick)
-        section_layers(docs, quick)
-    section_threads(docs, quick)
+        section_compare(docs, quick=quick)
+        section_layers(docs, quick=quick)
+    section_threads(docs, quick=quick)
     return 0
 
 

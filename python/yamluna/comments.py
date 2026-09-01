@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import copy as _copy
 from collections.abc import Iterable, Iterator, Mapping
-from typing import Any, ClassVar, Final, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Self, SupportsIndex
 
 __all__ = [
     'C_ELEM_EOL',
@@ -114,12 +114,12 @@ class NotNone:
 
 
 def _record() -> list[Any]:
-    """A fresh record: one empty slot per `C_*` constant."""
+    """Return a fresh record: one empty slot per `C_*` constant."""
     return [None, None, None, None]
 
 
 def _copy_store(store: Any) -> Any:
-    """Copies a trivia store down to the record lists, so a shallow copy cannot alias them."""
+    """Copy a trivia store down to the record lists, so a shallow copy cannot alias them."""
 
     def rec(r: Any) -> Any:
         return None if r is None else [list(x) if isinstance(x, list) else x for x in r]
@@ -130,7 +130,7 @@ def _copy_store(store: Any) -> Any:
 
 
 def _keep_scalar_type(old: Any, new: Any) -> Any:
-    """Returns `new`, rebuilt as `old`'s type when a plain `str` lands on a scalar string.
+    """Return `new`, rebuilt as `old`'s type when a plain `str` lands on a scalar string.
 
     Assigning a plain `str` over a scalar string keeps the scalar string's subclass, so the
     quoting style survives the assignment.
@@ -145,30 +145,34 @@ def _keep_scalar_type(old: Any, new: Any) -> Any:
     return new
 
 
-class CommentMark:
+class CommentMark:  # noqa: PLW1641  # mutable: hashing it would move the hash
     """The place a comment starts.
 
     Args:
         column: The column of the `#`, 0-based as every position in yamluna is.
         line: The line the comment starts on, 0-based.
+
     """
 
     __slots__ = ('column', 'line')
 
     def __init__(self, column: int = 0, line: int = 0) -> None:
+        """Build a mark at `column` on `line`."""
         self.column = column
         self.line = line
 
     def __eq__(self, other: object) -> bool:
+        """Report whether `other` is a `CommentMark` at the same column and line."""
         if not isinstance(other, CommentMark):
             return NotImplemented
         return self.column == other.column and self.line == other.line
 
     def __repr__(self) -> str:
+        """Return `CommentMark(column, line)`."""
         return f'CommentMark({self.column}, {self.line})'
 
 
-class CommentToken:
+class CommentToken:  # noqa: PLW1641  # mutable: hashing it would move the hash
     """One piece of trivia: a comment, or a blank line when `value` is blank.
 
     Args:
@@ -178,6 +182,7 @@ class CommentToken:
         start_mark: Where the comment starts. Built from `column` when omitted.
         end_mark: Where the comment ends, when the loader recorded it.
         column: The 0-based column of the `#`. Read only when `start_mark` is omitted.
+
     """
 
     __slots__ = ('end_mark', 'start_mark', 'value')
@@ -189,6 +194,7 @@ class CommentToken:
         end_mark: CommentMark | None = None,
         column: int | None = None,
     ) -> None:
+        """Build a token, deriving `start_mark` from `column` when it is not given."""
         self.value = value
         self.start_mark = start_mark if start_mark is not None else CommentMark(column or 0)
         self.end_mark = end_mark
@@ -204,11 +210,17 @@ class CommentToken:
         return not self.value.strip()
 
     def __eq__(self, other: object) -> bool:
+        """Report whether `other` holds the same text at the same start.
+
+        `end_mark` takes no part: two tokens that say the same thing in the same place are
+        the same token, whether or not a loader recorded where they stopped.
+        """
         if not isinstance(other, CommentToken):
             return NotImplemented
         return self.value == other.value and self.start_mark == other.start_mark
 
     def __repr__(self) -> str:
+        """Return `CommentToken(value, col=column)`."""
         return f'CommentToken({self.value!r}, col={self.column})'
 
 
@@ -220,16 +232,24 @@ class Anchor:
         always_dump: The ruamel flag for emitting an anchor nothing refers to. An anchor
             that is set is always emitted here, so the flag is honoured but has nothing left
             to decide; it is kept so ported code keeps working.
+
     """
 
     __slots__ = ('always_dump', 'value')
     attrib: ClassVar[str] = anchor_attrib
 
-    def __init__(self, value: str | None = None, always_dump: bool = False) -> None:
+    # ruamel's signature: `Anchor(value, always_dump)`, called positionally by ported code.
+    def __init__(
+        self,
+        value: str | None = None,
+        always_dump: bool = False,  # noqa: FBT001, FBT002
+    ) -> None:
+        """Build an anchor named `value`."""
         self.value = value
         self.always_dump = always_dump
 
     def __repr__(self) -> str:
+        """Return `Anchor(value)`, noting `always_dump` when it is set."""
         ad = ', (always dump)' if self.always_dump else ''
         return f'Anchor({self.value!r}{ad})'
 
@@ -242,6 +262,7 @@ class Tag:
         suffix: The part after the handle, such as `Circuit` in `!Circuit`.
         resolved: The full tag the handle expands to, such as `tag:qilisdk/Circuit`, or
             `None` when no `%TAG` directive was in scope.
+
     """
 
     __slots__ = ('handle', 'resolved', 'suffix')
@@ -250,6 +271,7 @@ class Tag:
     def __init__(
         self, handle: str | None = None, suffix: str | None = None, resolved: str | None = None
     ) -> None:
+        """Build a tag from its handle, its suffix and the tag the handle resolves to."""
         self.handle = handle
         self.suffix = suffix
         self.resolved = resolved
@@ -261,6 +283,7 @@ class Tag:
         Returns:
             The tag text, or `None` when this `Tag` carries neither a suffix nor a resolved
             form, which is the shape a node with no tag gets.
+
         """
         if self.resolved is not None:
             return self.resolved
@@ -271,26 +294,41 @@ class Tag:
     trval = value  # ruamel spelling
 
     def startswith(self, prefix: str) -> bool:
-        """Reports whether the tag text starts with `prefix`.
+        """Report whether the tag text starts with `prefix`.
 
         Args:
             prefix: The text to look for at the front of the tag.
 
         Returns:
             `False` for a node with no tag, so no `None` check is needed at the call site.
+
         """
         return bool(self.value) and self.value.startswith(prefix)  # type: ignore[union-attr]
 
     def __bool__(self) -> bool:
+        """Report whether there is a tag here at all, so a node with none is falsey."""
         return self.value is not None
 
     def __str__(self) -> str:
+        """Return the tag text, or `''` when this node has no tag."""
         return self.value or ''
 
     def __hash__(self) -> int:
+        """Hash the handle, the suffix and the resolved form together.
+
+        This is narrower than `__eq__`, which compares the tag text alone. Two tags that
+        compare equal because they resolve to the same URI, one written `!Circuit` under a
+        directive and one written out in full, therefore hash apart and do not collide as
+        keys of the same dict. Nothing in the library uses a `Tag` as a key.
+        """
         return hash((self.handle, self.suffix, self.resolved))
 
     def __eq__(self, other: object) -> bool:
+        """Compare against another `Tag`, or against the tag text as a plain `str`.
+
+        Comparing with a `str` matches `value`, so `node.tag == 'tag:qilisdk/Circuit'` works
+        without unwrapping the `Tag` first.
+        """
         if isinstance(other, str):
             return self.value == other
         if isinstance(other, Tag):
@@ -298,6 +336,7 @@ class Tag:
         return NotImplemented
 
     def __repr__(self) -> str:
+        """Return `Tag(value)`."""
         return f'Tag({self.value!r})'
 
 
@@ -311,18 +350,20 @@ class Format:
     attrib: ClassVar[str] = format_attrib
 
     def __init__(self) -> None:
+        """Build a format with no preference set, so the dump default decides."""
         self._flow_style: bool | None = None
 
     def set_flow_style(self) -> None:
-        """Records that this node is written in flow style, `{a: 1}` or `[1, 2]`."""
+        """Record that this node is written in flow style, `{a: 1}` or `[1, 2]`."""
         self._flow_style = True
 
     def set_block_style(self) -> None:
-        """Records that this node is written in block style, one entry per line."""
+        """Record that this node is written in block style, one entry per line."""
         self._flow_style = False
 
-    def flow_style(self, default: bool | None = None) -> bool | None:
-        """Returns this node's preference, falling back to `default`.
+    # ruamel's signature: `flow_style(default)`, called positionally by ported code.
+    def flow_style(self, default: bool | None = None) -> bool | None:  # noqa: FBT001
+        """Return this node's preference, falling back to `default`.
 
         Args:
             default: What to return when no preference has been set on this node.
@@ -330,10 +371,12 @@ class Format:
         Returns:
             `True` for flow style, `False` for block style, and `default` when the node has
             no preference of its own.
+
         """
         return default if self._flow_style is None else self._flow_style
 
     def __repr__(self) -> str:
+        """Return `Format(flow_style)`."""
         return f'Format({self._flow_style})'
 
 
@@ -348,11 +391,13 @@ class LineCol:
     Args:
         line: The line the node starts on, or `None` when no position was recorded.
         col: The column the node starts at, or `None` when no position was recorded.
+
     """
 
     attrib: ClassVar[str] = line_col_attrib
 
     def __init__(self, line: int | None = None, col: int | None = None) -> None:
+        """Build a position, with no entry positions recorded yet."""
         self.line = line
         self.col = col
         self.data: dict[Any, tuple[int, int, int, int]] | None = None
@@ -363,12 +408,13 @@ class LineCol:
         """
 
     def add_kv_line_col(self, key: Any, data: Any) -> None:
-        """Records the position of one entry.
+        """Record the position of one entry.
 
         Args:
             key: The mapping key, or the index for a sequence.
             data: `[key_line, key_col, value_line, value_col]` for a mapping entry and
                 `[line, col]` for a sequence element, all 0-based.
+
         """
         if self.data is None:
             self.data = {}
@@ -377,15 +423,15 @@ class LineCol:
     add_idx_line_col = add_kv_line_col  # ruamel spelling for a sequence
 
     def key(self, k: Any) -> tuple[int, int] | None:
-        """Returns `(line, col)` of the key `k`, or `None` when no position was recorded."""
+        """Return `(line, col)` of the key `k`, or `None` when no position was recorded."""
         return self._kv(k, 0, 1)
 
     def value(self, k: Any) -> tuple[int, int] | None:
-        """Returns `(line, col)` of `k`'s value, or `None` when no position was recorded."""
+        """Return `(line, col)` of `k`'s value, or `None` when no position was recorded."""
         return self._kv(k, 2, 3)
 
     def item(self, idx: Any) -> tuple[int, int] | None:
-        """Returns `(line, col)` of element `idx`, or `None` when no position was recorded."""
+        """Return `(line, col)` of element `idx`, or `None` when no position was recorded."""
         return self._kv(idx, 0, 1)
 
     def _kv(self, k: Any, x0: int, x1: int) -> tuple[int, int] | None:
@@ -400,6 +446,7 @@ class LineCol:
         return data[x0], data[x1]
 
     def __repr__(self) -> str:
+        """Return `LineCol(line, col)`."""
         return f'LineCol({self.line}, {self.col})'
 
 
@@ -423,6 +470,7 @@ class Comment:
     attrib: ClassVar[str] = comment_attrib
 
     def __init__(self) -> None:
+        """Build an empty `Comment`, attached to no node until one adopts it."""
         self.comment: Any = None
         """The node's own trivia, `[eol_token, [own-line tokens above the node]]`.
 
@@ -439,10 +487,12 @@ class Comment:
         Returns:
             The owner's records, `{entry: [key_eol, key_pre, value_eol, value_post]}`, and an
             empty `dict` when this `Comment` is not attached to a node.
+
         """
         if self._owner is None:
             return {}
-        return self._owner._ca_items()
+        # The owner's own projection hook: a Comment is a view on its node, not a store.
+        return self._owner._ca_items()  # noqa: SLF001
 
     @property
     def end(self) -> list[CommentToken]:
@@ -466,7 +516,7 @@ class Comment:
         self._pre = value
 
     def get(self, item: Any, pos: int) -> CommentToken | None:
-        """Reads one slot of one entry's record.
+        """Read one slot of one entry's record.
 
         Args:
             item: The mapping key, or the index, of the entry.
@@ -475,6 +525,7 @@ class Comment:
         Returns:
             The token in that slot, or `None` when the entry has no record, the record is
             shorter than `pos`, or the slot is empty.
+
         """
         x = self.items.get(item)
         if x is None or len(x) <= pos:
@@ -482,7 +533,7 @@ class Comment:
         return x[pos]
 
     def set(self, item: Any, pos: int, value: Any) -> None:
-        """Writes one slot of one entry's record, creating the record when it is missing.
+        """Write one slot of one entry's record, creating the record when it is missing.
 
         Args:
             item: The mapping key, or the index, of the entry.
@@ -494,13 +545,16 @@ class Comment:
             TypeError: This `Comment` is not attached to a node, so there is no store to
                 write to.
             IndexError: The owner is a sequence and `item` is out of range.
+
         """
         if self._owner is None:
-            raise TypeError('Comment is not attached to a node')
-        self._owner._ca_record(item)[pos] = value
+            msg = 'Comment is not attached to a node'
+            raise TypeError(msg)
+        # The owner's own record hook, as in `items` above.
+        self._owner._ca_record(item)[pos] = value  # noqa: SLF001
 
     def __contains__(self, text: str) -> bool:
-        """Reports whether `text` occurs in any comment attached here, as ruamel does.
+        """Report whether `text` occurs in any comment attached here, as ruamel does.
 
         Args:
             text: The substring to look for, matched against the token text including its
@@ -508,6 +562,7 @@ class Comment:
 
         Returns:
             `True` when any of the node's own trivia or any entry record contains it.
+
         """
         return any(text in tok.value for tok in self._all_tokens())
 
@@ -529,6 +584,7 @@ class Comment:
                     yield from (t for t in c if isinstance(t, CommentToken))
 
     def __repr__(self) -> str:
+        """Return the node's own trivia on one line and the entry records on the next."""
         end = f',\n  end={self._post!r}' if self._post else ''
         return f'Comment(comment={self.comment!r},\n  items={dict(self.items)!r}{end})'
 
@@ -546,34 +602,39 @@ class _SeqCaItems(dict):
 
     __slots__ = ('_owner',)
 
+    # Every `_owner._ca_store()` below reaches for the owner's own trivia hook, which is
+    # exactly what this view exists to project; hence the SLF001 suppressions.
     def __init__(self, owner: Any) -> None:
         self._owner = owner
-        super().__init__((i, r) for i, r in enumerate(owner._ca_store()) if r is not None)
+        store = owner._ca_store()  # noqa: SLF001
+        super().__init__((i, r) for i, r in enumerate(store) if r is not None)
 
     def _idx(self, idx: int) -> int:
-        """Normalises a possibly negative index, raising `IndexError` when out of range."""
-        n = len(self._owner._ca_store())
+        """Normalise a possibly negative index, raising `IndexError` when out of range."""
+        n = len(self._owner._ca_store())  # noqa: SLF001
         i = idx + n if idx < 0 else idx
         if not 0 <= i < n:
-            raise IndexError(f'sequence comment index out of range: {idx}')
+            msg = f'sequence comment index out of range: {idx}'
+            raise IndexError(msg)
         return i
 
     def __setitem__(self, idx: int, record: Any) -> None:
         i = self._idx(idx)
-        self._owner._ca_store()[i] = record
+        self._owner._ca_store()[i] = record  # noqa: SLF001
         dict.__setitem__(self, i, record)
 
     def setdefault(self, idx: int, default: Any = None) -> Any:
         i = self._idx(idx)
-        record = self._owner._ca_store()[i]
+        record = self._owner._ca_store()[i]  # noqa: SLF001
         if record is None:
             record = _record() if default is None else default
             self[i] = record
         return record
 
-    def pop(self, idx: int, *default: Any) -> Any:
-        i = idx + len(self._owner._ca_store()) if idx < 0 else idx
-        store = self._owner._ca_store()
+    # This view is keyed by sequence index, so `dict.pop`'s `object` key is narrowed to one.
+    def pop(self, idx: int, *default: Any) -> Any:  # ty: ignore[invalid-method-override]
+        i = idx + len(self._owner._ca_store()) if idx < 0 else idx  # noqa: SLF001
+        store = self._owner._ca_store()  # noqa: SLF001
         if 0 <= i < len(store):
             store[i] = None
         return dict.pop(self, i, *default)
@@ -581,10 +642,10 @@ class _SeqCaItems(dict):
     def __delitem__(self, idx: int) -> None:
         i = self._idx(idx)
         dict.__delitem__(self, i)
-        self._owner._ca_store()[i] = None
+        self._owner._ca_store()[i] = None  # noqa: SLF001
 
     def clear(self) -> None:
-        store = self._owner._ca_store()
+        store = self._owner._ca_store()  # noqa: SLF001
         store[:] = [None] * len(store)
         dict.clear(self)
 
@@ -608,7 +669,7 @@ class CommentedBase:
     # before it restores `__dict__`, cannot trip over a missing store.
 
     def _ca_store(self) -> Any:
-        """The trivia store, created on first use."""
+        """Return the trivia store, created on first use."""
         store = getattr(self, trivia_attrib, None)
         if store is None:
             store = {}
@@ -616,15 +677,19 @@ class CommentedBase:
         return store
 
     def _ca_items(self) -> Any:
-        """What `.ca.items` projects: for a keyed container the store itself, so writes land."""
+        """Return what `.ca.items` projects.
+
+        For a keyed container that is the store itself, so a write through the projection
+        lands on the record it came from.
+        """
         return self._ca_store()
 
-    def _ca_record(self, key: Any) -> list[Any]:
-        """The record for one entry, created empty when the entry has none yet."""
+    def _ca_record(self, key: Any, /) -> list[Any]:
+        """Return the record for one entry, created empty when the entry has none yet."""
         return self._ca_store().setdefault(key, _record())
 
     def _ca_order(self) -> Iterable[Any]:
-        """The keys of `.ca.items`, in document order."""
+        """Return the keys of `.ca.items`, in document order."""
         return list(self._ca_store())
 
     # -- attributes -----------------------------------------------------------------------
@@ -637,7 +702,7 @@ class CommentedBase:
             setattr(self, comment_attrib, c)
         # Rebind on every access: a Comment that arrived by copy still points at the node it
         # was copied from, and must project the store of the node it now sits on.
-        c._owner = self
+        c._owner = self  # noqa: SLF001
         return c
 
     @property
@@ -705,22 +770,28 @@ class CommentedBase:
         return m
 
     def yaml_anchor(self) -> Anchor | None:
-        """Returns this node's `Anchor`, or `None` when none was ever set on it."""
+        """Return this node's `Anchor`, or `None` when none was ever set on it."""
         return getattr(self, anchor_attrib, None)
 
-    def yaml_set_anchor(self, value: str | None, always_dump: bool = False) -> None:
-        """Sets the anchor name on this node.
+    # ruamel's signature: `yaml_set_anchor(value, always_dump)`, called positionally.
+    def yaml_set_anchor(
+        self,
+        value: str | None,
+        always_dump: bool = False,  # noqa: FBT001, FBT002
+    ) -> None:
+        """Set the anchor name on this node.
 
         Args:
             value: The name without the `&`, or `None` to drop the anchor.
             always_dump: Kept for ruamel compatibility. An anchor that is set is emitted
                 either way.
+
         """
         self.anchor.value = value
         self.anchor.always_dump = always_dump
 
     def copy_attributes(self, t: Any, memo: dict[int, Any] | None = None) -> Any:
-        """Copies the YAML attributes, but not the data, onto `t`.
+        """Copy the YAML attributes, but not the data, onto `t`.
 
         Args:
             t: The node to copy onto. Attributes this node does not carry are left alone.
@@ -730,6 +801,7 @@ class CommentedBase:
 
         Returns:
             `t`, so the call can be the last line of a `copy` method.
+
         """
         for a in (
             comment_attrib,
@@ -752,15 +824,19 @@ class CommentedBase:
         return t
 
     # -- comment API ----------------------------------------------------------------------
+    # ruamel's signature: `yaml_end_comment_extend(comment, clear)`, called positionally.
     def yaml_end_comment_extend(
-        self, comment: Iterable[CommentToken] | None, clear: bool = False
+        self,
+        comment: Iterable[CommentToken] | None,
+        clear: bool = False,  # noqa: FBT001, FBT002
     ) -> None:
-        """Appends tokens to the trailing trivia of this node.
+        """Append tokens to the trailing trivia of this node.
 
         Args:
             comment: The tokens to append. `None` does nothing, which lets a loader pass a
                 slot straight through.
             clear: Replace what is there instead of appending to it.
+
         """
         if comment is None:
             return
@@ -768,8 +844,14 @@ class CommentedBase:
             self.ca.end = []
         self.ca.end.extend(comment)
 
-    def yaml_key_comment_extend(self, key: Any, comment: Any, clear: bool = False) -> None:
-        """Adds trivia to the key half of one entry's record.
+    # ruamel's signature: `yaml_key_comment_extend(key, comment, clear)`, called positionally.
+    def yaml_key_comment_extend(
+        self,
+        key: Any,
+        comment: Any,
+        clear: bool = False,  # noqa: FBT001, FBT002
+    ) -> None:
+        """Add trivia to the key half of one entry's record.
 
         Args:
             key: The mapping key, or the index, of the entry.
@@ -779,6 +861,7 @@ class CommentedBase:
 
         Raises:
             IndexError: This node is a sequence and `key` is out of range.
+
         """
         r = self._ca_record(key)
         if clear or r[C_KEY_PRE] is None:
@@ -787,8 +870,14 @@ class CommentedBase:
             r[C_KEY_PRE].extend(comment[1])
         r[C_KEY_EOL] = comment[0]
 
-    def yaml_value_comment_extend(self, key: Any, comment: Any, clear: bool = False) -> None:
-        """Adds trivia to the value half of one entry's record.
+    # ruamel's signature: `yaml_value_comment_extend(key, comment, clear)`, called positionally.
+    def yaml_value_comment_extend(
+        self,
+        key: Any,
+        comment: Any,
+        clear: bool = False,  # noqa: FBT001, FBT002
+    ) -> None:
+        """Add trivia to the value half of one entry's record.
 
         Args:
             key: The mapping key, or the index, of the entry.
@@ -799,6 +888,7 @@ class CommentedBase:
 
         Raises:
             IndexError: This node is a sequence and `key` is out of range.
+
         """
         r = self._ca_record(key)
         if clear or r[C_VALUE_POST] is None:
@@ -808,7 +898,7 @@ class CommentedBase:
         r[C_VALUE_EOL] = comment[0]
 
     def _yaml_add_comment(self, comment: Any, key: Any = NotNone, value: Any = NotNone) -> None:
-        """Routes a `[eol, own_line]` pair to the key half, the value half, or the node."""
+        """Route a `[eol, own_line]` pair to the key half, the value half, or the node."""
         if key is not NotNone:
             self.yaml_key_comment_extend(key, comment)
         elif value is not NotNone:
@@ -817,14 +907,14 @@ class CommentedBase:
             self.ca.comment = comment
 
     def _yaml_add_eol_comment(self, comment: Any, key: Any) -> None:
-        """Puts an end-of-line comment in whichever slot this container uses for one."""
+        """Put an end-of-line comment in whichever slot this container uses for one."""
         if self._ca_eol_slot == C_VALUE_EOL:
             self._yaml_add_comment(comment, value=key)
         else:
             self._yaml_add_comment(comment, key=key)
 
     def _yaml_get_pre_comment(self) -> list[CommentToken]:
-        """The list of own-line tokens above this node, created empty when there is none."""
+        """Return the list of own-line tokens above this node, created empty when there is none."""
         if self.ca.comment is None:
             pre: list[CommentToken] = []
             self.ca.comment = [None, pre]
@@ -834,7 +924,7 @@ class CommentedBase:
         return self.ca.comment[1]
 
     def _yaml_clear_pre_comment(self) -> list[CommentToken]:
-        """Empties the own-line tokens above this node and returns the fresh list."""
+        """Empty the own-line tokens above this node and return the fresh list."""
         pre: list[CommentToken] = []
         if self.ca.comment is None:
             self.ca.comment = [None, pre]
@@ -843,7 +933,7 @@ class CommentedBase:
         return pre
 
     def _yaml_get_column(self, key: Any) -> int | None:
-        """The column of the nearest neighbour's end-of-line comment, or `None`.
+        """Return the column of the nearest neighbour's end-of-line comment, or `None`.
 
         Searches backwards from `key` first and then forwards, so a new comment lines up
         with the block it joins.
@@ -866,7 +956,7 @@ class CommentedBase:
         return None
 
     def yaml_set_start_comment(self, comment: str, indent: int = 0) -> None:
-        """Replaces the comment block above this node.
+        r"""Replace the comment block above this node.
 
         Args:
             comment: The text, without the `#`. One token per line; a line that already
@@ -876,18 +966,17 @@ class CommentedBase:
         Example:
             ```python
             m = CommentedMap(a=1)
-            m.yaml_set_start_comment('first\\nsecond', indent=2)
+            m.yaml_set_start_comment('first\nsecond', indent=2)
             ```
+
         """
         pre = self._yaml_clear_pre_comment()
-        if comment.endswith('\n'):
-            comment = comment[:-1]
+        comment = comment.removesuffix('\n')
         mark = CommentMark(indent)
         for line in comment.split('\n'):
             stripped = line.strip()
-            if stripped and not stripped.startswith('#'):
-                line = '# ' + line
-            pre.append(CommentToken(line + '\n', mark))
+            text = '# ' + line if stripped and not stripped.startswith('#') else line
+            pre.append(CommentToken(text + '\n', mark))
 
     def yaml_set_comment_before_after_key(
         self,
@@ -897,14 +986,14 @@ class CommentedBase:
         after: str | None = None,
         after_indent: int | None = None,
     ) -> None:
-        """Sets the own-line comments above the key and below its value.
+        r"""Set the own-line comments above the key and below its value.
 
         Both texts are appended to whatever the entry already carries in those slots.
 
         Args:
             key: The entry to attach the comments to.
             before: The text to put above the key, without the `#`, one token per line. A
-                lone `'\\n'` adds a blank line. `None` leaves the slot alone.
+                lone `'\n'` adds a blank line. `None` leaves the slot alone.
             indent: The column to write the `#` of `before` at.
             after: The text to put below the value, without the `#`, one token per line.
                 `None` or an empty string leaves the slot alone.
@@ -917,6 +1006,7 @@ class CommentedBase:
             ```python
             m.yaml_set_comment_before_after_key('b', before='why b', after='end of b')
             ```
+
         """
         if after_indent is None:
             after_indent = indent + 2
@@ -941,14 +1031,12 @@ class CommentedBase:
         if after:
             if rec[C_VALUE_POST] is None:
                 rec[C_VALUE_POST] = []
-            rec[C_VALUE_POST].extend(
-                token(line, after_indent) for line in after.split('\n')
-            )
+            rec[C_VALUE_POST].extend(token(line, after_indent) for line in after.split('\n'))
 
     def yaml_add_eol_comment(
         self, comment: str, key: Any = NotNone, column: int | None = None
     ) -> None:
-        """Sets the end-of-line comment of one entry, or of this node.
+        """Set the end-of-line comment of one entry, or of this node.
 
         Args:
             comment: The text. A leading `#` is added when it is missing.
@@ -963,6 +1051,7 @@ class CommentedBase:
             ```python
             m.yaml_add_eol_comment('in seconds', key='timeout')
             ```
+
         """
         if column is None:
             column = self._yaml_get_column(key)
@@ -987,27 +1076,33 @@ class _SeqTrivia(CommentedBase):
 
     _ca_eol_slot: ClassVar[int] = C_ELEM_EOL
 
+    if TYPE_CHECKING:
+        # The subclasses mix this in with `list` or `tuple`, which is where the sequence
+        # protocol comes from. Declared here so a checker can see it on the mixin too.
+        def __len__(self) -> int: ...
+
     def _ca_store(self) -> list[list[Any] | None]:
-        """The parallel record list, created empty and the right length on first use."""
-        store = getattr(self, trivia_attrib, None)
+        """Return the parallel record list, created empty and the right length on first use."""
+        store: list[list[Any] | None] | None = getattr(self, trivia_attrib, None)
         if store is None:
-            store = [None] * len(self)  # type: ignore[arg-type]
+            store = [None] * len(self)
             setattr(self, trivia_attrib, store)
         return store
 
     def _ca_items(self) -> _SeqCaItems:
-        """A fresh write-through view of the store, keyed by current index."""
+        """Return a fresh write-through view of the store, keyed by current index."""
         return _SeqCaItems(self)
 
-    def _ca_record(self, idx: int) -> list[Any]:
-        """The record for one element, created empty when it has none.
+    def _ca_record(self, idx: int, /) -> list[Any]:
+        """Return the record for one element, created empty when it has none.
 
         Accepts a negative index and raises `IndexError` outside the sequence.
         """
         store = self._ca_store()
         i = idx + len(store) if idx < 0 else idx
         if not 0 <= i < len(store):
-            raise IndexError(f'sequence comment index out of range: {idx}')
+            msg = f'sequence comment index out of range: {idx}'
+            raise IndexError(msg)
         rec = store[i]
         if rec is None:
             store[i] = rec = _record()
@@ -1018,7 +1113,7 @@ class _SeqTrivia(CommentedBase):
 
 
 class CommentedSeq(_SeqTrivia, list):
-    """A YAML sequence, and a `list` in every other respect.
+    r"""A YAML sequence, and a `list` in every other respect.
 
     A comment belongs to the element it was written against, so it follows that element
     through `insert`, `del`, `pop`, `remove`, `sort` and `reverse`. Inserting at the front
@@ -1031,18 +1126,20 @@ class CommentedSeq(_SeqTrivia, list):
 
     Example:
         ```python
-        s = yaml.load('- one  # first\\n- two\\n')
+        s = yaml.load('- one  # first\n- two\n')
         s.insert(0, 'zero')
         s.ca.items[1]  # still the record for 'one'
         ```
+
     """
 
     def __init__(self, *args: Any, **kw: Any) -> None:
+        """Build a sequence from whatever `list` accepts, with no comments attached."""
         list.__init__(self, *args, **kw)
 
     # -- mutation: the store is kept parallel to the elements ------------------------------
     def __setitem__(self, idx: Any, value: Any) -> None:
-        """Replaces an element, keeping the comments attached at that position.
+        """Replace an element, keeping the comments attached at that position.
 
         Assigning to a slice drops the comments of every position it overwrites.
         """
@@ -1057,52 +1154,56 @@ class CommentedSeq(_SeqTrivia, list):
         list.__setitem__(self, idx, value)
 
     def __delitem__(self, idx: Any) -> None:
-        """Deletes an element and its comments, leaving every other element's comments."""
+        """Delete an element and its comments, leaving every other element's comments."""
         store = self._ca_store()
         list.__delitem__(self, idx)
         del store[idx]
 
-    def insert(self, idx: int, value: Any) -> None:
-        """Inserts `value` before position `idx`, with no comments of its own.
+    def insert(self, idx: SupportsIndex, value: Any) -> None:
+        """Insert `value` before position `idx`, with no comments of its own.
 
         Args:
             idx: The position to insert before.
             value: The element to insert.
+
         """
         store = self._ca_store()
         list.insert(self, idx, value)
         store.insert(idx, None)
 
     def append(self, value: Any) -> None:
-        """Appends `value`, with no comments of its own.
+        """Append `value`, with no comments of its own.
 
         Args:
             value: The element to append.
+
         """
         self._ca_store().append(None)
         list.append(self, value)
 
     def extend(self, values: Iterable[Any]) -> None:
-        """Appends every element of `values`, none of them with comments.
+        """Append every element of `values`, none of them with comments.
 
         Args:
             values: The elements to append. Comments on a `CommentedSeq` passed here are
                 not carried over.
+
         """
         values = list(values)
         self._ca_store().extend([None] * len(values))
         list.extend(self, values)
 
     def __iadd__(self, values: Iterable[Any]) -> Self:
+        """Extend in place with `values`, which arrive without comments."""
         self.extend(values)
         return self
 
     def __add__(self, other: Any) -> list[Any]:
-        """Concatenates into a plain `list`, so the result carries no comments."""
+        """Concatenate into a plain `list`, so the result carries no comments."""
         return list.__add__(self, other)
 
-    def pop(self, idx: int = -1) -> Any:
-        """Removes one element and its comments, and returns the element.
+    def pop(self, idx: SupportsIndex = -1) -> Any:
+        """Remove one element and its comments, and return the element.
 
         Args:
             idx: The position to remove. Defaults to the last element.
@@ -1112,6 +1213,7 @@ class CommentedSeq(_SeqTrivia, list):
 
         Raises:
             IndexError: The sequence is empty, or `idx` is out of range.
+
         """
         store = self._ca_store()
         value = list.pop(self, idx)
@@ -1119,36 +1221,41 @@ class CommentedSeq(_SeqTrivia, list):
         return value
 
     def remove(self, value: Any) -> None:
-        """Removes the first element equal to `value`, along with its comments.
+        """Remove the first element equal to `value`, along with its comments.
 
         Args:
             value: The element to remove.
 
         Raises:
             ValueError: No element equals `value`.
+
         """
         del self[list.index(self, value)]
 
     def clear(self) -> None:
-        """Removes every element and every comment attached to one."""
+        """Remove every element and every comment attached to one."""
         list.clear(self)
         self._ca_store().clear()
 
     def reverse(self) -> None:
-        """Reverses the elements, each keeping its own comments."""
+        """Reverse the elements, each keeping its own comments."""
         list.reverse(self)
         self._ca_store().reverse()
 
     def sort(self, *, key: Any = None, reverse: bool = False) -> None:
-        """Sorts in place, carrying each element's comments to its new position.
+        """Sort in place, carrying each element's comments to its new position.
 
         Args:
             key: Called on an element to produce the value it sorts by.
             reverse: Sort descending.
+
         """
+
         # Sort the indices, not the elements, so the same permutation can be applied to the
         # record list. list.sort would move the elements and leave the records behind.
-        item = lambda i: list.__getitem__(self, i)  # noqa: E731
+        def item(i: int) -> Any:
+            return list.__getitem__(self, i)
+
         keyf = item if key is None else (lambda i: key(item(i)))
         order = sorted(range(list.__len__(self)), key=keyf, reverse=reverse)
         store = self._ca_store()
@@ -1158,6 +1265,7 @@ class CommentedSeq(_SeqTrivia, list):
 
     # -- copying ---------------------------------------------------------------------------
     def __deepcopy__(self, memo: dict[int, Any]) -> CommentedSeq:
+        """Deep-copy the elements and the YAML attributes, comments included."""
         res = self.__class__()
         memo[id(self)] = res
         for x in self:
@@ -1165,15 +1273,17 @@ class CommentedSeq(_SeqTrivia, list):
         return self.copy_attributes(res, memo=memo)
 
     def copy(self) -> CommentedSeq:
-        """Returns a shallow copy that carries its own comments, tags and anchors.
+        """Return a shallow copy that carries its own comments, tags and anchors.
 
         Returns:
             A new `CommentedSeq` holding the same elements. Its trivia store is copied down
             to the record lists, so editing a comment on the copy leaves the original alone.
+
         """
         return self.copy_attributes(self.__class__(self))
 
     def __repr__(self) -> str:
+        """Return the `list` repr, so a sequence prints as its elements."""
         return list.__repr__(self)
 
 
@@ -1184,14 +1294,16 @@ class CommentedKeySeq(_SeqTrivia, tuple):
     Nothing can be added or removed, so those positions never move.
     """
 
+    __slots__ = ()
     __hash__ = tuple.__hash__
 
     def __repr__(self) -> str:
+        """Return `CommentedKeySeq((...))` around the `tuple` repr."""
         return f'CommentedKeySeq({tuple.__repr__(self)})'
 
 
 class CommentedMap(CommentedBase, dict):
-    """A YAML mapping, and a `dict` in every other respect.
+    r"""A YAML mapping, and a `dict` in every other respect.
 
     Comments are stored against the mapping key, which is the entry's identity and never
     shifts, so they survive reordering: `move_to_end`, `insert` and `rename` carry an entry's
@@ -1200,20 +1312,22 @@ class CommentedMap(CommentedBase, dict):
 
     Example:
         ```python
-        m = yaml.load('a: 1  # first\\nb: 2\\n')
+        m = yaml.load('a: 1  # first\nb: 2\n')
         m.rename('a', 'alpha')
         m.ca.items['alpha']  # the record that was on 'a'
         ```
+
     """
 
     def __init__(self, *args: Any, **kw: Any) -> None:
+        """Build a mapping from whatever `dict` accepts, with no comments attached."""
         dict.__init__(self, *args, **kw)
 
     def _ca_order(self) -> Iterable[Any]:
         return list(self)
 
     def _merged(self) -> set[Any]:
-        """The keys that came in through a `<<` merge rather than being written here."""
+        """Return the keys that came in through a `<<` merge rather than being written here."""
         m = getattr(self, '_yaml_merged_keys', None)
         if m is None:
             m = set()
@@ -1222,7 +1336,7 @@ class CommentedMap(CommentedBase, dict):
 
     # -- mutation --------------------------------------------------------------------------
     def __setitem__(self, key: Any, value: Any) -> None:
-        """Sets an entry, keeping the comments already attached to that key."""
+        """Set an entry, keeping the comments already attached to that key."""
         if key in self:
             value = _keep_scalar_type(dict.__getitem__(self, key), value)
         merged = getattr(self, '_yaml_merged_keys', None)
@@ -1233,7 +1347,7 @@ class CommentedMap(CommentedBase, dict):
         dict.__setitem__(self, key, value)
 
     def __delitem__(self, key: Any) -> None:
-        """Deletes an entry and the comments attached to it."""
+        """Delete an entry and the comments attached to it, so the key comes back clean."""
         dict.__delitem__(self, key)
         # Drop the record with the entry: a record left behind would come back the moment
         # the same key is added again, carrying comments about something else.
@@ -1243,7 +1357,7 @@ class CommentedMap(CommentedBase, dict):
             merged.discard(key)
 
     def pop(self, key: Any, default: Any = NotNone) -> Any:
-        """Removes one entry with its comments and returns its value.
+        """Remove one entry with its comments and return its value.
 
         Args:
             key: The entry to remove.
@@ -1254,6 +1368,7 @@ class CommentedMap(CommentedBase, dict):
 
         Raises:
             KeyError: The key is absent and no default was given.
+
         """
         try:
             value = dict.__getitem__(self, key)
@@ -1265,13 +1380,14 @@ class CommentedMap(CommentedBase, dict):
         return value
 
     def popitem(self) -> tuple[Any, Any]:
-        """Removes the last entry with its comments and returns it.
+        """Remove the last entry with its comments and return it.
 
         Returns:
             The `(key, value)` pair that was last in document order.
 
         Raises:
             KeyError: The mapping is empty.
+
         """
         key, value = dict.popitem(self)
         self._ca_store().pop(key, None)
@@ -1281,7 +1397,7 @@ class CommentedMap(CommentedBase, dict):
         return key, value
 
     def clear(self) -> None:
-        """Removes every entry and every comment attached to one."""
+        """Remove every entry and every comment attached to one."""
         dict.clear(self)
         self._ca_store().clear()
         merged = getattr(self, '_yaml_merged_keys', None)
@@ -1289,11 +1405,12 @@ class CommentedMap(CommentedBase, dict):
             merged.clear()
 
     def update(self, other: Any = (), /, **kw: Any) -> None:
-        """Sets every entry of `other` and of `kw`, keeping the comments on existing keys.
+        """Set every entry of `other` and of `kw`, keeping the comments on existing keys.
 
         Args:
             other: A mapping, or an iterable of `(key, value)` pairs.
             kw: Further entries, set after `other`.
+
         """
         items = other.items() if hasattr(other, 'keys') else other
         for k, v in items:
@@ -1302,11 +1419,12 @@ class CommentedMap(CommentedBase, dict):
             self[k] = v
 
     def __ior__(self, other: Any) -> Self:
+        """Update in place from `other`, keeping the comments on the keys already here."""
         self.update(other)
         return self
 
     def setdefault(self, key: Any, default: Any = None) -> Any:
-        """Returns `key`'s value, adding the entry with `default` when it is absent.
+        """Return `key`'s value, adding the entry with `default` when it is absent.
 
         Args:
             key: The entry to look up.
@@ -1314,13 +1432,15 @@ class CommentedMap(CommentedBase, dict):
 
         Returns:
             The stored value, existing or newly added.
+
         """
         if key not in self:
             self[key] = default
         return dict.__getitem__(self, key)
 
-    def move_to_end(self, key: Any, last: bool = True) -> None:
-        """Moves one entry to the end, or to the front, taking its comments with it.
+    # `OrderedDict.move_to_end`'s signature, which ported code calls positionally.
+    def move_to_end(self, key: Any, last: bool = True) -> None:  # noqa: FBT001, FBT002
+        """Move one entry to the end, or to the front, taking its comments with it.
 
         Args:
             key: The entry to move.
@@ -1328,6 +1448,7 @@ class CommentedMap(CommentedBase, dict):
 
         Raises:
             KeyError: The key is absent.
+
         """
         value = dict.pop(self, key)
         if last:
@@ -1340,7 +1461,7 @@ class CommentedMap(CommentedBase, dict):
             dict.__setitem__(self, k, v)
 
     def insert(self, pos: int, key: Any, value: Any, comment: str | None = None) -> None:
-        """Puts an entry at one position, counted as the document will emit it.
+        """Put an entry at one position, counted as the document will emit it.
 
         An existing key is moved rather than duplicated, and keeps its comments.
 
@@ -1351,6 +1472,7 @@ class CommentedMap(CommentedBase, dict):
             value: The value to store.
             comment: An end-of-line comment for the entry. A leading `#` is added when it
                 is missing. `None` adds no comment.
+
         """
         self[key] = value
         self.move_to_end(key)
@@ -1360,7 +1482,7 @@ class CommentedMap(CommentedBase, dict):
             self.yaml_add_eol_comment(comment, key=key)
 
     def rename(self, old: Any, new: Any) -> None:
-        """Renames a key in place, keeping both its position and its comments.
+        """Rename a key in place, keeping both its position and its comments.
 
         Args:
             old: The key to rename. Renaming a key to itself does nothing.
@@ -1369,6 +1491,7 @@ class CommentedMap(CommentedBase, dict):
 
         Raises:
             ValueError: `old` is not in the mapping.
+
         """
         if new == old:
             return
@@ -1381,7 +1504,7 @@ class CommentedMap(CommentedBase, dict):
 
     # -- merge keys ------------------------------------------------------------------------
     def add_yaml_merge(self, value: Iterable[Mapping[Any, Any]]) -> None:
-        """Records the mappings merged in through `<<` and exposes their keys for lookup.
+        """Record the mappings merged in through `<<` and expose their keys for lookup.
 
         A merged key that this mapping does not define itself becomes readable here, so
         `m['inherited']` works, while `non_merged_items` still reports only what this
@@ -1390,6 +1513,7 @@ class CommentedMap(CommentedBase, dict):
         Args:
             value: The merged mappings, in the order they were written. A `MergeList` is
                 kept as it is, so a `merge_pos` set on it survives.
+
         """
         merge = value if isinstance(value, MergeList) else MergeList(value)
         setattr(self, merge_attrib, merge)
@@ -1401,19 +1525,26 @@ class CommentedMap(CommentedBase, dict):
                     merged.add(k)
 
     def non_merged_items(self) -> Iterator[tuple[Any, Any]]:
-        """Yields the entries this mapping owns, which is what a dump writes out.
+        """Yield the entries this mapping owns, which is what a dump writes out.
 
         Yields:
             Each `(key, value)` written here, in document order, skipping the keys that
             arrived through a `<<` merge.
+
         """
         merged = getattr(self, '_yaml_merged_keys', None) or ()
         for k in dict.__iter__(self):
             if k not in merged:
                 yield k, dict.__getitem__(self, k)
 
-    def mlget(self, key: Any, default: Any = None, list_ok: bool = False) -> Any:
-        """Walks a path of keys, returning `default` at the first step that is missing.
+    # ruamel's signature: `mlget(key, default, list_ok)`, called positionally.
+    def mlget(
+        self,
+        key: Any,
+        default: Any = None,
+        list_ok: bool = False,  # noqa: FBT001, FBT002
+    ) -> Any:
+        """Walk a path of keys, returning `default` at the first step that is missing.
 
         Args:
             key: A list of keys to follow one level at a time. Anything else is looked up
@@ -1433,13 +1564,15 @@ class CommentedMap(CommentedBase, dict):
             ```python
             m.mlget(['server', 'port'], default=8080)
             ```
+
         """
         if not isinstance(key, list):
             return self.get(key, default)
         value: Any = self
         for k in key:
             if not list_ok and not isinstance(value, dict):
-                raise TypeError(f'{value!r} is not a mapping')
+                msg = f'{value!r} is not a mapping'
+                raise TypeError(msg)
             try:
                 value = value[k]
             except (KeyError, IndexError, TypeError):
@@ -1448,15 +1581,17 @@ class CommentedMap(CommentedBase, dict):
 
     # -- copying ---------------------------------------------------------------------------
     def copy(self) -> CommentedMap:
-        """Returns a shallow copy that carries its own comments, tags and anchors.
+        """Return a shallow copy that carries its own comments, tags and anchors.
 
         Returns:
             A new `CommentedMap` holding the same entries. Its trivia store is copied down
             to the record lists, so editing a comment on the copy leaves the original alone.
+
         """
         return self.copy_attributes(self.__class__(self))
 
     def __deepcopy__(self, memo: dict[int, Any]) -> CommentedMap:
+        """Deep-copy the entries and the YAML attributes, comments included."""
         res = self.__class__()
         memo[id(self)] = res
         for k in self:
@@ -1464,6 +1599,7 @@ class CommentedMap(CommentedBase, dict):
         return self.copy_attributes(res, memo=memo)
 
     def __repr__(self) -> str:
+        """Return the `dict` repr, so a mapping prints as its entries."""
         return dict.__repr__(self)
 
 
@@ -1476,15 +1612,17 @@ class CommentedSet(CommentedBase, set):
 
     Args:
         values: The members, in the order they should be written.
+
     """
 
     def __init__(self, values: Iterable[Any] = ()) -> None:
+        """Build a set whose document order is the order `values` arrives in."""
         values = list(values)
         set.__init__(self, values)
         self._yaml_order = values
 
     def _sync(self) -> list[Any]:
-        """Rebuilds the document order from the real members and drops orphaned records."""
+        """Rebuild the document order from the real members and drop orphaned records."""
         # Recomputed on every read rather than maintained on every mutation: `update`, `|=`
         # and the other set operations are not overridden, so members can appear or vanish
         # without this class hearing about it, and a maintained order would drift. Known
@@ -1510,12 +1648,13 @@ class CommentedSet(CommentedBase, set):
         return self._sync()
 
     def add(self, value: Any) -> None:
-        """Adds a member at the end of the document order.
+        """Add a member at the end of the document order.
 
         A member that is already there keeps its position and its comments.
 
         Args:
             value: The member to add.
+
         """
         if value not in self:
             set.add(self, value)
@@ -1524,31 +1663,34 @@ class CommentedSet(CommentedBase, set):
             set.add(self, value)
 
     def discard(self, value: Any) -> None:
-        """Removes a member and its comments, doing nothing when it is not there.
+        """Remove a member and its comments, doing nothing when it is not there.
 
         Args:
             value: The member to remove.
+
         """
         set.discard(self, value)
         self._sync()
 
     def remove(self, value: Any) -> None:
-        """Removes a member and its comments.
+        """Remove a member and its comments.
 
         Args:
             value: The member to remove.
 
         Raises:
             KeyError: The member is not in the set.
+
         """
         set.remove(self, value)
         self._sync()
 
     def __iter__(self) -> Iterator[Any]:
-        """Iterates in document order, not in the hash order a `set` would give."""
+        """Iterate in document order, not in the hash order a `set` would give."""
         return iter(self._sync())
 
     def __repr__(self) -> str:
+        """Return `CommentedSet([...])` with the members in document order."""
         return f'CommentedSet({self._sync()!r})'
 
 
@@ -1560,36 +1702,47 @@ class CommentedKeyMap(CommentedBase, tuple, Mapping):
     loaded against. Lookup walks the pairs, so it costs one pass over the entries.
     """
 
+    __slots__ = ()
     __hash__ = tuple.__hash__
 
-    def __new__(cls, *args: Any, **kw: Any) -> CommentedKeyMap:
+    def __new__(cls, *args: Any, **kw: Any) -> Self:
+        """Build the key map from whatever `dict` accepts, and freeze it as a `tuple`."""
         return tuple.__new__(cls, dict(*args, **kw).items())
 
     def __init__(self, *args: Any, **kw: Any) -> None:
-        pass
+        """Do nothing: `__new__` has already stored the pairs."""
 
     def __getitem__(self, key: Any) -> Any:  # type: ignore[override]
-        """Returns the value for `key`, raising `KeyError` when there is none."""
+        """Return the value for `key`, raising `KeyError` when there is none."""
         for k, v in tuple.__iter__(self):
             if k == key:
                 return v
         raise KeyError(key)
 
     def __iter__(self) -> Iterator[Any]:
+        """Iterate over the keys, as a `Mapping` does, not over the pairs."""
         return (k for k, _ in tuple.__iter__(self))
 
     def __len__(self) -> int:
+        """Return the number of entries."""
         return tuple.__len__(self)
 
     def __contains__(self, key: Any) -> bool:
+        """Report whether `key` is one of the keys, walking the pairs to find out."""
         return any(k == key for k, _ in tuple.__iter__(self))
 
     def __eq__(self, other: object) -> bool:
+        """Compare as a mapping against any `Mapping`, and as a `tuple` against the rest.
+
+        So a key map equals a plain `dict` with the same entries, whatever order the two
+        were built in, while `(('a', 1),) == CommentedKeyMap(a=1)` still holds.
+        """
         if isinstance(other, Mapping):
             return dict(self.items()) == dict(other)
         return tuple.__eq__(self, other)
 
     def __ne__(self, other: object) -> bool:
+        """Negate `__eq__`, keeping `NotImplemented` as it is."""
         result = self.__eq__(other)
         return result if result is NotImplemented else not result
 
@@ -1598,7 +1751,7 @@ class CommentedKeyMap(CommentedBase, tuple, Mapping):
 
     @classmethod
     def fromkeys(cls, keys: Iterable[Any], value: Any = None) -> CommentedKeyMap:
-        """Builds a key map from `keys`, every one of them mapped to `value`.
+        """Build a key map from `keys`, every one of them mapped to `value`.
 
         Args:
             keys: The keys, in order. A repeated key is kept once, at its first position.
@@ -1606,10 +1759,12 @@ class CommentedKeyMap(CommentedBase, tuple, Mapping):
 
         Returns:
             A new `CommentedKeyMap` with no comments attached.
+
         """
         return cls(dict.fromkeys(keys, value))
 
     def __repr__(self) -> str:
+        """Return `CommentedKeyMap({...})` around the entries as a `dict`."""
         return f'CommentedKeyMap({dict(self.items())!r})'
 
 
@@ -1624,16 +1779,29 @@ class TaggedScalar(CommentedBase, str):
         style: The style indicator the source wrote it with, one of `'`, `"`, `|` or `>`,
             or `None` for a plain scalar.
         tag: The tag, as a `Tag` or as the suffix of one.
+
     """
 
+    __slots__ = ()
+
+    # `style` and `tag` are consumed by `__init__`; `__new__` sees the same call and must
+    # accept them, so that `TaggedScalar('x', tag='!t')` reaches the right one.
     def __new__(
-        cls, value: str = '', style: str | None = None, tag: Tag | str | None = None
-    ) -> TaggedScalar:
+        cls,
+        value: str = '',
+        style: str | None = None,  # noqa: ARG004
+        tag: Tag | str | None = None,  # noqa: ARG004
+    ) -> Self:
+        """Build the immutable `str` half; the tag and the style are `__init__`'s work."""
         return str.__new__(cls, value)
 
     def __init__(
-        self, value: str = '', style: str | None = None, tag: Tag | str | None = None
+        self,
+        value: str = '',  # noqa: ARG002
+        style: str | None = None,
+        tag: Tag | str | None = None,
     ) -> None:
+        """Record the style and the tag on a scalar `__new__` has already built."""
         self.style = style
         if tag is not None:
             self.tag = tag
@@ -1649,7 +1817,9 @@ class TaggedScalar(CommentedBase, str):
 
     @value.setter
     def value(self, _: Any) -> None:
-        raise TypeError('TaggedScalar is immutable; build a new one')
+        msg = 'TaggedScalar is immutable; build a new one'
+        raise TypeError(msg)
 
     def __repr__(self) -> str:
+        """Return `TaggedScalar(value=..., style=..., tag=...)`."""
         return f'TaggedScalar(value={self.value!r}, style={self.style!r}, tag={self.tag!r})'

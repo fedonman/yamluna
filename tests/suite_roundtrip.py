@@ -31,7 +31,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def round_trip(source: str) -> str:
-    """Loads then dumps a suite case on one fresh `YAML`, configured as a user would.
+    """Load then dumps a suite case on one fresh `YAML`, configured as a user would.
 
     Args:
         source: The case's YAML, with the suite's visible stand-ins already decoded.
@@ -42,6 +42,7 @@ def round_trip(source: str) -> str:
     Raises:
         YAMLError: yamluna refused the case or could not represent what it loaded.
         ImportError: The Rust extension is not built.
+
     """
     from yamluna import YAML
 
@@ -53,16 +54,30 @@ def round_trip(source: str) -> str:
 
 
 def rust_score() -> str:
-    """Runs the Rust harness and returns its score line for the same 308 cases.
+    """Run the Rust harness and returns its score line for the same 308 cases.
 
     Returns:
         The harness's `yaml-test-suite:` line, or cargo's own output when that line is
         not there, which is what a build failure looks like from here.
+
     """
     proc = subprocess.run(
-        ['cargo', 'test', '-p', 'yamluna-core', '--test', 'proptest_roundtrip',
-         'yaml_test_suite_round_trips_byte_for_byte', '--', '--nocapture'],
-        capture_output=True, text=True, cwd=ROOT, check=False,
+        # `cargo` is resolved on PATH: this is a developer tool, run from a checkout.
+        [  # noqa: S607
+            'cargo',
+            'test',
+            '-p',
+            'yamluna-core',
+            '--test',
+            'proptest_roundtrip',
+            'yaml_test_suite_round_trips_byte_for_byte',
+            '--',
+            '--nocapture',
+        ],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        check=False,
     )
     for line in proc.stdout.splitlines():
         if line.startswith('yaml-test-suite:'):
@@ -70,8 +85,9 @@ def rust_score() -> str:
     return f'cargo failed:\n{proc.stdout}\n{proc.stderr}'
 
 
-def main(argv: list[str]) -> int:
-    """Scores the suite through the Python API and prints every failing case.
+# A flag-by-flag script: one branch per command-line option, all of them shallow.
+def main(argv: list[str]) -> int:  # noqa: C901
+    """Score the suite through the Python API and prints every failing case.
 
     Args:
         argv: The command-line arguments after the script name. Flags are `--diff` and
@@ -82,6 +98,7 @@ def main(argv: list[str]) -> int:
         0 when every failure is a `KNOWN_GAPS` entry and every entry still fails, and 1
         for a regression, a stale excuse, or an unknown case id. With a case id given,
         0 when that case round-trips and 1 when it does not.
+
     """
     show_diff = '--diff' in argv
     with_rust = '--rust' in argv
@@ -104,7 +121,7 @@ def main(argv: list[str]) -> int:
             got = round_trip(case.yaml)
         # A raise is a failure to round-trip rather than a skip: a user who gets a
         # traceback where ruamel returns text has lost the round trip just as thoroughly.
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             failures.append((case.id, case.yaml, f'raised {type(exc).__name__}: {exc}'))
             continue
         if got == case.yaml:

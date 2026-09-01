@@ -5,6 +5,24 @@ versions follow [semver](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Tooling: `ruff` for linting and formatting, `ty` for type checking.** `mypy` is gone; it
+  was configured but reported 109 errors and gated nothing. `ruff` now runs with
+  `select = ["ALL"]` and both `ruff check` and `ruff format --check` are CI gates, as is
+  `ty check` over the whole tree including the tests, the examples and the benchmark.
+  Getting there took 6473 lint violations and 143 type diagnostics to zero. The visible
+  half of that is the docstrings: Python summary lines are now imperative (`Return the
+  byte offset`, not `Returns the byte offset`), every previously undocumented magic method,
+  `__init__` and public method has a docstring, and `D417` holds every documented function
+  to documenting all of its parameters. No pydocstyle `convention` is set, because both of
+  the ones ruff ships would silently disable one of those two rules.
+
+- **The scalar types carry real types.** `_Attr`, the descriptor behind `lexeme`, `anchor`,
+  `caps`, `width` and the rest, is generic with typed `__get__` overloads, and the classes
+  declare the private fields it reads. `HexInt(0x1F).caps` resolves as `bool` and
+  `LiteralScalarString('x').lexeme()` as `str | None`, where before a checker saw nothing.
+
 ### Fixed
 
 - **The recorded facts now cross the FFI.** `Entry::colon`, `Node::anchor_at`, `Node::tag_at`
@@ -149,8 +167,10 @@ causes, is in [tests/README.md](tests/README.md#known-gaps).
   on the enclosing collection's `inner` slot rather than the child's `before`, so an insertion
   at the front mislabels it; four because an insertion strands the `-` of the item before an
   own-line comment. The behaviour-differences entries A2–A6 carry the same caveat.
-- `mypy --strict` is configured in `pyproject.toml` but reports 109 errors in `python/yamluna`,
-  so it is not a CI gate yet.
+- Nothing is waived by rule for a whole directory that a file could have fixed. The
+  `ruff` ignore list is six entries long and every one carries its reason, and the 120
+  per-line `# noqa` waivers are dominated by the ruamel-compatible signatures that cannot
+  change (`FBT001`, `FBT002`, `FBT003`, `PLR0913`, `PLR0917`).
 
 ### Not included, by design
 

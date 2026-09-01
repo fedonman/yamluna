@@ -29,6 +29,7 @@ from _records import (
     scalar,
     seq,
 )
+
 from yamluna.comments import (
     C_KEY_EOL,
     C_KEY_PRE,
@@ -63,7 +64,7 @@ from yamluna.timestamp import TimeStamp
 
 
 def tree(root: Any, **options: Any) -> Any:
-    """Returns the Python tree for a single-document record built by `_records`.
+    """Return the Python tree for a single-document record built by `_records`.
 
     Args:
         root: The root record node, as built by `mapping`, `seq` or `scalar`.
@@ -71,12 +72,13 @@ def tree(root: Any, **options: Any) -> Any:
 
     Returns:
         The constructed document root.
+
     """
     return construct(doc(root), **options)
 
 
 def values(tokens: Any) -> list[str]:
-    """Returns the text of each comment token, or an empty list when there are none."""
+    """Return the text of each comment token, or an empty list when there are none."""
     return [t.value for t in tokens or ()]
 
 
@@ -187,7 +189,7 @@ def test_resolve_leaves_strings_alone(lexeme: str) -> None:
 @pytest.mark.parametrize(
     ('lexeme', 'expected'), [('yes', True), ('on', True), ('no', False), ('off', False)]
 )
-def test_yaml_11_boolean_spellings(lexeme: str, expected: bool) -> None:
+def test_yaml_11_boolean_spellings(lexeme: str, expected: bool) -> None:  # noqa: FBT001
     """`yes`/`on` are booleans only under an explicit %YAML 1.1, and keep their spelling."""
     got = resolve(lexeme, version=(1, 1))
     assert type(got) is ScalarBoolean
@@ -542,15 +544,17 @@ def test_two_empty_keys_are_one_null_key() -> None:
 
 class Circuit:
     def __init__(self, qubits: int = 0) -> None:
+        """Store the qubit count, so a constructed instance can be compared on it."""
         self.qubits = qubits
 
 
 class Custom:
     def __init__(self, a: Any = None) -> None:
+        """Store the one attribute `from_yaml` builds the instance from."""
         self.a = a
 
     @classmethod
-    def from_yaml(cls, constructor: Any, node: Any) -> Custom:
+    def from_yaml(cls, _constructor: Any, node: Any) -> Custom:
         return cls(a=node.value)
 
 
@@ -575,9 +579,9 @@ def test_registered_class_through_a_tag_directive() -> None:
 def test_registered_class_uses_its_from_yaml_hook() -> None:
     registry = TagRegistry()
     registry.register_class(Custom)
-    got = tree(
-        mapping([('k', scalar('hi', tag=('!', 'Custom', '!Custom')))]), registry=registry
-    )['k']
+    got = tree(mapping([('k', scalar('hi', tag=('!', 'Custom', '!Custom')))]), registry=registry)[
+        'k'
+    ]
     assert type(got) is Custom and got.a == 'hi'
 
 

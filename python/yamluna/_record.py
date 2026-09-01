@@ -6,7 +6,7 @@ calls those classes with positional arguments to build records on load, and read
 attributes by name on dump:
 
 ```python
-from yamluna._yamluna import parse, emit          # the Rust extension
+from yamluna._yamluna import parse, emit  # the Rust extension
 
 docs: list[Doc] = parse(source, allow_duplicate_keys=False)
 text: str = emit(docs, EmitOptions())
@@ -97,6 +97,16 @@ ruamel's `Mark.column`.
 
 The classes compare by value, so a whole record tree can be asserted against a hand-built
 one, and they `repr` only their non-default fields so a failing assert stays readable.
+
+## Why the constructors carry `# noqa`
+
+Rust builds these records by calling the classes positionally through the C API, so the
+parameter list of every `__init__` here is the record layout itself. That is why the long
+argument lists (`PLR0913`, `PLR0917`) and the boolean positional parameters (`FBT001`,
+`FBT002`) are suppressed rather than fixed: making a parameter keyword-only, reordering one
+or turning a flag into a keyword would break `crates/yamluna-py`. The same fact is why
+`__slots__` is not sorted alphabetically, which `pyproject.toml` waives for this file with
+a per-file `RUF023`. Each site repeats the reason in one clause.
 """
 
 from __future__ import annotations
@@ -149,8 +159,8 @@ STYLE_NAMES: Final = ('PLAIN', 'SINGLE', 'DOUBLE', 'LITERAL', 'FOLDED', 'BLOCK',
 """The `STYLE_*` codes as names, indexed by the code, for `repr`."""
 
 
-def _boring(value: Any) -> bool:
-    """True for a value `repr` leaves out: `None`, an empty list, tuple or dict, or `0`.
+def _boring(value: object) -> bool:
+    """Report whether `repr` leaves this value out: `None`, an empty list, tuple or dict, or `0`.
 
     `False` and `''` are printed, because `own_line=False` and an empty scalar both mean
     something. A `bool` escapes the `int` test because `type(False) is bool`.
@@ -174,8 +184,11 @@ class _Record:
 
     __hash__ = None  # type: ignore[assignment]  # mutable, like list and dict
 
-    def _show(self, name: str, value: Any) -> str:
-        """The text field `name` prints as inside `repr`. Subclasses override it."""
+    # `name` is unused here and used by `Node._show`: this is the override hook, so both
+    # halves of it are part of the signature. `value` is whatever that field holds, which
+    # across the record types is every type in this module.
+    def _show(self, name: str, value: Any) -> str:  # noqa: ARG002, ANN401
+        """Render the text field `name` as it appears inside `repr`."""
         return repr(value)
 
     def __repr__(self) -> str:
@@ -239,7 +252,9 @@ class Node(_Record):
     header_at: tuple[int, int] | None
     colon: list[tuple[int, int] | None]
 
-    def __init__(
+    # The FFI record layout, read positionally from Rust: no parameter may move or become
+    # keyword-only.
+    def __init__(  # noqa: PLR0913, PLR0917
         self,
         kind: int = KIND_SCALAR,
         style: int = STYLE_PLAIN,
@@ -256,7 +271,7 @@ class Node(_Record):
         eol: Trivia | None = None,
         inner: list[Trivia] | None = None,
         after: list[Trivia] | None = None,
-        tag_first: bool = False,
+        tag_first: bool = False,  # noqa: FBT001, FBT002  # positional: FFI layout
         flow_seps: list[str] | None = None,
         anchor_at: tuple[int, int] | None = None,
         tag_at: tuple[int, int] | None = None,
@@ -285,8 +300,8 @@ class Node(_Record):
         self.header_at = header_at
         self.colon = [] if colon is None else colon
 
-    def _show(self, name: str, value: Any) -> str:
-        """Prints `kind` and `style` by name, so a failing assert reads as YAML terms."""
+    def _show(self, name: str, value: Any) -> str:  # noqa: ANN401  # any field's value
+        """Print `kind` and `style` by name, so a failing assert reads as YAML terms."""
         if name == 'kind' and 0 <= value < len(KIND_NAMES):
             return KIND_NAMES[value]
         if name == 'style' and 0 <= value < len(STYLE_NAMES):
@@ -312,7 +327,7 @@ class Trivia(_Record):
     def __init__(
         self,
         text: str | None = None,
-        own_line: bool = True,
+        own_line: bool = True,  # noqa: FBT001, FBT002  # positional: FFI layout
         col: int = 0,
         blank_lines: int = 0,
     ) -> None:
@@ -367,18 +382,20 @@ class Doc(_Record):
     """The source lines the emitter cannot reproduce from a column alone, by 0-based line.
     A fact about the stream, so only its first document carries it."""
 
-    def __init__(
+    # The FFI record layout, read positionally from Rust: no parameter may move or become
+    # keyword-only.
+    def __init__(  # noqa: PLR0913, PLR0917
         self,
         version: tuple[int, int] | None = None,
         tag_directives: list[tuple[str, str]] | None = None,
-        explicit_start: bool = False,
-        explicit_end: bool = False,
+        explicit_start: bool = False,  # noqa: FBT001, FBT002  # positional: FFI layout
+        explicit_end: bool = False,  # noqa: FBT001, FBT002  # positional: FFI layout
         root: int | None = None,
         nodes: list[Node] | None = None,
         leading: list[Trivia] | None = None,
         trailing: list[Trivia] | None = None,
-        bom: bool = False,
-        final_line_break: bool = True,
+        bom: bool = False,  # noqa: FBT001, FBT002  # positional: FFI layout
+        final_line_break: bool = True,  # noqa: FBT001, FBT002  # positional: FFI layout
         tags_before_version: int = 0,
         directives_raw: tuple[str, int] | None = None,
         stream_tail: str = '',
@@ -401,7 +418,7 @@ class Doc(_Record):
 
 
 class EmitOptions(_Record):
-    """The emitter settings, as one record for the FFI call.
+    r"""The emitter settings, as one record for the FFI call.
 
     The defaults here are ruamel's round-trip defaults, and `YAML._emit_options` resolves
     every unset setting to one of them before building this.
@@ -458,18 +475,20 @@ class EmitOptions(_Record):
     preserve_quotes: bool
     """Keep the quoting style of a modified scalar, where it is still legal."""
 
-    def __init__(
+    # The FFI record layout, read positionally from Rust: no parameter may move or become
+    # keyword-only.
+    def __init__(  # noqa: PLR0913, PLR0917
         self,
         map_indent: int = 2,
         seq_indent: int = 2,
         seq_offset: int = 0,
         width: int = 80,
         line_break: str = '\n',
-        explicit_start: bool = False,
-        explicit_end: bool = False,
-        default_flow_style: bool = False,
-        canonical: bool = False,
-        preserve_quotes: bool = False,
+        explicit_start: bool = False,  # noqa: FBT001, FBT002  # positional: FFI layout
+        explicit_end: bool = False,  # noqa: FBT001, FBT002  # positional: FFI layout
+        default_flow_style: bool = False,  # noqa: FBT001, FBT002  # positional: FFI layout
+        canonical: bool = False,  # noqa: FBT001, FBT002  # positional: FFI layout
+        preserve_quotes: bool = False,  # noqa: FBT001, FBT002  # positional: FFI layout
     ) -> None:
         self.map_indent = map_indent
         self.seq_indent = seq_indent

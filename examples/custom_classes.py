@@ -56,12 +56,15 @@ yaml = YAML()
 yaml.register_class(LibxCircuit)
 yaml.register_class(LibyCircuit)
 two_libs = yaml.dump({'a': LibxCircuit(qubits=2), 'b': LibyCircuit(n=3)})
+assert two_libs is not None  # dump without a stream returns the text
 print('# two libraries'.ljust(60, '-'))
 print(two_libs)
 
 back = yaml.load(two_libs)
-assert type(back['a']) is LibxCircuit and back['a'].qubits == 2
-assert type(back['b']) is LibyCircuit and back['b'].n == 3
+assert type(back['a']) is LibxCircuit
+assert back['a'].qubits == 2
+assert type(back['b']) is LibyCircuit
+assert back['b'].n == 3
 assert yaml.dump(back) == two_libs  # and it round-trips
 
 # -- two modules of one library -----------------------------------------------------
@@ -72,9 +75,14 @@ assert yaml.dump(back) == two_libs  # and it round-trips
 yaml = YAML()
 yaml.register_class(LibxCircuit)
 yaml.register_class(LibxGate)
-assert yaml.registry.registration_for(LibxCircuit).source == 'libx.circuits'
-assert yaml.registry.registration_for(LibxGate).source == 'libx.gates'
+circuit_reg = yaml.registry.registration_for(LibxCircuit)
+gate_reg = yaml.registry.registration_for(LibxGate)
+assert circuit_reg is not None
+assert gate_reg is not None
+assert circuit_reg.source == 'libx.circuits'
+assert gate_reg.source == 'libx.gates'
 two_mods = yaml.dump({'a': LibxCircuit(qubits=2), 'b': LibxGate(width=1)})
+assert two_mods is not None  # dump without a stream returns the text
 print('# two modules of one library'.ljust(60, '-'))
 print(two_mods)
 

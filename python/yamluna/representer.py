@@ -142,6 +142,10 @@ _STYLE_BY_INDICATOR: dict[str | None, int] = {
 # only matter when a space follows, which `_plain_ok` checks separately.
 _INDICATOR_START = frozenset('-?:,[]{}#&*!|>\'"%@`')
 
+# What no scalar may hold literally: the C0 controls, below `0x20`, and `DEL`.
+_FIRST_PRINTABLE = 0x20
+_DEL = 0x7F
+
 # Anything a scalar can be.  Everything else is a container, an alias target, or an object
 # for the tag registry.  `datetime.date` covers `datetime` and `TimeStamp`.
 _ATOMS = (str, bytes, bytearray, int, float, complex, datetime.date, datetime.time, type(None))
@@ -154,7 +158,7 @@ _BINARY_TAG = ('!!', 'binary', 'tag:yaml.org,2002:binary')
 
 
 def _plain_ok(text: str, version: tuple[int, int] | None = None) -> bool:
-    """Reports whether `text` can be written plain and still load back as this string.
+    """Report whether `text` can be written plain and still load back as this string.
 
     Whether it would load back is answered by the loader's own
     `yamluna.constructor.resolve`, so the two directions cannot drift apart: whatever the
@@ -172,16 +176,15 @@ def _plain_ok(text: str, version: tuple[int, int] | None = None) -> bool:
 
     Returns:
         `True` when the text is safe to write with no quotes.
+
     """
     if not text:
         return False
     if text[0] in ' \t' or text[-1] in ' \t':
         return False
-    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in text):
+    if any(ord(c) < _FIRST_PRINTABLE or ord(c) == _DEL for c in text):
         return False
-    if text[0] in _INDICATOR_START and (
-        text[0] not in '-?:' or len(text) == 1 or text[1] in ' \t'
-    ):
+    if text[0] in _INDICATOR_START and (text[0] not in '-?:' or len(text) == 1 or text[1] in ' \t'):
         return False
     if ': ' in text or ' #' in text or text[-1] == ':':
         return False
@@ -189,14 +192,14 @@ def _plain_ok(text: str, version: tuple[int, int] | None = None) -> bool:
 
 
 def _quoted_style(text: str) -> int:
-    """The cheapest quoting that survives a reparse: single unless something needs escaping."""
-    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in text):
+    """Return the cheapest quoting that survives a reparse: single unless escaping is needed."""
+    if any(ord(c) < _FIRST_PRINTABLE or ord(c) == _DEL for c in text):
         return STYLE_DOUBLE
     return STYLE_SINGLE
 
 
 def _float_text(value: float) -> str:
-    """The YAML spelling of a float, with `.nan` and `.inf` for the two special cases."""
+    """Return the YAML spelling of a float, with `.nan` and `.inf` for the two special cases."""
     if math.isnan(value):
         return '.nan'
     if math.isinf(value):
@@ -204,11 +207,16 @@ def _float_text(value: float) -> str:
     return repr(value)
 
 
-def _scalar(obj: Any, version: tuple[int, int] | None = None) -> tuple[int, str, str | None]:
-    """Returns `(style, cooked value, source lexeme or None)` for one scalar object.
+# One branch per scalar type, in the order the checks have to be made: the branch count is
+# the count of types, and each one is tested to the byte.
+def _scalar(  # noqa: C901, PLR0911
+    obj: Any, version: tuple[int, int] | None = None
+) -> tuple[int, str, str | None]:
+    """Return `(style, cooked value, source lexeme or None)` for one scalar object.
 
     Raises:
         RepresenterError: `obj` is not a type this module can write as a scalar.
+
     """
     if obj is None:
         # `null`'s lexeme is the empty one: `key:` with nothing after it.  It goes in as a
@@ -239,14 +247,15 @@ def _scalar(obj: Any, version: tuple[int, int] | None = None) -> tuple[int, str,
     if isinstance(obj, (bytes, bytearray)):
         # `!!binary`.  The tag comes from `_tag_of`, which reads `_BINARY_TAG` for bytes.
         return STYLE_DOUBLE, base64.b64encode(bytes(obj)).decode('ascii'), None
-    raise RepresenterError(f'cannot represent an object: {obj!r}')
+    msg = f'cannot represent an object: {obj!r}'
+    raise RepresenterError(msg)
 
 
 # -- reading the object model, without writing to it --------------------------------------
 
 
 def _anchor_name(obj: Any) -> str | None:
-    """The anchor name set on `obj`, or `None` when it has none."""
+    """Return the anchor name set on `obj`, or `None` when it has none."""
     anchor = getattr(obj, anchor_attrib, None)
     return None if anchor is None else anchor.value
 
@@ -259,7 +268,7 @@ def _trackable(obj: Any) -> bool:
 
 
 def _state(obj: Any) -> Mapping[Any, Any]:
-    """Returns the attribute mapping a registered class is represented from, as ruamel does.
+    """Return the attribute mapping a registered class is represented from, as ruamel does.
 
     The record the object was loaded from is left out.  It is parked on the object under
     `NODE_ATTRIB` and lands in `__dict__` like anything else, but it is this package's
@@ -268,9 +277,9 @@ def _state(obj: Any) -> Mapping[Any, Any]:
     state = obj.__getstate__() if hasattr(obj, '__getstate__') else getattr(obj, '__dict__', None)
     if not isinstance(state, Mapping):
         return {}
-    return state if NODE_ATTRIB not in state else {
-        k: v for k, v in state.items() if k != NODE_ATTRIB
-    }
+    return (
+        state if NODE_ATTRIB not in state else {k: v for k, v in state.items() if k != NODE_ATTRIB}
+    )
 
 
 def _children(obj: Any) -> Iterator[Any]:
@@ -298,7 +307,7 @@ def _lc(obj: Any) -> tuple[int, int] | None:
 
 
 def _lc_of(container: Any, key: Any, which: str) -> tuple[int, int] | None:
-    """Returns the position `container` recorded for one of its children.
+    """Return the position `container` recorded for one of its children.
 
     A bare `str` or `int` has nowhere to hold its own position, so the parent's `.lc` is
     where most scalars get theirs back.  It is also the only right answer for an *alias*
@@ -322,8 +331,8 @@ def _in(keys: Any, key: Any) -> bool:
         return False
 
 
-def _flow_style(obj: Any, default: bool) -> int:
-    """The style constant for `obj`: its own `.fa` setting wins over the caller's default."""
+def _flow_style(obj: Any, *, default: bool) -> int:
+    """Return the style constant for `obj`: its own `.fa` setting wins over the caller's default."""
     # Ruamel's rule, and the right one: the constructor sets `.fa` from the source, so a
     # collection loaded in flow style stays flow whatever default the caller passed.
     fa = getattr(obj, format_attrib, None)
@@ -332,7 +341,7 @@ def _flow_style(obj: Any, default: bool) -> int:
 
 
 def _record_of(container: Any, key: Any) -> list[Any] | None:
-    """The four-slot trivia record for one entry of `container`, or `None`."""
+    """Return the four-slot trivia record for one entry of `container`, or `None`."""
     store = getattr(container, trivia_attrib, None)
     if not store:
         return None
@@ -358,12 +367,12 @@ def _null_lexeme(container: Any, key: Any) -> str | None:
 
 
 def _flow_seps(obj: Any) -> list[str]:
-    """What the source wrote between a flow collection's lexemes (`FLOW_SEPS_ATTRIB`)."""
+    """Return what the source wrote between a flow collection's lexemes."""
     return list(getattr(obj, FLOW_SEPS_ATTRIB, None) or ())
 
 
 def _loaded(value: Any, found: tuple[Any, Node, Node | None] | None) -> Node | None:
-    """The record `value` was loaded from: its own, or the one its parent kept for it."""
+    """Return the record `value` was loaded from: its own, or the one its parent kept for it."""
     src: Node | None = getattr(value, NODE_ATTRIB, None)
     if src is not None:
         return src
@@ -371,7 +380,7 @@ def _loaded(value: Any, found: tuple[Any, Node, Node | None] | None) -> Node | N
 
 
 def _carry(node: Node, src: Node | None) -> None:
-    """Hands the emitter back what the source said that this layer cannot keep itself.
+    """Hand the emitter back what the source said that this layer cannot keep itself.
 
     `src` is the record the object was loaded from, taken off the object (`NODE_ATTRIB`) or
     off its parent (`SOURCE_ATTRIB`) for the bare builtins that hold no attribute.  Either
@@ -421,7 +430,7 @@ def _carry(node: Node, src: Node | None) -> None:
 
 
 def _unmerge_value_pre(node: Node, src: Node | None) -> None:
-    """Splits a value's `after` back into the comments that came *before* it and the rest.
+    """Split a value's `after` back into the comments that came *before* it and the rest.
 
     `.ca` has one slot for both the comments between a `key:` and its value and the ones
     that follow the value, so the constructor merges them there.  The record is what tells
@@ -436,7 +445,7 @@ def _unmerge_value_pre(node: Node, src: Node | None) -> None:
 
 
 def _source_of(container: Any, key: Any) -> tuple[Any, Node, Node | None] | None:
-    """Returns the `(value, value record, key record)` `container` kept for one entry.
+    """Return the `(value, value record, key record)` `container` kept for one entry.
 
     A bare `str`, `int`, `bool`, `bytes` or `None` takes no attribute, so for those the
     parent is the only place a record can live.
@@ -452,7 +461,7 @@ def _source_of(container: Any, key: Any) -> tuple[Any, Node, Node | None] | None
 
 
 def _tokens(value: Any) -> list[CommentToken]:
-    """The comment tokens in one `.ca` slot, which may hold one token, a list, or `None`."""
+    """Return the comment tokens in one `.ca` slot, which may hold one token, a list, or `None`."""
     if value is None:
         return []
     if isinstance(value, CommentToken):
@@ -481,7 +490,7 @@ def _trivia_list(value: Any) -> list[Trivia]:
 
 
 def _stream_trivia(carried: Doc | None, root: Node) -> tuple[list[Trivia], list[Trivia]]:
-    """Takes the *stream*'s own trivia back off the root node.
+    """Take the *stream*'s own trivia back off the root node.
 
     A comment above `---` and one below `...` belong to the document rather than to its
     root: the emitter writes them outside the directives and the markers.  `.ca` has no slot
@@ -499,6 +508,7 @@ def _stream_trivia(carried: Doc | None, root: Node) -> tuple[list[Trivia], list[
 
     Returns:
         The document's leading and trailing trivia, removed from `root`.
+
     """
     if carried is None:
         return [], []
@@ -520,7 +530,7 @@ def _stream_trivia(carried: Doc | None, root: Node) -> tuple[list[Trivia], list[
 
 
 def _leading_is_before(node: Node, src: Node | None = None) -> None:
-    """Moves `inner` to `before`, for a block collection where the two render identically.
+    """Move `inner` to `before`, for a block collection where the two render identically.
 
     `.ca` has one slot for a comment written before a collection and one written inside it,
     so the two arrive here indistinguishable.  A block collection starts on the line after
@@ -550,13 +560,13 @@ def _leading_is_before(node: Node, src: Node | None = None) -> None:
 
 
 def _trivia_one(value: Any) -> Trivia | None:
-    """The first trivia record in one `.ca` slot, or `None` when the slot is empty."""
+    """Return the first trivia record in one `.ca` slot, or `None` when the slot is empty."""
     found = _trivia_list(value)
     return found[0] if found else None
 
 
 def _entries(obj: Mapping[Any, Any]) -> list[tuple[Any, Any, bool]]:
-    """Returns the `(key, value, is_merge)` triples of `obj`, in emission order.
+    """Return the `(key, value, is_merge)` triples of `obj`, in emission order.
 
     Merged-in keys are not entries: they belong to the mapping `<<` points at.  The `<<`
     entry goes back where it was, at `MergeList.merge_pos`, with its value left as an alias,
@@ -582,10 +592,21 @@ def _entries(obj: Mapping[Any, Any]) -> list[tuple[Any, Any, bool]]:
 class _Representer:
     """One document's worth of state: the arena, the anchor bookkeeping, the wire plan."""
 
-    __slots__ = ('_aliases', '_counter', 'default_flow_style', 'names', 'nodes', 'plan',
-                 'registry', 'shared', 'taken', 'used', 'version')
+    __slots__ = (
+        '_aliases',
+        '_counter',
+        'default_flow_style',
+        'names',
+        'nodes',
+        'plan',
+        'registry',
+        'shared',
+        'taken',
+        'used',
+        'version',
+    )
 
-    def __init__(self, registry: TagRegistry | None, default_flow_style: bool) -> None:
+    def __init__(self, registry: TagRegistry | None, *, default_flow_style: bool) -> None:
         self.registry = registry
         self.default_flow_style = default_flow_style
         self.nodes: list[Node] = []
@@ -609,7 +630,7 @@ class _Representer:
         explicit_end: bool = False,
         carried: Doc | None = None,
     ) -> Doc:
-        """Builds the record for one document, rooted at `data`.
+        """Build the record for one document, rooted at `data`.
 
         Args:
             data: The document root.  `None` with no `carried` record gives a document
@@ -629,6 +650,7 @@ class _Representer:
             RepresenterError: The tree holds a value no scalar rule covers and no registered
                 class claims, or a `to_yaml` hook returned something that is not a node
                 index.
+
         """
         # `%YAML`, `%TAG`, `---` and `...` belong to the document, not to the root object;
         # the constructor parks them on the root and this is where they come back.  An
@@ -692,16 +714,15 @@ class _Representer:
             tags_before_version=0 if carried is None else carried.tags_before_version,
             # The directive region is echoed *whole*, so it is only the truth while nothing
             # has been added to the directives it spells out.
-            directives_raw=None if carried is None
-            or version != carried.version
-            or directives != carried.tag_directives
+            directives_raw=None
+            if carried is None or version != carried.version or directives != carried.tag_directives
             else carried.directives_raw,
             stream_tail='' if carried is None else carried.stream_tail,
             line_space={} if carried is None else dict(carried.line_space),
         )
 
     def _directives(self, carried: Doc | None) -> list[tuple[str, str]]:
-        """Returns the document's `%TAG` lines: the source's in source order, then the plan's.
+        """Return the document's `%TAG` lines: the source's in source order, then the plan's.
 
         A handle the source declared that the wire plan also wants keeps its place on the
         page and takes the plan's prefix; a handle only the plan wants is appended.
@@ -716,7 +737,7 @@ class _Representer:
     # -- pre-pass: which objects are shared, which registered classes are used -------------
 
     def _scan(self, obj: Any, seen: set[int]) -> None:
-        """Counts occurrences by identity, and collects the anchor names and classes in use."""
+        """Count occurrences by identity, and collect the anchor names and classes in use."""
         if self.registry is not None and self.registry.registration_for(type(obj)) is not None:
             self.used.append(type(obj))
         name = _anchor_name(obj)
@@ -739,7 +760,7 @@ class _Representer:
         return len(self.nodes) - 1
 
     def _generate(self) -> str:
-        """The next unused generated anchor name: `id001`, `id002`, and so on."""
+        """Return the next unused generated anchor name: `id001`, `id002`, and so on."""
         while True:
             self._counter += 1
             name = f'id{self._counter:03d}'
@@ -748,7 +769,7 @@ class _Representer:
                 return name
 
     def _emit(self, obj: Any) -> int:
-        """Appends `obj`'s subtree to the arena in pre-order and returns its index.
+        """Append `obj`'s subtree to the arena in pre-order and return its index.
 
         The node also gets `obj`'s recorded source position, which is what lets the emitter
         reproduce the file's own indentation instead of laying the node out afresh.  A stale
@@ -766,13 +787,13 @@ class _Representer:
         return index
 
     def _at(self, index: int, pos: tuple[int, int] | None) -> None:
-        """Gives a node the position its *parent* recorded, when it carries none itself."""
+        """Give a node the position its *parent* recorded, when it carries none itself."""
         node = self.nodes[index]
         if pos is not None and node.line == 0 and node.col == 0:
             node.line, node.col = pos
 
     def _emit_node(self, obj: Any) -> int:
-        """Emits one node, as an alias when this object has already been written."""
+        """Emit one node, as an alias when this object has already been written."""
         if not _trackable(obj):
             return self._add(self._scalar_node(obj))
         key = id(obj)
@@ -810,8 +831,13 @@ class _Representer:
         return node
 
     def _mapping(self, obj: Mapping[Any, Any], anchor: str | None) -> int:
-        node = Node(KIND_MAPPING, _flow_style(obj, self.default_flow_style),
-                    anchor=anchor, tag=self._tag_of(obj), flow_seps=_flow_seps(obj))
+        node = Node(
+            KIND_MAPPING,
+            _flow_style(obj, default=self.default_flow_style),
+            anchor=anchor,
+            tag=self._tag_of(obj),
+            flow_seps=_flow_seps(obj),
+        )
         index = self._add(node)
         self._own_trivia(obj, node)
         explicit = getattr(obj, EXPLICIT_ATTRIB, None) or frozenset()
@@ -840,8 +866,13 @@ class _Representer:
         return index
 
     def _sequence(self, obj: Any, anchor: str | None) -> int:
-        node = Node(KIND_SEQUENCE, _flow_style(obj, self.default_flow_style),
-                    anchor=anchor, tag=self._tag_of(obj), flow_seps=_flow_seps(obj))
+        node = Node(
+            KIND_SEQUENCE,
+            _flow_style(obj, default=self.default_flow_style),
+            anchor=anchor,
+            tag=self._tag_of(obj),
+            flow_seps=_flow_seps(obj),
+        )
         index = self._add(node)
         self._own_trivia(obj, node)
         for position, item in enumerate(obj):
@@ -856,9 +887,14 @@ class _Representer:
         return index
 
     def _set(self, obj: Any, anchor: str | None) -> int:
-        """Adds a `!!set` node: a mapping whose values are all null."""
-        node = Node(KIND_MAPPING, _flow_style(obj, self.default_flow_style),
-                    anchor=anchor, tag=self._tag_of(obj) or _SET_TAG, flow_seps=_flow_seps(obj))
+        """Add a `!!set` node: a mapping whose values are all null."""
+        node = Node(
+            KIND_MAPPING,
+            _flow_style(obj, default=self.default_flow_style),
+            anchor=anchor,
+            tag=self._tag_of(obj) or _SET_TAG,
+            flow_seps=_flow_seps(obj),
+        )
         index = self._add(node)
         self._own_trivia(obj, node)
         explicit = getattr(obj, EXPLICIT_ATTRIB, None) or frozenset()
@@ -876,7 +912,7 @@ class _Representer:
         return index
 
     def _custom(self, obj: Any, anchor: str | None) -> int:
-        """Represents one instance of a registered class.
+        """Represent one instance of a registered class.
 
         A class with a `to_yaml` classmethod builds its own node and is given the anchor
         this walk chose for it; any other class is written as a mapping of its attributes.
@@ -885,34 +921,41 @@ class _Representer:
             RepresenterError: The class is not registered with `YAML.register_class()`, or
                 its `to_yaml` returned something other than the node index that
                 `represent_scalar`, `represent_mapping` and `represent_sequence` return.
+
         """
         cls = type(obj)
         written = self.plan.tags.get(cls)
         if written is None:
-            raise RepresenterError(
+            msg = (
                 f'cannot represent an object: {obj!r}; register {cls.__module__}.'
                 f'{cls.__qualname__} with YAML.register_class() first'
             )
+            raise RepresenterError(msg)
         hook = getattr(cls, 'to_yaml', None)
         if hook is not None:
             index = hook(self, obj)
             if not isinstance(index, int) or not 0 <= index < len(self.nodes):
-                raise RepresenterError(
+                msg = (
                     f'{cls.__qualname__}.to_yaml must return what representer.represent_* '
                     f'returned, not {index!r}'
                 )
+                raise RepresenterError(msg)
             if self.nodes[index].anchor is None:
                 self.nodes[index].anchor = anchor
             return index
-        node = Node(KIND_MAPPING, _flow_style(obj, self.default_flow_style),
-                    anchor=anchor, tag=self._triple(written, cls))
+        node = Node(
+            KIND_MAPPING,
+            _flow_style(obj, default=self.default_flow_style),
+            anchor=anchor,
+            tag=self._triple(written, cls),
+        )
         index = self._add(node)
         for key, value in _state(obj).items():
             node.children += [self._emit(key), self._emit(value)]
         return index
 
     def _spell_null(self, index: int, lexeme: str | None) -> None:
-        """Gives a null node back the spelling it was loaded with: `~`, `null`, and so on.
+        """Give a null node back the spelling it was loaded with: `~`, `null`, and so on.
 
         `_scalar(None)` can only produce the empty lexeme, `key:` with nothing after it,
         because `None` carries nothing.  The parent remembers the rest.
@@ -922,7 +965,7 @@ class _Representer:
             node.value = node.raw = lexeme
 
     def _respell(self, index: int, value: Any, found: tuple[Any, Node, Node | None] | None) -> None:
-        """Hands a value the record its parent kept for it under `SOURCE_ATTRIB`.
+        """Hand a value the record its parent kept for it under `SOURCE_ATTRIB`.
 
         Applied only while the entry still holds the value that was loaded: an edited value
         is a new value and is written from scratch like any other.  That test is the whole
@@ -938,13 +981,13 @@ class _Representer:
         self._note_alias(index, src)
 
     def _respell_key(self, index: int, found: tuple[Any, Node, Node | None] | None) -> None:
-        """The same, for the key the record was looked up by, which cannot have changed."""
+        """Do the same for the key the record was looked up by, which cannot have changed."""
         if found is not None and found[2] is not None:
             _carry(self.nodes[index], found[2])
             self._note_alias(index, found[2])
 
     def _note_alias(self, index: int, src: Node) -> None:
-        """Notes an entry whose parent recorded it as an `*name` site.
+        """Note an entry whose parent recorded it as an `*name` site.
 
         `None` and `bytes` are the two values that cannot hold an anchor, so an alias to one
         of them constructs to a value with no identity to alias on: `a: &anchor` with
@@ -960,7 +1003,7 @@ class _Representer:
             self._aliases.append((index, src.anchor))
 
     def _realias(self) -> None:
-        """Turns the noted sites into aliases, but only where their anchor is really there.
+        """Turn the noted sites into aliases, but only where their anchor is really there.
 
         Arena order is document order, so an anchor at a lower index is one the reader will
         have seen by the time it reaches the alias.  A name defined nowhere earlier, because
@@ -985,7 +1028,7 @@ class _Representer:
     # -- trivia ---------------------------------------------------------------------------
 
     def _own_trivia(self, obj: Any, node: Node) -> None:
-        """The node's own `.ca`: `ca.comment[1]` -> inner, `ca.end` -> after."""
+        """Read the node's own `.ca`: `ca.comment[1]` -> inner, `ca.end` -> after."""
         if not isinstance(obj, CommentedBase):
             return
         # Never `.ca` itself: reading it creates one, and a dump must not write to the tree.
@@ -1001,7 +1044,7 @@ class _Representer:
     def _entry_trivia(
         node: Node, record: list[Any] | None, pre: int | None, eol: int, post: int | None
     ) -> None:
-        """The parent's record for this entry: pre -> before, eol -> eol, post -> after."""
+        """Read the parent's record for this entry: pre -> before, eol -> eol, post -> after."""
         if record is None:
             return
         if pre is not None:
@@ -1014,7 +1057,7 @@ class _Representer:
     # -- tags -----------------------------------------------------------------------------
 
     def _tag_of(self, obj: Any) -> tuple[str, str, str] | None:
-        """The tag to write for `obj`: the wire plan's, or the one it was loaded with."""
+        """Return the tag to write for `obj`: the wire plan's, or the one it was loaded with."""
         if isinstance(obj, (bytes, bytearray)):
             return _BINARY_TAG
         written = self.plan.tags.get(type(obj))
@@ -1023,14 +1066,14 @@ class _Representer:
         return self._tag_triple(getattr(obj, tag_attrib, None))
 
     def _triple(self, written: str, cls: type) -> tuple[str, str, str]:
-        """A registered class's tag as `(handle, suffix, resolved URI)`."""
+        """Return a registered class's tag as `(handle, suffix, resolved URI)`."""
         handle, suffix = _split_tag(written)
         registration = None if self.registry is None else self.registry.registration_for(cls)
         return handle or '!', suffix, registration.uri if registration else written
 
     @staticmethod
     def _tag_triple(tag: Tag | None) -> tuple[str, str, str] | None:
-        """A loaded `Tag` as the `(handle, suffix, resolved URI)` triple a node holds."""
+        """Return a loaded `Tag` as the `(handle, suffix, resolved URI)` triple a node holds."""
         if tag is None or not tag:
             return None
         handle, suffix = tag.handle, tag.suffix
@@ -1044,7 +1087,7 @@ class _Representer:
     def represent_scalar(
         self, tag: str | Tag, value: Any, style: str | None = None, anchor: str | None = None
     ) -> int:
-        """Adds a scalar node to the arena, for a class representing itself.
+        """Add a scalar node to the arena, for a class representing itself.
 
         Args:
             tag: The tag to write, as the text it should appear as (`!Circuit`) or as a
@@ -1056,19 +1099,26 @@ class _Representer:
 
         Returns:
             The index of the new node, which is what `to_yaml` must return.
+
         """
-        return self._add(Node(
-            KIND_SCALAR,
-            _STYLE_BY_INDICATOR.get(style, STYLE_PLAIN),
-            anchor=anchor,
-            tag=self._hook_tag(tag),
-            value=str(value),
-        ))
+        return self._add(
+            Node(
+                KIND_SCALAR,
+                _STYLE_BY_INDICATOR.get(style, STYLE_PLAIN),
+                anchor=anchor,
+                tag=self._hook_tag(tag),
+                value=str(value),
+            )
+        )
 
     def represent_mapping(
-        self, tag: str | Tag, mapping: Mapping[Any, Any], flow_style: bool | None = None
+        self,
+        tag: str | Tag,
+        mapping: Mapping[Any, Any],
+        # ruamel's hook signature, which a ported class calls positionally.
+        flow_style: bool | None = None,  # noqa: FBT001
     ) -> int:
-        """Adds a mapping node to the arena, for a class representing itself.
+        """Add a mapping node to the arena, for a class representing itself.
 
         Args:
             tag: The tag to write, as text or as a loaded `Tag`.
@@ -1077,18 +1127,24 @@ class _Representer:
 
         Returns:
             The index of the new node, which is what `to_yaml` must return.
+
         """
-        node = Node(KIND_MAPPING, STYLE_FLOW if flow_style else STYLE_BLOCK,
-                    tag=self._hook_tag(tag))
+        node = Node(
+            KIND_MAPPING, STYLE_FLOW if flow_style else STYLE_BLOCK, tag=self._hook_tag(tag)
+        )
         index = self._add(node)
         for key, value in mapping.items():
             node.children += [self._emit(key), self._emit(value)]
         return index
 
     def represent_sequence(
-        self, tag: str | Tag, sequence: Any, flow_style: bool | None = None
+        self,
+        tag: str | Tag,
+        sequence: Any,
+        # ruamel's hook signature, which a ported class calls positionally.
+        flow_style: bool | None = None,  # noqa: FBT001
     ) -> int:
-        """Adds a sequence node to the arena, for a class representing itself.
+        """Add a sequence node to the arena, for a class representing itself.
 
         Args:
             tag: The tag to write, as text or as a loaded `Tag`.
@@ -1097,15 +1153,17 @@ class _Representer:
 
         Returns:
             The index of the new node, which is what `to_yaml` must return.
+
         """
-        node = Node(KIND_SEQUENCE, STYLE_FLOW if flow_style else STYLE_BLOCK,
-                    tag=self._hook_tag(tag))
+        node = Node(
+            KIND_SEQUENCE, STYLE_FLOW if flow_style else STYLE_BLOCK, tag=self._hook_tag(tag)
+        )
         index = self._add(node)
         node.children += [self._emit(item) for item in sequence]
         return index
 
     def _hook_tag(self, tag: str | Tag | None) -> tuple[str, str, str] | None:
-        """The tag a `to_yaml` hook passed, as the triple a node holds."""
+        """Return the tag a `to_yaml` hook passed, as the triple a node holds."""
         if tag is None:
             return None
         if isinstance(tag, Tag):
@@ -1118,7 +1176,7 @@ class _Representer:
 
 
 def represent(data: Any, yaml: Any = None, **options: Any) -> Doc:
-    """Turns one Python object into one document record.
+    """Turn one Python object into one document record.
 
     Args:
         data: The document root.  `None` gives a document whose root is a plain `null`,
@@ -1135,15 +1193,17 @@ def represent(data: Any, yaml: Any = None, **options: Any) -> Doc:
     Raises:
         RepresenterError: The tree holds a value no scalar rule covers and no registered
             class claims, or a `to_yaml` hook returned something that is not a node index.
+
     """
     settings = _settings(yaml, options)
     return _Representer(
-        settings.pop('registry', None), settings.pop('default_flow_style', False)
+        settings.pop('registry', None),
+        default_flow_style=settings.pop('default_flow_style', False),
     ).document(data, **settings)
 
 
 def represent_all(documents: Iterable[Any], yaml: Any = None, **options: Any) -> list[Doc]:
-    """Turns a stream of Python objects into the record list `emit` takes.
+    """Turn a stream of Python objects into the record list `emit` takes.
 
     Each document gets its own arena and its own `%TAG` directives, so a class used in the
     second document puts no directive on the first.
@@ -1159,6 +1219,7 @@ def represent_all(documents: Iterable[Any], yaml: Any = None, **options: Any) ->
 
     Raises:
         RepresenterError: Any of the documents holds a value that cannot be represented.
+
     """
     return [represent(data, yaml, **options) for data in documents]
 

@@ -21,7 +21,7 @@ debug: yes
 
 from __future__ import annotations
 
-from typing import Any, Self
+from typing import Self
 
 from yamluna.scalarstring import _Anchored
 
@@ -56,11 +56,13 @@ class ScalarBoolean(_Anchored, int):
 
     def __new__(
         cls,
-        value: Any = False,
+        # ruamel's constructor, called positionally as `ScalarBoolean(True)`.
+        value: object = False,  # noqa: FBT002
         *,
         lexeme: str | None = None,
         anchor: str | None = None,
     ) -> Self:
+        """Build the boolean, keeping `lexeme` and attaching `anchor` when given."""
         self = int.__new__(cls, bool(value))
         self._lexeme = lexeme
         if anchor is not None:
@@ -81,12 +83,14 @@ class ScalarBoolean(_Anchored, int):
 
         Raises:
             ValueError: `text` is not one of the recognised spellings.
+
         """
         if text in _TRUE:
-            return cls(True, lexeme=text)
+            return cls(value=True, lexeme=text)
         if text in _FALSE:
-            return cls(False, lexeme=text)
-        raise ValueError(f'not a boolean lexeme: {text!r}')
+            return cls(value=False, lexeme=text)
+        msg = f'not a boolean lexeme: {text!r}'
+        raise ValueError(msg)
 
     def lexeme(self) -> str:
         """Return the source text verbatim, or `true` / `false`.
@@ -94,12 +98,14 @@ class ScalarBoolean(_Anchored, int):
         Returns:
             The spelling the source used, when this boolean was loaded from a document.
             Otherwise `true` or `false`, whichever matches the value.
+
         """
         if self._lexeme is not None:
             return self._lexeme
         return 'true' if self else 'false'
 
     def __repr__(self) -> str:
+        """Return `ScalarBoolean(lexeme)`."""
         return f'ScalarBoolean({self.lexeme()})'
 
 
@@ -107,10 +113,12 @@ from_lexeme = ScalarBoolean.from_lexeme
 
 
 if __name__ == '__main__':
+    # Run by hand as a self-check: `assert` is both the check and the report here, and
+    # nobody runs a self-check under `python -O`.
     for lexeme in ('true', 'True', 'TRUE', 'yes', 'on', 'y', 'false', 'FALSE', 'no', 'off'):
         got = from_lexeme(lexeme)
-        assert got.lexeme() == lexeme, (lexeme, got.lexeme())
-        assert bool(got) == (lexeme in _TRUE), lexeme
-        assert got == (lexeme in _TRUE), lexeme
-    assert ScalarBoolean(True).lexeme() == 'true'
-    print('scalarbool ok')
+        assert got.lexeme() == lexeme, (lexeme, got.lexeme())  # noqa: S101
+        assert bool(got) == (lexeme in _TRUE), lexeme  # noqa: S101
+        assert got == (lexeme in _TRUE), lexeme  # noqa: S101
+    assert ScalarBoolean(True).lexeme() == 'true'  # noqa: FBT003, S101
+    print('scalarbool ok')  # noqa: T201

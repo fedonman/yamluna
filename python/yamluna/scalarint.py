@@ -27,7 +27,7 @@ mask: 0x1F
 from __future__ import annotations
 
 import re
-from typing import Any, ClassVar, Self
+from typing import Any, ClassVar, Self, SupportsIndex, SupportsInt
 
 from yamluna.scalarstring import _Anchored
 
@@ -46,7 +46,7 @@ _FMT_FIELDS = ('_width', '_underscore', '_sign', '_caps')
 
 
 def _split_underscores(body: str) -> list[Any] | None:
-    """ruamel's `[step, leading, trailing]` description of `body`'s underscores."""
+    """Measure `body`'s underscores as ruamel's `[step, leading, trailing]`."""
     core = body.rstrip('_')
     if '_' not in core:
         return None if '_' not in body else [0, body.startswith('_'), True]
@@ -100,9 +100,16 @@ class ScalarInt(_Anchored, int):
     prefix: ClassVar[str] = ''
     """The base prefix this class writes: `''`, `0b`, `0o` or `0x`."""
 
-    def __new__(
+    # Declared, not assigned: `int` forbids `__slots__`, so these live in the `__dict__`
+    # and `__new__` fills them in.
+    _width: int | None
+    _underscore: list[Any] | None
+    _sign: str
+
+    # ruamel's constructor: every formatting field is one keyword argument.
+    def __new__(  # noqa: PLR0913
         cls,
-        value: Any = 0,
+        value: str | bytes | SupportsInt | SupportsIndex = 0,
         *,
         width: int | None = None,
         underscore: list[Any] | None = None,
@@ -110,6 +117,7 @@ class ScalarInt(_Anchored, int):
         lexeme: str | None = None,
         anchor: str | None = None,
     ) -> Self:
+        """Build the integer, keeping `lexeme` and attaching `anchor` when given."""
         self = int.__new__(cls, value)
         self._width = width
         self._underscore = underscore
@@ -132,11 +140,12 @@ class ScalarInt(_Anchored, int):
 
         Raises:
             ValueError: `text` is not an integer lexeme.
+
         """
         return from_lexeme(text)
 
     def _digits(self) -> str:
-        """The magnitude in this class's base, without sign, prefix or underscores."""
+        """Return the magnitude in this class's base, without sign, prefix or underscores."""
         return format(abs(int(self)), 'd')
 
     def lexeme(self) -> str:
@@ -145,6 +154,7 @@ class ScalarInt(_Anchored, int):
         Returns:
             The text the source used, when this integer was loaded from one. Otherwise the
             value written out through `sign`, `prefix`, `width` and `underscore`.
+
         """
         if self._lexeme is not None:
             return self._lexeme
@@ -155,29 +165,35 @@ class ScalarInt(_Anchored, int):
         return f'{sign}{self.prefix}{_insert_underscores(digits, self._underscore)}'
 
     def _derived(self, value: int) -> Self:
-        """A copy holding `value` with this one's formatting fields, minus the lexeme."""
+        """Return a new instance holding `value`, with this one's formatting fields."""
         result = type(self)(value)
         for name in _FMT_FIELDS:
             if hasattr(self, name):
                 setattr(result, name, getattr(self, name))
         return result
 
-    def __iadd__(self, other: Any) -> Self:
+    def __iadd__(self, other: int) -> Self:
+        """Return `self + other` with this integer's formatting and no lexeme."""
         return self._derived(int(self) + other)
 
-    def __isub__(self, other: Any) -> Self:
+    def __isub__(self, other: int) -> Self:
+        """Return `self - other` with this integer's formatting and no lexeme."""
         return self._derived(int(self) - other)
 
-    def __imul__(self, other: Any) -> Self:
+    def __imul__(self, other: int) -> Self:
+        """Return `self * other` with this integer's formatting and no lexeme."""
         return self._derived(int(self) * other)
 
-    def __ifloordiv__(self, other: Any) -> Self:
+    def __ifloordiv__(self, other: int) -> Self:
+        """Return `self // other` with this integer's formatting and no lexeme."""
         return self._derived(int(self) // other)
 
-    def __ipow__(self, other: Any) -> Self:
+    def __ipow__(self, other: int) -> Self:
+        """Return `self ** other` with this integer's formatting and no lexeme."""
         return self._derived(int(self) ** other)
 
     def __repr__(self) -> str:
+        """Return `ClassName(lexeme)`."""
         return f'{type(self).__name__}({self.lexeme()})'
 
 
@@ -240,7 +256,17 @@ class HexInt(ScalarInt):
 
     prefix = '0x'
 
-    def __new__(cls, value: Any = 0, *, caps: bool = False, **kw: Any) -> Self:
+    _caps: bool
+
+    def __new__(
+        cls,
+        value: str | bytes | SupportsInt | SupportsIndex = 0,
+        *,
+        caps: bool = False,
+        # The rest of `ScalarInt.__new__`'s keyword arguments, forwarded verbatim.
+        **kw: Any,  # noqa: ANN401
+    ) -> Self:
+        """Build the hexadecimal integer, choosing upper or lower case digits."""
         self = super().__new__(cls, value, **kw)
         self._caps = caps
         return self
@@ -282,10 +308,12 @@ def from_lexeme(text: str) -> ScalarInt:
         '0o755'
 
         ```
+
     """
     m = _INT_RE.match(text)
     if m is None:
-        raise ValueError(f'not an integer lexeme: {text!r}')
+        msg = f'not an integer lexeme: {text!r}'
+        raise ValueError(msg)
     sign = m['sign']
     body = m['body'] or m['dec']
     digits = body.replace('_', '')
@@ -308,13 +336,23 @@ def from_lexeme(text: str) -> ScalarInt:
 
 
 if __name__ == '__main__':
-    cases = {'0o755': 493, '0b1010': 10, '0x1F': 31, '1_000': 1000, '+5': 5,
-             '-0x10': -16, '007': 7, '9' * 40: int('9' * 40)}
+    # Run by hand as a self-check: `assert` is both the check and the report here, and
+    # nobody runs a self-check under `python -O`.
+    cases = {
+        '0o755': 493,
+        '0b1010': 10,
+        '0x1F': 31,
+        '1_000': 1000,
+        '+5': 5,
+        '-0x10': -16,
+        '007': 7,
+        '9' * 40: int('9' * 40),
+    }
     for lexeme, value in cases.items():
         got = from_lexeme(lexeme)
-        assert got.lexeme() == lexeme, (lexeme, got.lexeme())
-        assert int(got) == value, (lexeme, int(got))
+        assert got.lexeme() == lexeme, (lexeme, got.lexeme())  # noqa: S101
+        assert int(got) == value, (lexeme, int(got))  # noqa: S101
     x = from_lexeme('0x0f')
     x += 1
-    assert x.lexeme() == '0x10', x.lexeme()
-    print('scalarint ok')
+    assert x.lexeme() == '0x10', x.lexeme()  # noqa: S101
+    print('scalarint ok')  # noqa: T201

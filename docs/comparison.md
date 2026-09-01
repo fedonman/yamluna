@@ -1,28 +1,28 @@
 # How it compares
 
-Three Python libraries read YAML. Two of them can write a file back. Which one you want
+Four Python libraries read YAML, and three of them can write a file back. Which one you want
 depends on how much of the file has to survive the trip, and on what you are willing to pay
 for that.
 
-Everything in the table below was measured in this repository's virtualenv against
-`ruamel.yaml` 0.19.1 and `PyYAML` 6.0.3 on CPython 3.13.12. The runs are underneath it.
+Everything in the table below was measured against `ruamel.yaml` 0.19.1, `PyYAML` 6.0.3 and
+`py-yaml12` 0.2.0 on CPython 3.13.12. The runs are underneath it.
 
 ## The matrix
 
-| | yamluna 0.1.0 | ruamel.yaml 0.19.1, `typ='rt'` | PyYAML 6.0.3 |
-|---|---|---|---|
-| **Comments** | kept, attached to the node they describe | kept on a plain round trip of a block collection; destroyed inside a flow collection; a file of only comments comes back as `null\n...\n` | discarded |
-| **Blank lines** | kept, as a run with a count | kept between entries; a leading blank line is lost and a whitespace-only line is emptied | discarded |
-| **Quoting style** | each scalar's source lexeme is re-emitted | kept with `preserve_quotes = True` | re-decided by the emitter: `"1.0"` comes back `'1.0'` |
-| **Anchors and aliases** | kept by name; an alias stays an alias | kept when referenced twice or more; an anchor referenced once is dropped | aliasing survives as object identity, the names do not: `&b` comes back `&id001` |
-| **Directives** | `%YAML`, `%TAG` and reserved directives re-emitted verbatim, as are `---` and `...` | `%YAML` and `%TAG` kept; a reserved directive dropped; `---` and `...` dropped when no directive forces them | none read, none written |
-| **Tags, custom classes** | `register_class` keyed on the fully qualified class path, per `YAML()` instance, namespaced into the document with `%TAG` | `register_class` keyed on `'!' + cls.__name__`, in a process-global table | `add_constructor` / `add_representer`, process-global; an unregistered tag raises `ConstructorError` under `safe_load` |
-| **Duplicate keys** | `DuplicateKeyError`; with `allow_duplicate_keys = True`, a warning naming both source positions and the last value wins | `DuplicateKeyError`; with `allow_duplicate_keys = True`, silence and the first value wins | accepted in silence, the last value wins |
-| **Speed** | 1.4x to 8.9x ruamel on load and dump, release build | the baseline | faster than both with libyaml, and keeps none of the rows above |
-| **Thread scaling** | 3.89x at 8 threads for the parse, 2.45x for a whole `load` | 0.98x | 0.77x with `CSafeLoader`, 1.06x with `SafeLoader` |
-| **Implementation** | a Rust extension (`cp311-abi3`) under a pure-Python object layer | pure Python: `YAML(typ='rt').parser` is `ruamel.yaml.parser.RoundTripParser` | pure Python, with an optional libyaml binding |
-| **YAML version** | 1.2, and a `%YAML 1.1` directive in the document switches scalar resolution | 1.2, and the same | 1.1 only: `yes` loads as `True`, `0777` as `511` |
-| **Maintenance** | 0.1.0, alpha; the [changelog](changelog.md) names the known gaps | maintained upstream | maintained upstream |
+| | yamluna 0.1.0 | ruamel.yaml 0.19.1, `typ='rt'` | PyYAML 6.0.3 | py-yaml12 0.2.0 |
+|---|---|---|---|---|
+| **Comments** | kept, attached to the node they describe | kept on a plain round trip of a block collection; destroyed inside a flow collection; a file of only comments comes back as `null\n...\n` | discarded | discarded |
+| **Blank lines** | kept, as a run with a count | kept between entries; a leading blank line is lost and a whitespace-only line is emptied | discarded | discarded |
+| **Quoting style** | each scalar's source lexeme is re-emitted | kept with `preserve_quotes = True` | re-decided by the emitter: `"1.0"` comes back `'1.0'` | re-decided: `a: 'demo'` comes back `a: demo` |
+| **Anchors and aliases** | kept by name; an alias stays an alias | kept when referenced twice or more; an anchor referenced once is dropped | aliasing survives as object identity, the names do not: `&b` comes back `&id001` | expanded: `use: *b` comes back as a second copy of the mapping, and `&b` is gone |
+| **Directives** | `%YAML`, `%TAG` and reserved directives re-emitted verbatim, as are `---` and `...` | `%YAML` and `%TAG` kept; a reserved directive dropped; `---` and `...` dropped when no directive forces them | none read, none written | `%TAG` read and resolved, then written back as a verbatim `!<uri>` tag with no directive; `---` and `...` dropped |
+| **Tags, custom classes** | `register_class` keyed on the fully qualified class path, per `YAML()` instance, namespaced into the document with `%TAG` | `register_class` keyed on `'!' + cls.__name__`, in a process-global table | `add_constructor` / `add_representer`, process-global; an unregistered tag raises `ConstructorError` under `safe_load` | a tagged node loads as a `Yaml(value, tag)` wrapper; `handlers=` maps a tag to a callable, per call rather than per instance |
+| **Duplicate keys** | `DuplicateKeyError`; with `allow_duplicate_keys = True`, a warning naming both source positions and the last value wins | `DuplicateKeyError`; with `allow_duplicate_keys = True`, silence and the first value wins | accepted in silence, the last value wins | accepted in silence, the last value wins, and the entry moves to where the last one was |
+| **Speed** | 1.4x to 8.9x ruamel on load and dump, release build | the baseline | faster than both with libyaml, and keeps none of the rows above | not measured here |
+| **Thread scaling** | 3.89x at 8 threads for the parse, 2.45x for a whole `load` | 0.98x | 0.77x with `CSafeLoader`, 1.06x with `SafeLoader` | not measured here |
+| **Implementation** | a Rust extension (`cp311-abi3`) under a pure-Python object layer | pure Python: `YAML(typ='rt').parser` is `ruamel.yaml.parser.RoundTripParser` | pure Python, with an optional libyaml binding | a Rust extension over the `saphyr` crate, the same family this scanner forks |
+| **YAML version** | 1.2, and a `%YAML 1.1` directive in the document switches scalar resolution | 1.2, and the same | 1.1 only: `yes` loads as `True`, `0777` as `511` | 1.2, and the resolution matches yamluna's default exactly on every case tried |
+| **Maintenance** | 0.1.0, alpha; the [changelog](changelog.md) names the known gaps | maintained upstream | maintained upstream | 0.2.0, MIT, from posit-dev |
 
 ## What survives a round trip
 
@@ -32,6 +32,7 @@ change nothing, dump it, compare bytes. Reproduce with `.venv/bin/python tests/d
 | | byte-identical round trips |
 |---|---|
 | `ruamel.yaml` 0.19.1 | 3 of 40 |
+| `py-yaml12` 0.2.0 | 0 of 41 (38 come back different, 3 raise `ValueError`) |
 | yamluna 0.1.0 | 40 of 40 |
 
 The denominator is 40 because `key-duplicate` is scored on behaviour rather than bytes: no
@@ -167,6 +168,73 @@ the file back.
 Neither PyYAML loader scales across threads: 32 loads of `nested` take 1.37 s on one thread
 and 1.78 s on eight with `CSafeLoader`, 9.63 s and 9.07 s with `SafeLoader`.
 
+## py-yaml12
+
+[`py-yaml12`](https://github.com/posit-dev/py-yaml12) is the closest neighbour architecturally
+and the furthest away in purpose. It is a Rust extension too, built on
+[`saphyr`](https://github.com/saphyr-rs/saphyr), which is the same crate family yamluna's
+scanner forks, and it reads YAML 1.2 with the same core schema. On every case tried the two
+agree on what a plain scalar means: `yes` is a string, `010` is ten, `0o10` is eight, `12:00`
+is a string.
+
+What it does not do is keep the file. It loads into plain `dict`, `list`, `int` and `str`,
+so a round trip through `parse_yaml` and `format_yaml` writes a fresh document from the
+values, and everything that was not a value is gone:
+
+```python
+import yaml12
+
+SRC = """# service configuration
+name: demo            # shown in the UI
+replicas: 3
+
+ports:
+  - 80                # http
+"""
+print(repr(yaml12.format_yaml(yaml12.parse_yaml(SRC))))
+```
+
+```text
+'name: demo\nreplicas: 3\nports:\n  - 80'
+```
+
+Over the 41-file corpus above, `py-yaml12` 0.2.0 reproduces none: 38 come back different and
+3 raise `ValueError` (`anchors-recursive`, `directive-multiple-tags`, `text-tabs`). Aliases
+are expanded rather than kept, so a document that referred to one anchored mapping four times
+comes back with four copies of it.
+
+That is a schema-first reader and writer with a Rust engine, which is a good thing to want
+and a different thing from this. If you are choosing between them: `py-yaml12` if you want
+YAML in and Python values out and do not care what the file looks like afterwards, yamluna if
+a human also edits the file.
+
+## YAML 1.1 or 1.2
+
+**1.2.** The scanner is a YAML 1.2 parser and the constructor resolves plain scalars against
+the 1.2 core schema, so `yes`, `no`, `on`, `off`, `y` and `n` are strings, `010` is ten rather
+than eight, and `12:00` is a string rather than a sexagesimal. `0o10` and `0b101` are the 1.2
+spellings for octal and binary and load as 8 and 5.
+
+A document that asks for the older rules gets them. `%YAML 1.1` at the top widens the boolean
+set for that document only, so the same file loads differently with and without the directive:
+
+```python
+from yamluna import YAML
+
+yaml = YAML()
+print(repr(yaml.load('k: yes\n')['k']))
+print(repr(yaml.load('%YAML 1.1\n---\nk: yes\n')['k']))
+```
+
+```text
+'yes'
+ScalarBoolean(yes)
+```
+
+Two conveniences from 1.1 are read whatever the directive says, because a file that has them
+should not fail to load: `1_000` is an integer with its underscores remembered, and a `%YAML`
+directive is re-emitted exactly as it was written rather than being normalised or dropped.
+
 ## strictyaml
 
 `strictyaml` is a pure-Python library, built on `ruamel.yaml`, that parses a deliberately
@@ -190,7 +258,9 @@ are byte-identical to upstream's. Every change is logged in
 `yaml-rust2` is a maintained fork of the older `yaml-rust`, and `serde_yaml` is archived
 upstream as of 2024. None of the three gives you a Python object, and none of them is a
 round-trip library in the sense this page means: they parse YAML into Rust values and lose
-the layout on the way. If you want the Rust side of yamluna, that is
+the layout on the way. `saphyr` is also what [`py-yaml12`](#py-yaml12) is built on, which is
+why that library and this one agree on every scalar and disagree on everything about the
+file. If you want the Rust side of yamluna, that is
 [`yamluna-core`](https://github.com/qilimanjaro-tech/yamluna/tree/master/crates/yamluna-core),
 which is where the document model and the emitter live, and
 [Internals](internals/index.md) describes the contract between it and Python.

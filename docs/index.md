@@ -1,12 +1,26 @@
 # yamluna
 
-Round-trip YAML for Python. You load a document, change the parts you care about, write it
-back, and everything you did not touch comes back exactly as the author wrote it: the
-comments, the blank lines, the quoting, the anchors, the directives, the indentation, the
-alignment of the trailing comments.
+yamluna is a round-trip YAML library for Python. You load a document, change the parts you
+care about, write it back, and everything you did not touch comes back exactly as the author
+wrote it: the comments, the blank lines, the quoting, the anchors, the directives, the
+indentation, the alignment of the trailing comments.
 
-The scanner, the document model and the emitter are Rust. The API is the one you already
-know, `ruamel.yaml`'s `typ='rt'`, without the bugs that mode has.
+The whole pipeline is Rust. The scanner is a fork of
+[`saphyr-parser`](https://github.com/saphyr-rs/saphyr) 0.0.12, extended to report the three
+things a round trip needs and upstream throws away: comments, whether a collection was
+written in block or flow style, and the names of anchors. On top of it sit a document model
+that records what the source wrote rather than what it meant, and an emitter that writes
+those recordings back. Python gets a thin layer over that, and the parse and the emit run
+with the GIL released, so loads across threads genuinely overlap. It is
+[YAML 1.2](comparison.md#yaml-11-or-12), with 1.1 scalar resolution available to a document
+that asks for it with `%YAML 1.1`.
+
+The public API is not new. It is `ruamel.yaml`'s `typ='rt'`, deliberately and closely: the
+same `YAML` object, the same `CommentedMap` and `CommentedSeq`, the same `.ca` and `.lc`, the
+same scalar types, the same exception hierarchy. The goal is that porting is an import
+change, and that what you get afterwards is the behaviour that mode was always supposed to
+have. [Migrating](migrating/index.md) lists what ports untouched, what is deliberately
+different, and what is missing.
 
 ```python
 from pathlib import Path

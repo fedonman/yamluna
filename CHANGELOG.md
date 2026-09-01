@@ -3,7 +3,9 @@
 Notable changes to `yamluna`. Format follows [Keep a Changelog](https://keepachangelog.com/1.1.0/);
 versions follow [semver](https://semver.org/).
 
-## [Unreleased]
+## [0.1.0] - 2026-09-01
+
+First release.
 
 ### Changed
 
@@ -179,5 +181,4 @@ plug-ins; no `scan()`/`compose()`/`serialize()`; no legacy module-level `load()`
 See [Migrating from ruamel.yaml](https://qilimanjaro-tech.github.io/yamluna/migrating/)
 for the workaround for each.
 
-[Unreleased]: https://github.com/qilimanjaro-tech/yamluna/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/qilimanjaro-tech/yamluna/releases/tag/v0.1.0

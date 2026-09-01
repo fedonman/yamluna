@@ -1,0 +1,120 @@
+name: release
+
+# Tag-driven. `git tag v0.1.0 && git push origin v0.1.0` builds every wheel, publishes to
+# PyPI through trusted publishing, and opens a GitHub release with the artefacts attached.
+# `workflow_dispatch` runs everything except the publish, so the wheels can be checked first.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # The tag must agree with the version the code will actually report. Catching that here
+  # costs seconds; catching it after a publish costs a yanked release.
+  check-version:
+    name: tag matches Cargo.toml
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          tag="${GITHUB_REF_NAME#v}"
+          crate=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          echo "tag=$tag crate=$crate"
+          [ "$tag" = "$crate" ] || { echo "::error::tag v$tag != Cargo.toml $crate"; exit 1; }
+          grep -q "^## \[$tag\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no [$tag] section"; exit 1; }
+
+  wheels:
+    name: wheel ${{ matrix.target }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  target: x86_64 }
+          - { os: ubuntu-latest,  target: aarch64 }
+          - { os: macos-latest,   target: x86_64 }
+          - { os: macos-latest,   target: aarch64 }
+          - { os: windows-latest, target: x64 }
+    steps:
+      - uses: actions/checkout@v4
+      # `abi3-py311` means one wheel per platform rather than one per Python version, so
+      # this matrix is the whole support surface: 3.11 and every version after it.
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          manylinux: auto
+          sccache: 'true'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}-${{ matrix.target }}
+          path: dist/*.whl
+
+  sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  # Installing a wheel that was never installed clean is not a verified wheel. The abi3 tag
+  # claims 3.11 and up, so this proves it on a Python it was not built against.
+  verify:
+    name: install the linux wheel on 3.13
+    needs: wheels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: wheel-ubuntu-latest-x86_64, path: dist }
+      - uses: astral-sh/setup-uv@v5
+      - run: uv venv /tmp/fresh --python 3.13
+      - run: uv pip install --python /tmp/fresh/bin/python dist/*.whl
+      - run: /tmp/fresh/bin/python ci/smoke.py
+      # The library ships `py.typed`; if it stops arriving, users silently lose every type.
+      - run: /tmp/fresh/bin/python -c "import importlib.util,pathlib,sys; p=pathlib.Path(importlib.util.find_spec('yamluna').origin).parent/'py.typed'; sys.exit(0 if p.exists() else 'py.typed missing from the wheel')"
+
+  publish:
+    name: publish to PyPI
+    needs: [check-version, wheels, sdist, verify]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # trusted publishing: no API token to store or rotate
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - run: ls -l dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: github release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - name: the changelog section for this tag
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          awk -v v="$v" '$0 ~ "^## \\["v"\\]" {p=1; next} p && /^## \[/ {exit} p' CHANGELOG.md > notes.md
+          cat notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: notes.md
+          files: dist/*

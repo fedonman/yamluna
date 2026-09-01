@@ -1,0 +1,19 @@
+yamluna is licensed under either of
+
+  * Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or
+    http://www.apache.org/licenses/LICENSE-2.0)
+  * MIT License ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in the work by you, as defined in the Apache-2.0 licence, shall be
+dual licensed as above, without any additional terms or conditions.
+
+## The vendored scanner
+
+`crates/yamluna-scanner` is a fork of `saphyr-parser` 0.0.12 and carries its own
+copyright holders under the same dual licence. Redistributing it means carrying
+their licences too: they are in `crates/yamluna-scanner/LICENSE` and
+`crates/yamluna-scanner/.licenses/`, and every change made to the fork is logged
+in `crates/yamluna-scanner/FORK.md`.

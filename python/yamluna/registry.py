@@ -16,7 +16,7 @@ import re
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
-from typing import Final, NamedTuple
+from typing import Any, Final, NamedTuple
 
 from .error import ConstructorError
 
@@ -68,6 +68,12 @@ class Registration:
 
     pinned: bool
     """The source came from `source=` or `yaml_source`, so it is never promoted."""
+
+    to_yaml: Callable[[Any, Any], int] | None = None
+    """The `to_yaml=` hook this class was registered with, ahead of any the class carries."""
+
+    from_yaml: Callable[[Any, Any], Any] | None = None
+    """The `from_yaml=` hook this class was registered with, ahead of any the class carries."""
 
     @property
     def uri(self) -> str:
@@ -175,7 +181,13 @@ class TagRegistry:
     # -- registration -------------------------------------------------------------
 
     def register_class(
-        self, cls: type, *, tag: str | None = None, source: str | None = None
+        self,
+        cls: type,
+        *,
+        tag: str | None = None,
+        source: str | None = None,
+        to_yaml: Callable[[Any, Any], int] | None = None,
+        from_yaml: Callable[[Any, Any], Any] | None = None,
     ) -> type:
         """Register `cls` so it is written with a tag and loaded back as itself.
 
@@ -191,6 +203,12 @@ class TagRegistry:
                 the class sets one, otherwise the root package of `cls.__module__`. A
                 source given here or through `yaml_source` is pinned: it keeps its spelling
                 even when another class collides with it.
+            to_yaml: How to write an instance, as `(representer, obj) -> int`. A plain
+                function gets no `cls`, so it takes what the classmethod takes after it.
+                It wins over a `to_yaml` the class itself carries. Pass it for a class you
+                cannot add one to, such as a type from a C extension.
+            from_yaml: How to read one back, as `(constructor, node) -> object`. Wins over
+                a `from_yaml` on the class in the same way.
 
         Returns:
             `cls` itself, so the method also works as a decorator.
@@ -199,6 +217,9 @@ class TagRegistry:
             ```python
             @registry.register
             class Circuit: ...
+
+
+            registry.register_class(Decimal, to_yaml=write_decimal, from_yaml=read_decimal)
             ```
 
         """
@@ -211,6 +232,8 @@ class TagRegistry:
             source=declared or cls.__module__.partition('.')[0],
             declared_source=declared or cls.__module__.partition('.')[0],
             pinned=declared is not None,
+            to_yaml=to_yaml,
+            from_yaml=from_yaml,
         )
         self._by_path[record.path] = record  # re-registration replaces, never duplicates
         self._by_path = {r.path: r for r in _promote(self._by_path.values())}

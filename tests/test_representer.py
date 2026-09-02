@@ -10,6 +10,7 @@ everything above them tests this module on its own.
 from __future__ import annotations
 
 import datetime
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -706,6 +707,22 @@ class TestTags:
             KIND_SCALAR, STYLE_PLAIN, tag=('!', 'Hooked', '!Hooked'), value='x'
         )
 
+    def test_a_to_yaml_hook_passed_at_registration_is_used(self) -> None:
+        def write(representer: Any, obj: Circuit) -> int:
+            return representer.represent_scalar('!Circuit', str(obj.qubits))
+
+        d = represent({'c': Circuit(4)}, registry=self.registry(Circuit, to_yaml=write))
+        assert d.nodes[2] == Node(
+            KIND_SCALAR, STYLE_PLAIN, tag=('!', 'Circuit', '!Circuit'), value='4'
+        )
+
+    def test_a_passed_to_yaml_hook_wins_over_the_classmethod(self) -> None:
+        def write(representer: Any, _obj: Hooked) -> int:
+            return representer.represent_scalar('!Hooked', 'passed')
+
+        d = represent({'h': Hooked('own')}, registry=self.registry(Hooked, to_yaml=write))
+        assert d.nodes[2].value == 'passed'
+
     def test_to_yaml_hook_building_a_collection(self) -> None:
         d = represent({'b': Boxed([7])}, registry=self.registry(Boxed))
         assert d.nodes[2].kind == KIND_SEQUENCE and d.nodes[2].style == STYLE_FLOW
@@ -960,6 +977,32 @@ def test_round_trip_of_a_registered_class(construct: Any) -> None:
     original = doc(mapping([('main', tagged)]), tag_directives=[('!', f'tag:{SOURCE}/')])
     tree = construct(original, registry=registry)
     assert isinstance(tree['main'], Circuit) and tree['main'].qubits == 2
+    assert normalise(represent(tree, registry=registry)) == normalise(original)
+
+
+def test_round_trip_of_a_class_that_cannot_carry_its_hooks(construct: Any) -> None:
+    """The case the hook arguments exist for: a type from a C extension.
+
+    `Decimal` stands in for `numpy.ndarray` and every other extension type. It cannot be
+    given a `to_yaml` classmethod at all, so passing the two functions to `register_class`
+    is the only way it round trips.
+    """
+
+    def write(representer: Any, obj: Decimal) -> int:
+        return representer.represent_scalar('!Decimal', str(obj))
+
+    def read(_constructor: Any, node: Any) -> Decimal:
+        return Decimal(node.value)
+
+    with pytest.raises(TypeError, match='immutable type'):
+        Decimal.to_yaml = write  # ty: ignore[unresolved-attribute]
+
+    registry = TagRegistry()
+    registry.register_class(Decimal, to_yaml=write, from_yaml=read)
+    tagged = scalar('19.99', tag=('!', 'Decimal', '!Decimal'))
+    original = doc(mapping([('price', tagged)]), tag_directives=[('!', 'tag:decimal/')])
+    tree = construct(original, registry=registry)
+    assert tree['price'] == Decimal('19.99')
     assert normalise(represent(tree, registry=registry)) == normalise(original)
 
 

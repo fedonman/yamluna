@@ -34,7 +34,10 @@ Python API that replaces `ruamel.yaml`'s `typ='rt'`.
   ([the design contract](https://fedonman.github.io/yamluna/internals/) §5, C1–C2).
 - **A per-`YAML()` registry.** `yaml.register_class(...)` never touches another instance's
   registry. A module-level `register_class` and a shared `default_registry` remain for the
-  one-registry-per-app case.
+  one-registry-per-app case. `to_yaml=` and `from_yaml=` take the two hooks as arguments, so a
+  type that cannot carry them as classmethods, such as one from a C extension, can still be
+  written and read back; a function passed there wins over a hook of the same name on the
+  class.
 - **`yamluna-scanner`**, a fork of `saphyr-parser` 0.0.12 that carries comments, block-vs-flow
   collection style, anchor *names*, and `%YAML`/`%TAG` directives through the event stream, plus
   four upstream bug fixes. Every change is logged in `crates/yamluna-scanner/FORK.md`; the

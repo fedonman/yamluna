@@ -34,7 +34,7 @@ Everything here was run against `ruamel.yaml` 0.19.1 and yamluna 0.1.0.
 | `.explicit_start`, `.explicit_end` | same | the default `None` now means "keep what the source had" |
 | `.allow_duplicate_keys` | same | plus [duplicate keys](#duplicate-keys) |
 | `.version` | same | `(1, 2)` or `'1.2'`; forces the directive and a `---` |
-| `.register_class(cls)` / `@yaml.register` | same signature | different semantics, see [the registry](#the-registry-is-per-instance-and-tags-carry-a-namespace) |
+| `.register_class(cls)` / `@yaml.register` | a superset: `tag=`, `source=`, `to_yaml=` and `from_yaml=` are new | different semantics, see [the registry](#the-registry-is-per-instance-and-tags-carry-a-namespace) |
 
 ### The containers
 
@@ -142,8 +142,9 @@ Three consequences to plan for.
 
 `cls.yaml_tag` and the `to_yaml` and `from_yaml` classmethod hooks keep ruamel's signatures, so
 existing classes port unchanged. `cls.yaml_source` and `register_class(source=)` are new: they pin
-the namespace. [Custom classes and tags](../guide/custom-classes.md) has the wire format and a
-runnable example.
+the namespace. So are `register_class(to_yaml=, from_yaml=)`, which take the same two functions
+for a class you cannot add a classmethod to. [Custom classes and
+tags](../guide/custom-classes.md) has the wire format and a runnable example.
 
 ### Layout is reproduced, not re-decided
 
@@ -266,7 +267,7 @@ you serialise.
 | `official_plug_ins()`, `yaml.plug_ins`, `pure=` | no C-versus-Python duality to switch between: there is one implementation | |
 | `scan()`, `parse()`, `compose()`, `serialize()`, `emit()` and their `_all` forms | the low-level pipeline exposes ruamel's token, event and node classes as public API; the equivalent here is the flat record list at the FFI boundary, and freezing that as public API would freeze the internals | walk the loaded `CommentedMap` and `CommentedSeq`: they carry the same information plus the trivia. For token-level work `yamluna._yamluna.parse(text)` returns the records, unsupported and unstable |
 | module-level `load()`, `dump()`, `safe_load()`, `round_trip_load()`, `round_trip_dump()` | deprecated in ruamel since 0.15 and gone in 0.19, where calling `ruamel.yaml.safe_load` raises `AttributeError`. Keeping them would re-import the global mutable state the registry exists to eliminate | `YAML().load(...)` and `YAML().dump(...)` |
-| `add_constructor`, `add_representer`, `add_multi_constructor`, `add_implicit_resolver`, `add_path_resolver` | process-global classmethod registries ([C2](differences.md#c2-register_class-is-process-global-not-per-yaml)) | `yaml.register_class(cls)`, per instance |
+| `add_constructor`, `add_representer`, `add_multi_constructor`, `add_implicit_resolver`, `add_path_resolver` | process-global classmethod registries ([C2](differences.md#c2-register_class-is-process-global-not-per-yaml)) | `yaml.register_class(cls)`, per instance, with `to_yaml=` and `from_yaml=` for a class you do not own |
 | `YAMLObject` / `YAMLObjectMetaclass` | a metaclass that registers on import, into the global table | `@yaml.register` on the class, or `register_class` at your package's entry point |
 | `.tags`, `.doc_infos`, `DocInfo`, `docinfo` | ruamel 0.19's directive-reporting API; yamluna keeps directives on the document and re-emits them, and does not expose a parallel reporting surface | `yaml.version` for `%YAML`; `%TAG` handling is automatic |
 | `canonical`, `default_style`, `allow_unicode`, `sort_base_mapping_type_on_output`, `compact_seq_seq`, `compact_seq_map`, `block_seq_indent`, `prefix_colon`, `top_level_colon_align`, `scalar_after_indicator`, `brace_single_entry_mapping_in_flow_sequence` | emitter knobs that exist to re-decide the layout of nodes ruamel could not reproduce. Reproduction makes most of them unnecessary | per-node style: the scalar-string subclasses, `.fa.set_flow_style()`, `.fa.set_block_style()`. Non-ASCII is written as-is, never `\uXXXX`-escaped, unless the source escaped it. Keys are never reordered on dump |

@@ -48,9 +48,9 @@ alias.
 
 **Tags** come from `TagRegistry.plan`, called with the registered classes this document
 actually uses.  Its `%TAG` directives go on `Doc.tag_directives` and the per-node string on
-`Node.tag`.  A class with a `to_yaml` classmethod builds its own node through
-`_Representer.represent_scalar`, `represent_mapping` or `represent_sequence`, which keep
-ruamel's hook signatures.
+`Node.tag`.  A class with a `to_yaml` hook, either its own classmethod or one passed to
+`register_class`, builds its own node through `_Representer.represent_scalar`,
+`represent_mapping` or `represent_sequence`, which keep ruamel's hook signatures.
 
 **Positions.** `Node.line` and `Node.col` are the source positions the emitter echoes an
 untouched node at, and they come from `.lc`: a container's own, and for every scalar the
@@ -914,8 +914,9 @@ class _Representer:
     def _custom(self, obj: Any, anchor: str | None) -> int:
         """Represent one instance of a registered class.
 
-        A class with a `to_yaml` classmethod builds its own node and is given the anchor
-        this walk chose for it; any other class is written as a mapping of its attributes.
+        A `to_yaml` hook builds its own node and is given the anchor this walk chose for
+        it; any other class is written as a mapping of its attributes. The hook is the one
+        passed to `register_class`, or failing that the classmethod on the class.
 
         Raises:
             RepresenterError: The class is not registered with `YAML.register_class()`, or
@@ -931,13 +932,19 @@ class _Representer:
                 f'{cls.__qualname__} with YAML.register_class() first'
             )
             raise RepresenterError(msg)
-        hook = getattr(cls, 'to_yaml', None)
+        registration = None if self.registry is None else self.registry.registration_for(cls)
+        # A hook passed to `register_class` wins over one the class carries.  Tested
+        # against `None` rather than for truth: a callable object is a valid hook whatever
+        # its `__bool__` says.
+        hook = registration.to_yaml if registration is not None else None
+        if hook is None:
+            hook = getattr(cls, 'to_yaml', None)
         if hook is not None:
             index = hook(self, obj)
             if not isinstance(index, int) or not 0 <= index < len(self.nodes):
                 msg = (
-                    f'{cls.__qualname__}.to_yaml must return what representer.represent_* '
-                    f'returned, not {index!r}'
+                    f'the to_yaml hook for {cls.__qualname__} must return what '
+                    f'representer.represent_* returned, not {index!r}'
                 )
                 raise RepresenterError(msg)
             if self.nodes[index].anchor is None:

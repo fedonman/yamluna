@@ -585,6 +585,38 @@ def test_registered_class_uses_its_from_yaml_hook() -> None:
     assert type(got) is Custom and got.a == 'hi'
 
 
+def test_a_from_yaml_hook_passed_at_registration_is_used() -> None:
+    def read(_constructor: Any, node: Any) -> Circuit:
+        return Circuit(qubits=int(node.value))
+
+    registry = TagRegistry()
+    registry.register_class(Circuit, from_yaml=read)
+    # A bare scalar has no state to unpack onto a `Circuit`, so only the hook can build it.
+    node = scalar('7', tag=('!', 'Circuit', '!Circuit'))
+    got = tree(mapping([('k', node)]), registry=registry)['k']
+    assert type(got) is Circuit and got.qubits == 7
+
+
+def test_a_class_with_no_from_yaml_and_no_mapping_state_says_both_ways_to_fix_it() -> None:
+    registry = TagRegistry()
+    registry.register_class(Circuit)
+    node = seq(['1', '2'], tag=('!', 'Circuit', '!Circuit'))
+    with pytest.raises(ConstructorError, match='from_yaml classmethod, or pass from_yaml='):
+        tree(mapping([('main', node)]), registry=registry)
+
+
+def test_a_passed_from_yaml_hook_wins_over_the_classmethod() -> None:
+    def read(_constructor: Any, _node: Any) -> Custom:
+        return Custom(a='passed')
+
+    registry = TagRegistry()
+    registry.register_class(Custom, from_yaml=read)
+    got = tree(mapping([('k', scalar('hi', tag=('!', 'Custom', '!Custom')))]), registry=registry)[
+        'k'
+    ]
+    assert type(got) is Custom and got.a == 'passed'
+
+
 def test_a_tag_in_our_namespace_with_no_class_raises() -> None:
     registry = TagRegistry()
     registry.register_class(Circuit, source='libx')

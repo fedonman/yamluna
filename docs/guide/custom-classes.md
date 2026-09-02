@@ -134,6 +134,44 @@ types built on `tuple`, `time.struct_time` and `os.stat_result` among them, go t
 `to_yaml` rather than being written as their fields. A registered class with no hook keeps the
 form its base type implies: a `dict` subclass is written as a mapping, tagged.
 
+## Anchors, when the class writes itself
+
+An object that appears more than once is anchored at its first occurrence and aliased at
+every later one, and the walk settles that before it calls the hook. Whatever node the hook
+returns is given the name the walk chose:
+
+```python
+duration = Duration(30)
+print(yaml.dump({'connect': duration, 'read': duration}))
+```
+
+```yaml
+%TAG ! tag:libx/
+---
+connect: &id001 !Duration 30s
+read: *id001
+```
+
+A hook that names the node itself wins, and the aliases follow it. `represent_scalar` takes
+`anchor=` for that:
+
+```python
+def write_decimal(representer, obj):
+    return representer.represent_scalar('!Decimal', str(obj), anchor='price')
+```
+
+```yaml
+%TAG ! tag:decimal/
+---
+list: &price !Decimal 19.99
+sale: *price
+```
+
+The same holds when the hook hands back a node it did not build. `representer.represent_data(x)`
+returns the node written for `x`, which may already carry a name of its own or be an alias to
+one, and a node carries a single anchor. The object the hook was called for is aliased to
+whichever name that node ends up with, so what is written stays loadable.
+
 ## The namespace on the wire
 
 The source is written into the document with YAML's own mechanism, a `%TAG` directive. It

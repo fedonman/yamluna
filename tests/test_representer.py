@@ -105,6 +105,30 @@ def token(text: str, column: int = 0) -> CommentToken:
     return CommentToken(text, CommentMark(column))
 
 
+def dangling(d: Doc) -> list[str | None]:
+    """Return the alias names in `d` that nothing earlier anchors, which a loader rejects.
+
+    Arena order is document order, so an anchor at a lower index is one the reader has
+    already seen by the time it reaches the alias.
+
+    Args:
+        d: The document to check.
+
+    Returns:
+        One name per alias site left pointing at nothing, in document order.
+
+    """
+    written: set[str] = set()
+    missing: list[str | None] = []
+    for node in d.nodes:
+        if node.kind == KIND_ALIAS:
+            if node.anchor not in written:
+                missing.append(node.anchor)
+        elif node.anchor is not None:
+            written.add(node.anchor)
+    return missing
+
+
 # -- scalars ------------------------------------------------------------------------------
 
 
@@ -689,6 +713,16 @@ class Label(str):
         return representer.represent_scalar('!Label', f'<{node}>')
 
 
+class Wrap:
+    def __init__(self, inner: Any) -> None:
+        """Store the object the `to_yaml` hook writes in this one's place."""
+        self.inner = inner
+
+    @classmethod
+    def to_yaml(cls, representer: Any, node: Wrap) -> int:
+        return representer.represent_data(node.inner)
+
+
 class TestTags:
     def registry(self, *classes: type, **kw: Any) -> TagRegistry:
         r = TagRegistry()
@@ -773,6 +807,58 @@ class TestTags:
         d = represent({'a': point, 'b': point}, registry=self.registry(Point))
         assert d.nodes[2].value == '1,2' and d.nodes[2].anchor == 'id001'
         assert d.nodes[4].kind == KIND_ALIAS and d.nodes[4].anchor == 'id001'
+
+    def test_a_hook_returning_an_anchored_node_hands_its_name_to_every_occurrence(self) -> None:
+        # The walk names the object before the hook runs, and a node carries one anchor, so
+        # a hook that returns a node built for something already anchored leaves the walk's
+        # name unwritten. The later occurrences have to follow the name that was written.
+        inner = {'k': 1}
+        wrap = Wrap(inner)
+        d = represent({'a': wrap, 'b': wrap, 'c': inner}, registry=self.registry(Wrap))
+        assert dangling(d) == []
+        assert d.nodes[2].kind == KIND_MAPPING and d.nodes[2].anchor == 'id002'
+        assert [d.nodes[i].anchor for i in (6, 8)] == ['id002', 'id002']
+
+    def test_a_hook_returning_an_alias_hands_its_target_to_every_occurrence(self) -> None:
+        # The same thing one step further on: the shared object is written first, so the
+        # hook comes back with an alias to it rather than with the anchored node itself.
+        inner = {'k': 1}
+        wrap = Wrap(inner)
+        d = represent({'c': inner, 'a': wrap, 'b': wrap}, registry=self.registry(Wrap))
+        assert dangling(d) == []
+        assert d.nodes[2].anchor == 'id001'
+        assert [d.nodes[i].kind for i in (6, 8)] == [KIND_ALIAS, KIND_ALIAS]
+        assert [d.nodes[i].anchor for i in (6, 8)] == ['id001', 'id001']
+
+    def test_a_hook_choosing_its_own_anchor_keeps_the_aliases_pointed_at_it(self) -> None:
+        hooked = Hooked('x')
+
+        def write(representer: Any, obj: Hooked) -> int:
+            return representer.represent_scalar('!Hooked', obj.value, anchor='mine')
+
+        d = represent({'a': hooked, 'b': hooked}, registry=self.registry(Hooked, to_yaml=write))
+        assert dangling(d) == []
+        assert d.nodes[2].anchor == 'mine'
+        assert d.nodes[4].kind == KIND_ALIAS and d.nodes[4].anchor == 'mine'
+
+    def test_an_alias_written_inside_the_hook_follows_the_rename(self) -> None:
+        # An occurrence inside the hook's own subtree is written before the hook returns, so
+        # it is holding the name the walk chose and the final pass has to correct it.
+        inner: dict[str, Any] = {}
+        wrap = Wrap(inner)
+        inner['self'] = wrap
+        d = represent({'a': wrap, 'b': wrap, 'c': inner}, registry=self.registry(Wrap))
+        assert dangling(d) == []
+        assert d.nodes[2].anchor == 'id002'
+        assert [d.nodes[i].anchor for i in (4, 6, 8)] == ['id002', 'id002', 'id002']
+
+    def test_an_unshared_object_leaves_the_name_the_hook_returned_alone(self) -> None:
+        # Nothing aliases the wrap, so the walk picks no name for it and the node the hook
+        # returns keeps the one it came with.
+        inner = {'k': 1}
+        d = represent({'a': Wrap(inner), 'c': inner, 'd': inner}, registry=self.registry(Wrap))
+        assert dangling(d) == []
+        assert d.nodes[2].anchor == 'id001'
 
     def test_an_ordinary_to_yaml_method_is_not_mistaken_for_a_hook(self) -> None:
         # `to_yaml` is an ordinary method name on a config-ish mapping. Taking it for the

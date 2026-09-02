@@ -42,7 +42,9 @@ once: it is source text, and dropping it is not a round trip.  `always_dump` is 
 here, because the behaviour it asks for is what every set anchor already gets.  A shared
 object with no anchor of its own gets a generated `id001`.  Recursive structures terminate
 because the name is recorded before the subtree is walked, which makes a back-reference an
-alias.
+alias.  A `to_yaml` hook is free to return a node that already carries a name, and a node
+carries only one: the object takes the name that was written, and `_rename` corrects the
+sites the walk had already pointed at the name it chose.
 
 **Merge keys** are re-emitted as `<<: *base` and never expanded; `Node.merge` marks them.
 
@@ -610,6 +612,7 @@ class _Representer:
     __slots__ = (
         '_aliases',
         '_counter',
+        '_renamed',
         'default_flow_style',
         'hooked',
         'names',
@@ -634,6 +637,7 @@ class _Representer:
         self.hooked: frozenset[type] = frozenset()  # registered classes that write themselves
         self.version: tuple[int, int] | None = None
         self._aliases: list[tuple[int, str]] = []  # alias sites the walk could not place yet
+        self._renamed: dict[str, str] = {}  # anchor the walk chose -> the one written instead
         self._counter = 0
 
     # -- entry point ----------------------------------------------------------------------
@@ -709,6 +713,7 @@ class _Representer:
             # Resolved once per document: the walk below only has to test membership.
             self.hooked = frozenset(c for c in self.plan.tags if self._writes_itself(c))
         root = self._add(Node(value='null')) if data is None else self._emit(data)
+        self._rename()
         self._realias()
         # No parent holds the root's leading comments, nor its end-of-line one: an entry's come
         # off the parent's `.ca`, and a root has no parent, so the record is all there is.
@@ -1004,8 +1009,16 @@ class _Representer:
                     f'representer.represent_* returned, not {index!r}'
                 )
                 raise RepresenterError(msg)
-            if self.nodes[index].anchor is None:
+            written = self.nodes[index].anchor
+            if written is None:
                 self.nodes[index].anchor = anchor
+            elif anchor is not None and written != anchor:
+                # The node the hook handed back already has a name: one the hook asked for,
+                # or one the walk gave another object the hook reached for.  A node carries
+                # a single anchor, so the name picked for `obj` is never written, and every
+                # site holding it has to take the name that was.
+                self.names[id(obj)] = written
+                self._renamed[anchor] = written
             return index
         node = Node(
             KIND_MAPPING,
@@ -1065,6 +1078,21 @@ class _Representer:
         # there to say whether the anchor was written.
         if src.kind == KIND_ALIAS and src.anchor:
             self._aliases.append((index, src.anchor))
+
+    def _rename(self) -> None:
+        """Point every site at the name that was written, where a hook chose another.
+
+        `_custom` records a rename when a `to_yaml` hook returns a node already carrying an
+        anchor.  Occurrences of the object after that one read the corrected name straight
+        out of `names`, but an occurrence *inside* the hook's own subtree was written before
+        the hook returned, and it is still holding the name the walk chose.
+        """
+        if not self._renamed:
+            return
+        for node in self.nodes:
+            if node.kind == KIND_ALIAS and node.anchor in self._renamed:
+                node.anchor = self._renamed[node.anchor]
+        self._aliases = [(index, self._renamed.get(name, name)) for index, name in self._aliases]
 
     def _realias(self) -> None:
         """Turn the noted sites into aliases, but only where their anchor is really there.

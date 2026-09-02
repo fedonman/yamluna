@@ -52,17 +52,17 @@ and nothing warns you. Which class wins depends on registration order. The repro
 |---|---|---|
 | tag name | `cls.__name__` | `cls.yaml_tag`, or `tag=` on `register_class` |
 | source | the root package of `cls.__module__` | `cls.yaml_source`, or `source=`, which also pins it |
-| body | `obj.__getstate__()` if the class defines one, otherwise `obj.__dict__` | a `to_yaml` classmethod |
+| body | `obj.__getstate__()` if the class defines one, otherwise `obj.__dict__` | a `to_yaml` classmethod, or `to_yaml=` on `register_class` |
 
 A leading `!` on `yaml_tag` is stripped, since ruamel spells the attribute
 `yaml_tag = '!Circuit'`.
 
 Reading back is the mirror: `cls.__new__(cls)`, then `__setstate__(state)` if the class
-defines one, otherwise `obj.__dict__.update(state)`. `__init__` is not called.
+defines one, otherwise `obj.__dict__.update(state)`. `__init__` is not called, and a
+`from_yaml` classmethod or a `from_yaml=` on `register_class` replaces the whole of it.
 
-The `to_yaml` and `from_yaml` classmethods keep ruamel's signatures, so a class that already
-has them ports unchanged. They are also how a class writes itself as something other than a
-mapping:
+The `to_yaml` and `from_yaml` hooks keep ruamel's signatures, so a class that already has them
+ports unchanged. They are also how a class writes itself as something other than a mapping:
 
 ```python
 # libx/timing.py
@@ -89,9 +89,50 @@ Without `from_yaml`, a node that is not a mapping has no state to copy onto the 
 Loading `main: !Circuit [1, 2]` against a plain registered `Circuit` says so:
 
 ```text
-cannot construct libx.circuits.Circuit from a CommentedSeq: give it a from_yaml classmethod
+cannot construct libx.circuits.Circuit from a CommentedSeq: give it a from_yaml classmethod, or pass from_yaml= to register_class
   in "<unicode string>", line 3, column 16
 ```
+
+## A class you cannot edit
+
+The hooks above have to live on the class, which rules out anything from a C extension:
+`numpy.ndarray`, `decimal.Decimal`, a protobuf message. Those types reject attribute
+assignment outright, with `TypeError: cannot set 'to_yaml' attribute of immutable type`.
+
+Pass the two functions to `register_class` instead. A plain function gets no `cls`, so it
+takes what the classmethod takes after it: `(representer, obj)` and `(constructor, node)`.
+
+```python
+from decimal import Decimal
+
+
+def write_decimal(representer, obj):
+    return representer.represent_scalar('!Decimal', str(obj))
+
+
+def read_decimal(constructor, node):
+    return Decimal(node.value)
+
+
+yaml = YAML()
+yaml.register_class(Decimal, to_yaml=write_decimal, from_yaml=read_decimal)
+```
+
+```yaml
+%TAG ! tag:decimal/
+---
+price: !Decimal 19.99
+```
+
+A function passed here wins over a classmethod of the same name on the class, so it also
+overrides a hook you did not write. Registering the class again replaces the whole record, so
+a later `register_class(Decimal, source='decimal')` to settle a tag collision has to pass the
+two functions again or the class goes back to being written as its attributes.
+
+A registered class writes itself through its hook whatever it subclasses, so the extension
+types built on `tuple`, `time.struct_time` and `os.stat_result` among them, go through
+`to_yaml` rather than being written as their fields. A registered class with no hook keeps the
+form its base type implies: a `dict` subclass is written as a mapping, tagged.
 
 ## The namespace on the wire
 

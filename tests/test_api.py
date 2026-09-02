@@ -186,6 +186,37 @@ def test_register_class_forwards_tag_and_source() -> None:
     assert record.uri == 'tag:pinned/Circ'
 
 
+def test_register_class_forwards_the_hooks() -> None:
+    def write(_representer: Any, _obj: Any) -> int:
+        return 0
+
+    def read(_constructor: Any, _node: Any) -> None:
+        return None
+
+    yaml = YAML()
+    cls = klass('Hooked', 'libx.circuits')
+    assert yaml.register_class(cls, to_yaml=write, from_yaml=read) is cls
+    record = yaml.registry.registration_for(cls)
+    assert record is not None
+    assert record.to_yaml is write
+    assert record.from_yaml is read
+
+
+def test_the_module_level_register_class_forwards_the_hooks() -> None:
+    def write(_representer: Any, _obj: Any) -> int:
+        return 0
+
+    def read(_constructor: Any, _node: Any) -> None:
+        return None
+
+    thing = klass('ModuleLevelHooked', 'libz')
+    yamluna.register_class(thing, to_yaml=write, from_yaml=read)
+    record = default_registry.registration_for(thing)
+    assert record is not None
+    assert record.to_yaml is write
+    assert record.from_yaml is read
+
+
 def test_the_module_level_registry_is_opt_in() -> None:
     thing = klass('ModuleLevelThing', 'libz')
     assert yamluna.register_class(thing) is thing

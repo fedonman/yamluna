@@ -781,7 +781,12 @@ class Constructor:
 
     def _registered_object(self, registration: Registration, node: Node, state: Any) -> Any:
         cls = registration.cls
-        hook = getattr(cls, 'from_yaml', None)
+        # A hook passed to `register_class` wins, so a class that cannot carry the
+        # attribute can still be read back.  Tested against `None` rather than for truth:
+        # a callable object is a valid hook whatever its `__bool__` says.
+        hook = registration.from_yaml
+        if hook is None:
+            hook = getattr(cls, 'from_yaml', None)
         if hook is not None:
             return hook(self, node)  # ruamel's (constructor, node) signature
         # `cls` is whatever the user registered, so `object.__new__`'s overloads have no
@@ -796,7 +801,8 @@ class Constructor:
             raise self._error(
                 kind='constructor',
                 message=f'cannot construct {registration.path} from a '
-                f'{type(state).__name__}: give it a from_yaml classmethod',
+                f'{type(state).__name__}: give it a from_yaml classmethod, or pass '
+                f'from_yaml= to register_class',
                 node=node,
             )
         return obj

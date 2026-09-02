@@ -48,9 +48,9 @@ alias.
 
 **Tags** come from `TagRegistry.plan`, called with the registered classes this document
 actually uses.  Its `%TAG` directives go on `Doc.tag_directives` and the per-node string on
-`Node.tag`.  A class with a `to_yaml` classmethod builds its own node through
-`_Representer.represent_scalar`, `represent_mapping` or `represent_sequence`, which keep
-ruamel's hook signatures.
+`Node.tag`.  A class with a `to_yaml` hook, either its own classmethod or one passed to
+`register_class`, builds its own node through `_Representer.represent_scalar`,
+`represent_mapping` or `represent_sequence`, which keep ruamel's hook signatures.
 
 **Positions.** `Node.line` and `Node.col` are the source positions the emitter echoes an
 untouched node at, and they come from `.lc`: a container's own, and for every scalar the
@@ -65,8 +65,9 @@ from __future__ import annotations
 
 import base64
 import datetime
+import inspect
 import math
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from typing import Any
 
 from yamluna._record import (
@@ -282,8 +283,19 @@ def _state(obj: Any) -> Mapping[Any, Any]:
     )
 
 
-def _children(obj: Any) -> Iterator[Any]:
-    """Everything reachable from `obj`, for the shared-object pre-pass."""
+def _children(obj: Any, *, state_too: bool = False) -> Iterator[Any]:
+    """Everything reachable from `obj`, for the shared-object pre-pass.
+
+    Args:
+        obj: The object to walk.
+        state_too: Walk `obj`'s attributes as well as its items. Set for a class that
+            writes itself: a `to_yaml` hook is free to write attribute state, and the
+            items are all a container subclass would otherwise yield.
+
+    Yields:
+        Every object reachable from `obj` in one step.
+
+    """
     if isinstance(obj, Mapping):
         # Merged-in keys belong to the mapping `<<` points at.  Walking them here would
         # count that mapping's values twice and anchor them for no reason.
@@ -295,6 +307,9 @@ def _children(obj: Any) -> Iterator[Any]:
     elif isinstance(obj, (set, frozenset, list, tuple)):
         yield from obj
     elif not isinstance(obj, _ATOMS):
+        yield from _state(obj).values()
+        state_too = False  # `_state` is this object's whole content, hook or no hook
+    if state_too:
         yield from _state(obj).values()
 
 
@@ -596,6 +611,7 @@ class _Representer:
         '_aliases',
         '_counter',
         'default_flow_style',
+        'hooked',
         'names',
         'nodes',
         'plan',
@@ -615,6 +631,7 @@ class _Representer:
         self.taken: set[str] = set()
         self.used: list[type] = []
         self.plan: WirePlan = WirePlan((), {})
+        self.hooked: frozenset[type] = frozenset()  # registered classes that write themselves
         self.version: tuple[int, int] | None = None
         self._aliases: list[tuple[int, str]] = []  # alias sites the walk could not place yet
         self._counter = 0
@@ -689,6 +706,8 @@ class _Representer:
         self._scan(data, set())
         if self.registry is not None and self.used:
             self.plan = self.registry.plan(self.used)
+            # Resolved once per document: the walk below only has to test membership.
+            self.hooked = frozenset(c for c in self.plan.tags if self._writes_itself(c))
         root = self._add(Node(value='null')) if data is None else self._emit(data)
         self._realias()
         # No parent holds the root's leading comments, nor its end-of-line one: an entry's come
@@ -738,8 +757,10 @@ class _Representer:
 
     def _scan(self, obj: Any, seen: set[int]) -> None:
         """Count occurrences by identity, and collect the anchor names and classes in use."""
+        writes_itself = False
         if self.registry is not None and self.registry.registration_for(type(obj)) is not None:
             self.used.append(type(obj))
+            writes_itself = self._writes_itself(type(obj))
         name = _anchor_name(obj)
         if name:
             self.taken.add(name)
@@ -750,7 +771,7 @@ class _Representer:
         if key in seen:
             return  # a cycle, or a second reference: counted, not re-walked
         seen.add(key)
-        for child in _children(obj):
+        for child in _children(obj, state_too=writes_itself):
             self._scan(child, seen)
 
     # -- main pass ------------------------------------------------------------------------
@@ -794,7 +815,7 @@ class _Representer:
 
     def _emit_node(self, obj: Any) -> int:
         """Emit one node, as an alias when this object has already been written."""
-        if not _trackable(obj):
+        if not _trackable(obj) and type(obj) not in self.hooked:
             return self._add(self._scalar_node(obj))
         key = id(obj)
         if key in self.names:
@@ -810,6 +831,12 @@ class _Representer:
     represent_data = _emit
 
     def _build(self, obj: Any, anchor: str | None) -> int:
+        # A registered class that writes itself does so whatever it subclasses.  The branches
+        # below match on `isinstance`, so without this a registered `tuple`, `dict` or `str`
+        # subclass would be written in its container form and its hook never called, while the
+        # load side still called `from_yaml`.
+        if type(obj) in self.hooked:
+            return self._custom(obj, anchor)
         if isinstance(obj, Mapping):
             return self._mapping(obj, anchor)
         if isinstance(obj, (set, frozenset)):
@@ -911,11 +938,48 @@ class _Representer:
             node.children += [key_index, absent]
         return index
 
+    def _to_yaml(self, cls: type) -> Callable[[Any, Any], int] | None:
+        """Return the `to_yaml` hook for a registered class, or `None` when it has none.
+
+        Args:
+            cls: The registered class.
+
+        Returns:
+            The hook passed to `register_class` for `cls`, which wins, otherwise the one the
+            class carries. Tested against `None` rather than for truth: a callable object is
+            a valid hook whatever its `__bool__` says.
+
+        """
+        registration = None if self.registry is None else self.registry.registration_for(cls)
+        hook = registration.to_yaml if registration is not None else None
+        return getattr(cls, 'to_yaml', None) if hook is None else hook
+
+    def _writes_itself(self, cls: type) -> bool:
+        """Whether `cls` builds its own node, so the container branches must not claim it.
+
+        A hook passed to `register_class` counts, and so does a `to_yaml` classmethod, which
+        is the form ruamel documents. An ordinary method that happens to be called `to_yaml`
+        does not: it takes `self`, and `dict` and `tuple` subclasses that expose one are
+        common enough that hijacking their dump on the strength of the name would be wrong.
+
+        Args:
+            cls: The registered class.
+
+        Returns:
+            Whether a hook should be preferred over the form `cls`'s base type implies.
+
+        """
+        registration = None if self.registry is None else self.registry.registration_for(cls)
+        if registration is not None and registration.to_yaml is not None:
+            return True
+        return inspect.ismethod(getattr(cls, 'to_yaml', None))  # a classmethod, bound to `cls`
+
     def _custom(self, obj: Any, anchor: str | None) -> int:
         """Represent one instance of a registered class.
 
-        A class with a `to_yaml` classmethod builds its own node and is given the anchor
-        this walk chose for it; any other class is written as a mapping of its attributes.
+        A `to_yaml` hook builds its own node and is given the anchor this walk chose for
+        it; any other class is written as a mapping of its attributes. The hook is the one
+        passed to `register_class`, or failing that the classmethod on the class.
 
         Raises:
             RepresenterError: The class is not registered with `YAML.register_class()`, or
@@ -931,13 +995,13 @@ class _Representer:
                 f'{cls.__qualname__} with YAML.register_class() first'
             )
             raise RepresenterError(msg)
-        hook = getattr(cls, 'to_yaml', None)
+        hook = self._to_yaml(cls)
         if hook is not None:
             index = hook(self, obj)
             if not isinstance(index, int) or not 0 <= index < len(self.nodes):
                 msg = (
-                    f'{cls.__qualname__}.to_yaml must return what representer.represent_* '
-                    f'returned, not {index!r}'
+                    f'the to_yaml hook for {cls.__qualname__} must return what '
+                    f'representer.represent_* returned, not {index!r}'
                 )
                 raise RepresenterError(msg)
             if self.nodes[index].anchor is None:

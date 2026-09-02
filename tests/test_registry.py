@@ -161,6 +161,72 @@ def test_explicit_tag_overrides_the_class_name():
     assert reg.resolve('!Circuit') is None
 
 
+# -- hooks -----------------------------------------------------------------------
+
+
+def test_hooks_passed_at_registration_are_kept_on_the_record():
+    def write(_representer, _obj):
+        return 0
+
+    def read(_constructor, _node):
+        return None
+
+    circuit = cls_in('libx', 'Circuit')
+    reg = TagRegistry()
+    reg.register_class(circuit, to_yaml=write, from_yaml=read)
+
+    record = found(reg.registration_for(circuit))
+    assert record.to_yaml is write
+    assert record.from_yaml is read
+
+
+def test_a_class_registered_with_no_hooks_records_none():
+    circuit = cls_in('libx', 'Circuit')
+    reg = TagRegistry()
+    reg.register_class(circuit)
+
+    record = found(reg.registration_for(circuit))
+    assert (record.to_yaml, record.from_yaml) == (None, None)
+
+
+def test_a_passed_hook_is_recorded_even_when_the_class_carries_one():
+    def write(_representer, _obj):
+        return 0
+
+    circuit = cls_in('libx', 'Circuit', to_yaml='the class attribute')
+    reg = TagRegistry()
+    reg.register_class(circuit, to_yaml=write)
+
+    assert found(reg.registration_for(circuit)).to_yaml is write
+
+
+def test_hooks_survive_the_promotion_a_later_registration_triggers():
+    def write(_representer, _obj):
+        return 0
+
+    circuit = cls_in('libx.circuits', 'Circuit')
+    other = cls_in('libx.gates', 'Circuit')
+    reg = TagRegistry()
+    reg.register_class(circuit, to_yaml=write)
+    reg.register_class(other)  # collides, so every record is rebuilt with a new source
+
+    record = found(reg.registration_for(circuit))
+    assert record.source == 'libx.circuits'  # promoted
+    assert record.to_yaml is write  # and the hook came with it
+
+
+def test_re_registering_without_hooks_drops_them():
+    def write(_representer, _obj):
+        return 0
+
+    circuit = cls_in('libx', 'Circuit')
+    reg = TagRegistry()
+    reg.register_class(circuit, to_yaml=write)
+    reg.register_class(circuit, source='pinned')  # replaces the record, hooks and all
+
+    assert found(reg.registration_for(circuit)).to_yaml is None
+
+
 # -- loading ---------------------------------------------------------------------
 
 

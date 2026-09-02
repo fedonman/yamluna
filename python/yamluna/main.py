@@ -42,7 +42,7 @@ from .error import ComposerError, YAMLStreamError
 from .registry import TagRegistry
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Callable, Iterable, Sequence
     from types import ModuleType
 
 __all__ = ['YAML', 'default_registry', 'register_class']
@@ -408,7 +408,13 @@ class YAML:
     # -- the tag registry -------------------------------------------------------------
 
     def register_class(
-        self, cls: type, *, tag: str | None = None, source: str | None = None
+        self,
+        cls: type,
+        *,
+        tag: str | None = None,
+        source: str | None = None,
+        to_yaml: Callable[[Any, Any], int] | None = None,
+        from_yaml: Callable[[Any, Any], Any] | None = None,
     ) -> type:
         """Register `cls` with this instance's registry.
 
@@ -424,6 +430,11 @@ class YAML:
                 class: when two registrations collide on the same source and tag name the
                 unpinned ones are rewritten to their full module path, and a pinned class
                 keeps the source you asked for.
+            to_yaml: How to write an instance, as `(representer, obj) -> int`. A class
+                from a C extension cannot be given a `to_yaml` classmethod, so pass one
+                here instead; it also wins over a classmethod the class does have.
+            from_yaml: How to read one back, as `(constructor, node) -> object`, with the
+                same precedence over a `from_yaml` on the class.
 
         Returns:
             `cls`, so this also works as a decorator.
@@ -432,10 +443,15 @@ class YAML:
             ```python
             @yaml.register_class
             class Circuit: ...
+
+
+            yaml.register_class(Decimal, to_yaml=write_decimal, from_yaml=read_decimal)
             ```
 
         """
-        return self.registry.register_class(cls, tag=tag, source=source)
+        return self.registry.register_class(
+            cls, tag=tag, source=source, to_yaml=to_yaml, from_yaml=from_yaml
+        )
 
     register = register_class
     """Shorter name for `register_class`, for use as `@yaml.register`."""
@@ -641,7 +657,14 @@ A plain `YAML()` does not consult it. Construct the instance as
 """
 
 
-def register_class(cls: type, *, tag: str | None = None, source: str | None = None) -> type:
+def register_class(
+    cls: type,
+    *,
+    tag: str | None = None,
+    source: str | None = None,
+    to_yaml: Callable[[Any, Any], int] | None = None,
+    from_yaml: Callable[[Any, Any], Any] | None = None,
+) -> type:
     """Register `cls` with `default_registry`.
 
     Only a `YAML` constructed with `registry=default_registry` sees the registration.
@@ -653,9 +676,16 @@ def register_class(cls: type, *, tag: str | None = None, source: str | None = No
         source: The namespace the tag is written in. Defaults to `cls.yaml_source`, then
             to the root package of `cls.__module__`. Passing it also pins the class, so a
             collision never rewrites its source to the full module path.
+        to_yaml: How to write an instance, as `(representer, obj) -> int`. A class from a
+            C extension cannot be given a `to_yaml` classmethod, so pass one here instead;
+            it also wins over a classmethod the class does have.
+        from_yaml: How to read one back, as `(constructor, node) -> object`, with the same
+            precedence over a `from_yaml` on the class.
 
     Returns:
         `cls`, so this also works as a decorator.
 
     """
-    return default_registry.register_class(cls, tag=tag, source=source)
+    return default_registry.register_class(
+        cls, tag=tag, source=source, to_yaml=to_yaml, from_yaml=from_yaml
+    )

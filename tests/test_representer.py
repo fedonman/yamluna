@@ -671,6 +671,24 @@ class Boxed:
         return representer.represent_sequence('!Boxed', node.items, flow_style=True)
 
 
+class Point(tuple):
+    __slots__ = ()
+    yaml_tag = 'Point'
+
+    @classmethod
+    def to_yaml(cls, representer: Any, node: Point) -> int:
+        return representer.represent_scalar('!Point', ','.join(str(n) for n in node))
+
+
+class Label(str):
+    __slots__ = ()
+    yaml_tag = 'Label'
+
+    @classmethod
+    def to_yaml(cls, representer: Any, node: Label) -> int:
+        return representer.represent_scalar('!Label', f'<{node}>')
+
+
 class TestTags:
     def registry(self, *classes: type, **kw: Any) -> TagRegistry:
         r = TagRegistry()
@@ -722,6 +740,73 @@ class TestTags:
 
         d = represent({'h': Hooked('own')}, registry=self.registry(Hooked, to_yaml=write))
         assert d.nodes[2].value == 'passed'
+
+    def test_a_tuple_subclass_reaches_its_hook(self) -> None:
+        # `_build` matches on `isinstance`, so a hook on anything list-shaped is only called
+        # if the registration is consulted first.
+        d = represent({'p': Point((1, 2))}, registry=self.registry(Point))
+        assert d.nodes[2] == Node(
+            KIND_SCALAR, STYLE_PLAIN, tag=('!', 'Point', '!Point'), value='1,2'
+        )
+
+    def test_a_str_subclass_reaches_its_hook(self) -> None:
+        # A scalar is not trackable, so `_emit_node` returns before `_build` is ever reached.
+        d = represent({'l': Label('x')}, registry=self.registry(Label))
+        assert d.nodes[2].value == '<x>'
+
+    def test_a_tuple_subclass_reaches_a_hook_passed_at_registration(self) -> None:
+        # The motivating case: `time.struct_time` and friends are `tuple` subclasses that
+        # cannot carry a classmethod, so the hook can only arrive as an argument.
+        def write(representer: Any, obj: Any) -> int:
+            return representer.represent_scalar('!Pair', '|'.join(str(n) for n in obj))
+
+        class Pair(tuple):
+            __slots__ = ()
+
+        d = represent({'p': Pair((1, 2))}, registry=self.registry(Pair, to_yaml=write))
+        assert d.nodes[2].value == '1|2'
+
+    def test_a_hook_built_node_gets_the_anchor_the_walk_chose(self) -> None:
+        # `_emit_node` commits every later occurrence to the alias before the hook runs, so
+        # the anchor has to land on whatever node the hook returns.
+        point = Point((1, 2))
+        d = represent({'a': point, 'b': point}, registry=self.registry(Point))
+        assert d.nodes[2].value == '1,2' and d.nodes[2].anchor == 'id001'
+        assert d.nodes[4].kind == KIND_ALIAS and d.nodes[4].anchor == 'id001'
+
+    def test_an_ordinary_to_yaml_method_is_not_mistaken_for_a_hook(self) -> None:
+        # `to_yaml` is an ordinary method name on a config-ish mapping. Taking it for the
+        # hook would call it with the representer as `self`.
+        class Config(dict):
+            def to_yaml(self, _stream: Any = None) -> str:
+                return 'the class own method, not a representer hook'
+
+        d = represent({'c': Config(a=1)}, registry=self.registry(Config))
+        assert d.nodes[2].kind == KIND_MAPPING
+        assert [d.nodes[i].value for i in d.nodes[2].children] == ['a', '1']
+
+    def test_a_class_reached_only_through_a_hook_is_still_planned(self) -> None:
+        # The pre-pass yields a container subclass's items and not its attributes, so a
+        # class the hook reaches through one would otherwise be written untagged.
+        class Board(list):
+            @classmethod
+            def to_yaml(cls, representer: Any, node: Any) -> int:
+                return representer.represent_mapping('!Board', {'origin': node.origin})
+
+        board = Board([1])
+        board.origin = Point((3, 4))  # ty: ignore[unresolved-attribute]
+        d = represent({'b': board}, registry=self.registry(Point, Board))
+        origin = d.nodes[d.nodes[2].children[1]]
+        assert origin.tag == ('!', 'Point', '!Point') and origin.value == '3,4'
+
+    def test_a_registered_subclass_with_no_hook_keeps_its_container_form(self) -> None:
+        class Bag(dict):
+            pass
+
+        d = represent({'b': Bag(a=1)}, registry=self.registry(Bag))
+        assert d.nodes[2].kind == KIND_MAPPING
+        assert d.nodes[2].tag == ('!', 'Bag', f'tag:{SOURCE}/Bag')
+        assert [d.nodes[i].value for i in d.nodes[2].children] == ['a', '1']
 
     def test_to_yaml_hook_building_a_collection(self) -> None:
         d = represent({'b': Boxed([7])}, registry=self.registry(Boxed))
@@ -977,6 +1062,27 @@ def test_round_trip_of_a_registered_class(construct: Any) -> None:
     original = doc(mapping([('main', tagged)]), tag_directives=[('!', f'tag:{SOURCE}/')])
     tree = construct(original, registry=registry)
     assert isinstance(tree['main'], Circuit) and tree['main'].qubits == 2
+    assert normalise(represent(tree, registry=registry)) == normalise(original)
+
+
+def test_round_trip_of_a_registered_tuple_subclass(construct: Any) -> None:
+    """The two sides have to agree about whether the hooks apply at all.
+
+    `_build` dispatches on `isinstance`, so a `tuple` subclass reaches `_sequence` unless the
+    registration is consulted first, while the load side calls `from_yaml` either way. The
+    extension types built on `tuple`, `time.struct_time` among them, are exactly the ones that
+    cannot carry a classmethod.
+    """
+
+    def read(_constructor: Any, node: Any) -> Point:
+        return Point(int(n) for n in node.value.split(','))
+
+    registry = TagRegistry()
+    registry.register_class(Point, from_yaml=read)
+    tagged = scalar('1,2', tag=('!', 'Point', '!Point'))
+    original = doc(mapping([('p', tagged)]), tag_directives=[('!', f'tag:{SOURCE}/')])
+    tree = construct(original, registry=registry)
+    assert tree['p'] == Point((1, 2)) and type(tree['p']) is Point
     assert normalise(represent(tree, registry=registry)) == normalise(original)
 
 

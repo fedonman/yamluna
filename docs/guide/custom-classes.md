@@ -129,10 +129,10 @@ overrides a hook you did not write. Registering the class again replaces the who
 a later `register_class(Decimal, source='decimal')` to settle a tag collision has to pass the
 two functions again or the class goes back to being written as its attributes.
 
-The hooks are reached by a class the representer would otherwise write as a mapping of its
-attributes. A class that subclasses `dict`, `list`, `tuple`, `set` or one of the scalar types
-is written in that form instead, tag and all, and its `to_yaml` is never called. That rules
-out the extension types built on `tuple`, `time.struct_time` and `os.stat_result` among them.
+A registered class writes itself through its hook whatever it subclasses, so the extension
+types built on `tuple`, `time.struct_time` and `os.stat_result` among them, go through
+`to_yaml` rather than being written as their fields. A registered class with no hook keeps the
+form its base type implies: a `dict` subclass is written as a mapping, tagged.
 
 ## The namespace on the wire
 

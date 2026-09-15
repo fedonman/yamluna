@@ -23,7 +23,7 @@ Everything here was run against `ruamel.yaml` 0.19.1 and yamluna 0.1.0.
 
 | ruamel | yamluna | |
 |---|---|---|
-| `YAML()`, `YAML(typ='rt')` | same | `typ` accepts `'rt'` and nothing else |
+| `YAML()` | same | drop the `typ=`: round trip is the only mode, and `YAML(typ='rt')` is a `TypeError` |
 | `YAML(output=...)` and a `with` block | same | collects each `dump` and writes one stream |
 | `.load(stream)` / `.load_all(stream)` | same | a `str` or `bytes` is the document *text*; pass a `Path` for a file |
 | `.dump(data, stream)` / `.dump_all(docs, stream)` | same | `stream=None` returns the text |
@@ -261,7 +261,7 @@ you serialise.
 
 | ruamel | why it is not here | instead |
 |---|---|---|
-| `YAML(typ='safe' / 'base' / 'unsafe' / 'rtsc')` | this library is the round-trip mode; the others are `json.load` with more spelling, and shipping them means shipping four object models. `YAML(typ='safe')` raises `ValueError` with a message pointing here | `import yaml` (PyYAML) or `json` for a plain load; keep `yamluna` for the files you edit |
+| `YAML(typ='safe' / 'base' / 'unsafe' / 'rtsc')` | this library is the round-trip mode; the others are `json.load` with more spelling, and shipping them means shipping four object models. `YAML` has no `typ` argument, so any of these is a `TypeError` | `import yaml` (PyYAML) or `json` for a plain load; keep `yamluna` for the files you edit |
 | `!!python/object:`, `!!python/name:`, `!!python/module:` | arbitrary-object construction from a document is a remote-code-execution primitive, and `typ='rt'` never supported it either | `register_class` with `to_yaml` and `from_yaml` |
 | `yaml.Constructor = MyConstructor`, and `.Representer`, `.Parser`, `.Emitter`, `.Resolver`, `.Scanner`, `.Serializer`, `.Composer` | component substitution needs a stable Python-level pipeline; here the pipeline is Rust and the seam is a flat record list, not a class | `to_yaml` and `from_yaml` hooks for per-class control, the `YAML` settings for global layout. `YAML` uses `__slots__`, so assigning these raises `AttributeError: 'YAML' object has no attribute 'Constructor' and no __dict__ for setting new attributes` rather than being silently ignored |
 | `official_plug_ins()`, `yaml.plug_ins`, `pure=` | no C-versus-Python duality to switch between: there is one implementation | |
@@ -280,7 +280,7 @@ you serialise.
 ## The porting checklist
 
 ```bash
-grep -rn "ruamel"                      # the import, and any typ= other than 'rt'
+grep -rn "ruamel"                      # the import, and any typ= at all
 grep -rn "yaml.indent("                # usually deletable
 grep -rn "add_representer\|add_constructor\|YAMLObject"   # -> register_class
 grep -rn "\.ca\.items\[" | grep "="    # hand-repaired comment tables: delete them

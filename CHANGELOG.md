@@ -10,7 +10,7 @@ Python API that replaces `ruamel.yaml`'s `typ='rt'`.
 
 ### Added
 
-- **`YAML(typ='rt')`** with `load`, `load_all`, `dump`, `dump_all`, the context-manager dump
+- **`YAML()`** with `load`, `load_all`, `dump`, `dump_all`, the context-manager dump
   form, and the round-trip settings: `indent(mapping=, sequence=, offset=)`, `preserve_quotes`,
   `default_flow_style`, `width`, `explicit_start`, `explicit_end`, `allow_duplicate_keys`,
   `version`.
@@ -124,7 +124,7 @@ causes, is in [tests/README.md](tests/README.md#known-gaps).
 
 ### Not included, by design
 
-`typ='rt'` only; no safe/base/unsafe; no `!!python/object:`; no component substitution; no
+Round trip only; no safe/base/unsafe; no `!!python/object:`; no component substitution; no
 plug-ins; no `scan()`/`compose()`/`serialize()`; no legacy module-level `load()`/`dump()`.
 See [Migrating from ruamel.yaml](https://fedonman.github.io/yamluna/migrating/)
 for the workaround for each.

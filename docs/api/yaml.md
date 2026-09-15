@@ -2,8 +2,8 @@
 
 `YAML()` is the entry point and, for most programs, the only name you import. One instance
 carries the emitter settings, the tag registry, and the records of the stream it loaded last.
-`typ='rt'` is the only mode there is, so `YAML()` with no arguments is what you want; any
-other `typ` raises `ValueError`.
+Round trip is the only mode there is, so there is no `typ` argument to pass: `YAML()` with
+no arguments is what you want.
 
 The settings are plain attributes you assign after construction rather than constructor
 arguments. Each one is documented below with what it does to the output;

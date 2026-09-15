@@ -255,8 +255,9 @@ YAMLStreamError: pass the stream to YAML(output=...) instead: inside the context
 
 A reminder that a `str` handed to `load` is the document text and never a path. Pass a
 `Path` for a file. Two settings raise plain `ValueError` rather than a YAML error, because
-they are wrong arguments rather than wrong documents: `YAML(typ=...)` with anything but
-`'rt'`, and a `line_break` that is not `'\n'`, `'\r\n'` or `'\r'`.
+they are wrong arguments rather than wrong documents: a `version` that is neither a
+`(major, minor)` pair nor a `'major.minor'` string, and a `line_break` that is not `'\n'`,
+`'\r\n'` or `'\r'`.
 
 ## See also
 

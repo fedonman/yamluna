@@ -267,7 +267,7 @@ which is where the document model and the emitter live, and
 
 ## When not to use yamluna
 
-* **You need `typ='safe'`.** `YAML(typ='safe')` raises a `ValueError` pointing here. There is
+* **You need `typ='safe'`.** `YAML` takes no `typ` at all: there is
   one mode, and it is round-trip. Use PyYAML or `ruamel.yaml` for a plain load, and keep
   yamluna for the files you edit and write back.
 * **You are on Python 3.10 or older.** The wheels are `cp311-abi3` and `pyproject.toml`

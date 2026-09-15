@@ -1,9 +1,8 @@
 """The `YAML` entry point.
 
-`YAML(typ='rt')` is the whole public API. `typ` accepts `'rt'` and nothing else; any
-other value raises `ValueError`. The safe, base and unsafe modes, `!!python/object:`,
-component substitution, plug-ins and the low-level `scan`/`compose`/`serialize` pipeline
-are deliberate omissions.
+`YAML()` is the whole public API. Round trip is the only mode there is: the safe, base
+and unsafe modes, `!!python/object:`, component substitution, plug-ins and the low-level
+`scan`/`compose`/`serialize` pipeline are deliberate omissions.
 
 The two halves of the pipeline are one line each:
 
@@ -73,13 +72,6 @@ _NO_EXTENSION: Final = (
     'the yamluna Rust extension (yamluna._yamluna) is not built. Build it with '
     '`maturin develop` from the repository root (or `pip install -e .`). Everything '
     'that does not touch the parser or the emitter works without it.'
-)
-
-_BAD_TYP: Final = (
-    "yamluna supports typ='rt' only; got {typ!r}. The safe/base/unsafe modes, "
-    '!!python/object:, component substitution, plug-ins and the low-level '
-    'scan/compose/serialize pipeline are deliberate omissions, not gaps -- see '
-    '"What it is not" in the README.'
 )
 
 
@@ -170,7 +162,7 @@ class YAML:
 
     Example:
         ```python
-        yaml = YAML()  # typ='rt' is the only mode
+        yaml = YAML()
         yaml.preserve_quotes = True
         yaml.indent(mapping=2, sequence=4, offset=2)
         data = yaml.load(Path('config.yaml'))
@@ -205,37 +197,25 @@ class YAML:
         'registry',
         'sequence_dash_offset',
         'sequence_indent',
-        'typ',
         'width',
     )
 
     def __init__(
         self,
         *,
-        typ: str | Sequence[str] = 'rt',
         output: WriteStream = None,
         registry: TagRegistry | None = None,
     ) -> None:
         """Create a reader and writer with ruamel's round-trip defaults.
 
         Args:
-            typ: The mode. Only `'rt'`, or a one-element sequence holding it, is accepted.
             output: Where the context-manager form writes. Nothing else reads it, so a
                 plain `dump` still needs its own stream or returns the text.
             registry: The tag registry this instance uses. A fresh empty `TagRegistry` by
                 default, so two instances never share registrations unless you hand the
                 same registry to both.
 
-        Raises:
-            ValueError: `typ` is anything other than `'rt'`.
-
         """
-        requested = list(typ) if isinstance(typ, list | tuple) else [typ]
-        if requested != ['rt']:
-            raise ValueError(_BAD_TYP.format(typ=typ))
-
-        self.typ: list[str] = ['rt']
-
         # One registry per instance. ruamel's `register_class` is a classmethod mutating
         # process-global tables, so two of its `YAML()` objects poison each other.
         self.registry: TagRegistry = TagRegistry() if registry is None else registry
@@ -325,8 +305,8 @@ class YAML:
         self._empty: dict[int, Doc] = {}
 
     def __repr__(self) -> str:
-        """Return `repr(self)`, which names the mode and nothing else."""
-        return f'YAML(typ={self.typ!r})'
+        """Return `repr(self)`. There is one mode and no constructor state to name."""
+        return 'YAML()'
 
     # -- settings -------------------------------------------------------------------
 

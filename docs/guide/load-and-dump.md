@@ -17,10 +17,10 @@ config['ports'].append(8080)
 yaml.dump(config, Path('config.yaml'))
 ```
 
-`YAML()` takes keyword arguments only, and all three are optional: `typ`, which accepts
-`'rt'` and nothing else, `output`, which is [the context-manager
-destination](#the-context-manager-form), and `registry`, which is
-[the tag registry](custom-classes.md). Everything else is an attribute you set afterwards,
+`YAML()` takes keyword arguments only, and both are optional: `output`, which is [the
+context-manager destination](#the-context-manager-form), and `registry`, which is
+[the tag registry](custom-classes.md). There is no `typ`, because round trip is the only
+mode. Everything else is an attribute you set afterwards,
 and [Settings](settings.md) lists them.
 
 What comes back from `load` is a `CommentedMap`, a `CommentedSeq`, a scalar, or `None`.

@@ -25,7 +25,7 @@ from pathlib import Path
 
 from yamluna import YAML
 
-yaml = YAML()                            # typ='rt' is the only mode
+yaml = YAML()                            # round trip is the only mode
 config = yaml.load(Path('config.yaml'))  # a dict, with the file's layout remembered
 
 config['replicas'] = 5                   # comments and blank lines stay where they are
@@ -407,12 +407,13 @@ shape, not the third digit.
 
 ## What it is not
 
-`typ='rt'` only; no safe/base/unsafe; no `!!python/object:`; no component substitution; no
+Round trip only; no safe/base/unsafe; no `!!python/object:`; no component substitution; no
 plug-ins; no `scan()`/`compose()`/`serialize()`; no legacy module-level `load()`/`dump()`.
 
 Those are deliberate omissions, not gaps. Round-trip is the mode this library is for, and the
 others are `json.load` with more spelling; `PyYAML` and `ruamel.yaml` are both good at them.
-`YAML(typ='safe')` raises with a message pointing here, and
+`YAML` takes no `typ` argument at all, so a ruamel `typ=` is a `TypeError` rather than a
+setting that quietly means something else, and
 [Migrating](https://fedonman.github.io/yamluna/migrating/) lists the replacement for each one.
 
 ## Examples

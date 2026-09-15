@@ -126,7 +126,7 @@ fix can never leave a stale excuse behind.
 
 ## Measured: yamluna vs ruamel.yaml 0.19.1 over this corpus
 
-Both libraries get the ordinary round-trip recipe: `YAML()` (`typ='rt'`),
+Both libraries get the ordinary round-trip recipe: `YAML()` (ruamel's `typ='rt'`),
 `preserve_quotes = True`, everything else default, including `width = 80` and
 `allow_duplicate_keys = False`. Regenerate with
 `PYTHONPATH=python .venv/bin/python tests/differential.py`.

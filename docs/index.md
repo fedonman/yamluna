@@ -123,7 +123,8 @@ source.
 
 ## What it is not
 
-`yamluna` implements `typ='rt'` and nothing else. There is no safe, base or unsafe mode, no
+`yamluna` implements `ruamel.yaml`'s `typ='rt'` and nothing else, and has no `typ` argument
+of its own. There is no safe, base or unsafe mode, no
 `!!python/object:`, no component substitution, no plug-ins, no `scan()` / `compose()` /
 `serialize()` pipeline, and no module-level `load()` / `dump()`.
 

@@ -19,7 +19,7 @@ goal, measured rather than assumed.
 The ruamel configuration is the ordinary round-trip recipe:
 
 ```python
-yaml = YAML()            # typ='rt'
+yaml = YAML()
 yaml.preserve_quotes = True
 ```
 
@@ -78,7 +78,7 @@ def ruamel_rt(sequence: int = 2, offset: int = 0) -> YAML:
         indentation.
 
     """
-    yaml = YAML()  # typ='rt'
+    yaml = YAML()
     yaml.preserve_quotes = True
     yaml.indent(mapping=2, sequence=sequence, offset=offset)
     return yaml
@@ -170,7 +170,7 @@ def roundtrip_with_yamluna(text: str, *, allow_duplicate_keys: bool = False) -> 
     """
     import yamluna
 
-    yaml = yamluna.YAML()  # typ='rt'
+    yaml = yamluna.YAML()
     yaml.preserve_quotes = True
     yaml.allow_duplicate_keys = allow_duplicate_keys
     buf = io.StringIO()
@@ -195,7 +195,7 @@ def load_with_yamluna(text: str, *, allow_duplicate_keys: bool = False) -> Any:
     """
     import yamluna
 
-    yaml = yamluna.YAML()  # typ='rt'
+    yaml = yamluna.YAML()
     yaml.preserve_quotes = True
     yaml.allow_duplicate_keys = allow_duplicate_keys
     return yaml.load(text)
@@ -706,7 +706,7 @@ def main(argv: list[str]) -> int:
 
     config = f'indent(mapping=2, sequence={sequence}, offset={offset})'
     print(f"ruamel.yaml {RUAMEL_VERSION}, typ='rt', preserve_quotes=True, {config}")
-    print(f"yamluna {_yamluna_version()}, typ='rt', preserve_quotes=True, defaults")
+    print(f'yamluna {_yamluna_version()}, preserve_quotes=True, defaults')
     if rows:
         print()
         scored = f'of {total} round-trippable files round-trip byte-identically'

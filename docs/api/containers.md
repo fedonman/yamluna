@@ -1,53 +1,55 @@
 # Containers
 
-A load hands back `CommentedMap` and `CommentedSeq` objects. They subclass `dict` and `list`,
-so `isinstance(x, dict)`, `json.dumps(x)`, `copy.deepcopy(x)`, `pickle` and `x == {'a': 1}`
-all work, and you can hang your own attributes on a node.
+`load()` returns these types for YAML collections. They support normal Python dictionary and list operations while carrying comments and formatting.
 
-What they add is the YAML that a builtin has nowhere to put. Every container carries `.ca`
-(its comments and blank lines), `.lc` (where it sat in the source), `.anchor`, `.tag`, `.fa`
-(flow or block) and `.merge`. Those attributes come from `CommentedBase` and are not
-repeated on each subclass below; the classes in the second half of this page are what they
-hold.
+| Type | Use |
+| --- | --- |
+| `CommentedMap` | A mapping; subclass of `dict` |
+| `CommentedSeq` | A sequence; subclass of `list` |
+| `CommentedSet` | A YAML `!!set` |
+| `CommentedKeySeq` / `CommentedKeyMap` | Hashable collections used as mapping keys |
+| `TaggedScalar` | A value with an unregistered tag |
 
-Comment records are bound to the entry they were loaded for and never to an index, so a
-record travels with its element through `insert`, `del`, `pop`, `sort`, `reverse` and slice
-assignment. [Comments and blank lines](../guide/comments.md) shows that in use, and
-[The document model](../internals/document-model.md) describes the store underneath.
+## Create a mapping with a comment
 
-## The five containers
+```python
+from yamluna import YAML, CommentedMap
 
-::: yamluna.CommentedMap
+config = CommentedMap({'port': 8080})
+config.yaml_add_eol_comment('HTTP', 'port')
+print(YAML().dump(config), end='')
+```
 
-::: yamluna.CommentedSeq
+Output:
 
-::: yamluna.CommentedSet
+```yaml
+port: 8080 # HTTP
+```
 
-::: yamluna.CommentedKeyMap
+Use plain `dict` and `list` objects when you don't need to add comments or choose formatting before saving.
 
-::: yamluna.CommentedKeySeq
+## Mapping methods
 
-::: yamluna.CommentedBase
+| Method | Effect |
+| --- | --- |
+| `insert(pos, key, value, comment=None)` | Insert an entry at a position |
+| `rename(old, new)` | Rename a key, keeping its position and comments |
+| `move_to_end(key, last=True)` | Move an entry to the end, or the start with `last=False` |
+| `non_merged_items()` | Iterate over explicitly stored entries, excluding inherited defaults |
 
-## What the node attributes hold
+## Comments and formatting
 
-`.ca` is a `Comment`, holding `CommentToken` objects; `.lc` is a `LineCol`; `.anchor` is an
-`Anchor`; `.tag` is a `Tag`; `.fa` is a `Format`. A `TaggedScalar` is the odd one out: it is a
-scalar rather than a container, and it exists so a tag no registered class claims still
-round-trips with its value.
+| Method or attribute | Use |
+| --- | --- |
+| `yaml_add_eol_comment(text, key, column=None)` | Add a comment after a value |
+| `yaml_set_comment_before_after_key(key, before=..., after=...)` | Add comments around an entry |
+| `yaml_set_start_comment(text)` | Set a collection heading |
+| `yaml_set_anchor(name, always_dump=False)` | Name an anchor; set `always_dump=True` to emit an unreferenced new anchor |
+| `.anchor.value` | Read the anchor name |
+| `.tag.value` | Read the resolved tag |
+| `.fa.set_flow_style()` / `.fa.set_block_style()` | Choose inline or block layout |
+| `.lc.line` / `.lc.col` | Read the original position, starting at zero |
+| `.lc.key(key)` / `.lc.value(key)` / `.lc.item(index)` | Read an entry's original position, or `None` if unavailable |
+| `.ca` | Access comment metadata; prefer the methods above for edits |
 
-::: yamluna.Comment
-
-::: yamluna.CommentToken
-
-::: yamluna.CommentMark
-
-::: yamluna.LineCol
-
-::: yamluna.Anchor
-
-::: yamluna.Tag
-
-::: yamluna.Format
-
-::: yamluna.TaggedScalar
+Positions describe the loaded file, not the document after edits. See [comments](../guide/comments.md), [anchors](../guide/anchors.md), and [known limitations](../guide/limitations.md).

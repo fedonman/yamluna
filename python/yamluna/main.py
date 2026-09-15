@@ -1,9 +1,8 @@
 """The `YAML` entry point.
 
-`YAML(typ='rt')` is the whole public API. `typ` accepts `'rt'` and nothing else; any
-other value raises `ValueError`. The safe, base and unsafe modes, `!!python/object:`,
-component substitution, plug-ins and the low-level `scan`/`compose`/`serialize` pipeline
-are deliberate omissions.
+`YAML()` is the whole public API. Round trip is the only mode there is: the safe, base
+and unsafe modes, `!!python/object:`, component substitution, plug-ins and the low-level
+`scan`/`compose`/`serialize` pipeline are deliberate omissions.
 
 The two halves of the pipeline are one line each:
 
@@ -73,13 +72,6 @@ _NO_EXTENSION: Final = (
     'the yamluna Rust extension (yamluna._yamluna) is not built. Build it with '
     '`maturin develop` from the repository root (or `pip install -e .`). Everything '
     'that does not touch the parser or the emitter works without it.'
-)
-
-_BAD_TYP: Final = (
-    "yamluna supports typ='rt' only; got {typ!r}. The safe/base/unsafe modes, "
-    '!!python/object:, component substitution, plug-ins and the low-level '
-    'scan/compose/serialize pipeline are deliberate omissions, not gaps -- see '
-    '"What it is not" in the README.'
 )
 
 
@@ -170,7 +162,7 @@ class YAML:
 
     Example:
         ```python
-        yaml = YAML()  # typ='rt' is the only mode
+        yaml = YAML()
         yaml.preserve_quotes = True
         yaml.indent(mapping=2, sequence=4, offset=2)
         data = yaml.load(Path('config.yaml'))
@@ -205,37 +197,25 @@ class YAML:
         'registry',
         'sequence_dash_offset',
         'sequence_indent',
-        'typ',
         'width',
     )
 
     def __init__(
         self,
         *,
-        typ: str | Sequence[str] = 'rt',
         output: WriteStream = None,
         registry: TagRegistry | None = None,
     ) -> None:
         """Create a reader and writer with ruamel's round-trip defaults.
 
         Args:
-            typ: The mode. Only `'rt'`, or a one-element sequence holding it, is accepted.
             output: Where the context-manager form writes. Nothing else reads it, so a
                 plain `dump` still needs its own stream or returns the text.
             registry: The tag registry this instance uses. A fresh empty `TagRegistry` by
                 default, so two instances never share registrations unless you hand the
                 same registry to both.
 
-        Raises:
-            ValueError: `typ` is anything other than `'rt'`.
-
         """
-        requested = list(typ) if isinstance(typ, list | tuple) else [typ]
-        if requested != ['rt']:
-            raise ValueError(_BAD_TYP.format(typ=typ))
-
-        self.typ: list[str] = ['rt']
-
         # One registry per instance. ruamel's `register_class` is a classmethod mutating
         # process-global tables, so two of its `YAML()` objects poison each other.
         self.registry: TagRegistry = TagRegistry() if registry is None else registry
@@ -325,8 +305,8 @@ class YAML:
         self._empty: dict[int, Doc] = {}
 
     def __repr__(self) -> str:
-        """Return `repr(self)`, which names the mode and nothing else."""
-        return f'YAML(typ={self.typ!r})'
+        """Return `repr(self)`. There is one mode and no constructor state to name."""
+        return 'YAML()'
 
     # -- settings -------------------------------------------------------------------
 
@@ -421,6 +401,17 @@ class YAML:
         Instances of `cls` then dump with a tag, and that tag loads back as an instance.
         No other `YAML` sees the registration unless it was given the same registry.
 
+        Use `@yaml.register_class` (or its alias `@yaml.register`) above a class, or call
+        `yaml.register_class(MyClass, ...)` after defining it. The decorators are used
+        without parentheses: `cls` is required. A decorated class can set `yaml_tag`,
+        `yaml_source`, and the `to_yaml` / `from_yaml` classmethods. Keyword arguments in
+        a direct call override those attributes and hooks. Registering the same class
+        again replaces its registration, including any previously supplied hooks.
+
+        Without hooks, instances are written as mappings of their state and restored
+        without calling `__init__`. Supply hooks for types that need another representation
+        or construction procedure, such as `Decimal` and `numpy.ndarray`.
+
         Args:
             cls: The class to register.
             tag: The tag name to write, without the leading `!`. Defaults to
@@ -433,19 +424,118 @@ class YAML:
             to_yaml: How to write an instance, as `(representer, obj) -> int`. A class
                 from a C extension cannot be given a `to_yaml` classmethod, so pass one
                 here instead; it also wins over a classmethod the class does have.
+                Return the node index from `representer.represent_scalar`,
+                `representer.represent_sequence`, or `representer.represent_mapping`.
             from_yaml: How to read one back, as `(constructor, node) -> object`, with the
                 same precedence over a `from_yaml` on the class.
+                For collection contents, call `constructor.construct_mapping(node)` or
+                `constructor.construct_sequence(node)`; for a scalar, read `node.value`.
 
         Returns:
             `cls`, so this also works as a decorator.
 
-        Example:
+        Examples:
+            Register at class definition time with either decorator spelling:
+
             ```python
+            from dataclasses import dataclass
+
+            from yamluna import YAML
+
+            yaml = YAML()
+
+
             @yaml.register_class
-            class Circuit: ...
+            @dataclass
+            class Circuit:
+                name: str
 
 
+            @yaml.register
+            @dataclass
+            class Gate:
+                name: str
+
+
+            values = {'circuit': Circuit('main'), 'gate': Gate('input')}
+            assert yaml.load(yaml.dump(values)) == values
+            ```
+
+            Register an existing class by calling the method. Omit the keyword options to
+            use the class defaults, or supply `tag` and `source` to choose its identity:
+
+            ```python
+            from dataclasses import dataclass
+
+            from yamluna import YAML
+
+
+            @dataclass
+            class Circuit:
+                name: str
+
+
+            yaml = YAML()
+            yaml.register_class(Circuit)
+            # Re-register with an explicit tag name and namespace.
+            yaml.register_class(Circuit, tag='Circ', source='myapp')
+            text = yaml.dump(Circuit('main'))
+            assert yaml.load(text) == Circuit('main')
+            ```
+
+            Configure a decorated class through attributes and classmethod hooks:
+
+            ```python
+            from dataclasses import dataclass
+
+            from yamluna import YAML
+
+            yaml = YAML()
+
+
+            @yaml.register_class
+            @dataclass
+            class Label:
+                value: str
+                yaml_tag = '!Text'
+                yaml_source = 'myapp'
+
+                @classmethod
+                def to_yaml(cls, representer, obj):
+                    return representer.represent_scalar(representer.plan.tags[cls], obj.value)
+
+                @classmethod
+                def from_yaml(cls, constructor, node):
+                    return cls(node.value)
+
+
+            text = yaml.dump(Label('ready'))
+            assert yaml.load(text) == Label('ready')
+            ```
+
+            Pass ordinary functions for a class you cannot modify. These functions take
+            two arguments, without the `cls` argument of a classmethod. Use the tag from
+            `representer.plan.tags` so it matches the document's selected namespace handle:
+
+            ```python
+            from decimal import Decimal
+
+            from yamluna import YAML
+
+
+            def write_decimal(representer, value):
+                tag = representer.plan.tags[type(value)]
+                return representer.represent_scalar(tag, str(value))
+
+
+            def read_decimal(constructor, node):
+                return Decimal(node.value)
+
+
+            yaml = YAML()
             yaml.register_class(Decimal, to_yaml=write_decimal, from_yaml=read_decimal)
+            text = yaml.dump({'price': Decimal('19.99')})
+            assert yaml.load(text)['price'] == Decimal('19.99')
             ```
 
         """
@@ -668,6 +758,9 @@ def register_class(
     """Register `cls` with `default_registry`.
 
     Only a `YAML` constructed with `registry=default_registry` sees the registration.
+    Use `@register_class` without parentheses or call `register_class(MyClass, ...)`.
+    Class attributes, keyword options, and hooks follow the same rules as
+    `YAML.register_class`; its docstring includes complete custom-hook examples.
 
     Args:
         cls: The class to register.
@@ -681,9 +774,37 @@ def register_class(
             it also wins over a classmethod the class does have.
         from_yaml: How to read one back, as `(constructor, node) -> object`, with the same
             precedence over a `from_yaml` on the class.
+            Use `constructor.construct_mapping(node)` or `constructor.construct_sequence(node)`
+            for collection contents, or `node.value` for a scalar.
 
     Returns:
         `cls`, so this also works as a decorator.
+
+    Example:
+        Use both registration forms with the shared default registry:
+
+        ```python
+        from dataclasses import dataclass
+
+        from yamluna import YAML, default_registry, register_class
+
+
+        @register_class
+        @dataclass
+        class Circuit:
+            name: str
+
+
+        @dataclass
+        class Gate:
+            name: str
+
+
+        register_class(Gate, tag='Input', source='myapp')
+        yaml = YAML(registry=default_registry)
+        values = {'circuit': Circuit('main'), 'gate': Gate('input')}
+        assert yaml.load(yaml.dump(values)) == values
+        ```
 
     """
     return default_registry.register_class(

@@ -194,6 +194,14 @@ class TagRegistry:
         Registering a class path twice replaces the earlier entry, so re-running a module
         or reloading it leaves one registration rather than two.
 
+        Use `@registry.register_class` (or `@registry.register`) without parentheses, or
+        call `registry.register_class(MyClass, ...)` after defining the class. Decorated
+        classes can define `yaml_tag`, `yaml_source`, and `to_yaml` / `from_yaml`
+        classmethods; explicit keyword arguments override the corresponding attributes
+        and hooks. Pass this registry to `YAML(registry=registry)` to use its registrations.
+        See `YAML.register_class` for complete classmethod and external callback examples,
+        including the `write_decimal` and `read_decimal` functions for `Decimal`.
+
         Args:
             cls: The class to register.
             tag: The name written after the handle. Defaults to `cls.yaml_tag` when the
@@ -214,12 +222,39 @@ class TagRegistry:
             `cls` itself, so the method also works as a decorator.
 
         Example:
+            Share a registry between a writer and a reader, using both decorators and a
+            direct call with explicit tag options:
+
             ```python
+            from dataclasses import dataclass
+
+            from yamluna import YAML, TagRegistry
+
+            registry = TagRegistry()
+
+
+            @registry.register_class
+            @dataclass
+            class Circuit:
+                name: str
+
+
             @registry.register
-            class Circuit: ...
+            @dataclass
+            class Gate:
+                name: str
 
 
-            registry.register_class(Decimal, to_yaml=write_decimal, from_yaml=read_decimal)
+            @dataclass
+            class Label:
+                value: str
+
+
+            registry.register_class(Label, tag='Text', source='myapp')
+            writer = YAML(registry=registry)
+            reader = YAML(registry=registry)
+            values = {'circuit': Circuit('main'), 'gate': Gate('input'), 'label': Label('ready')}
+            assert reader.load(writer.dump(values)) == values
             ```
 
         """

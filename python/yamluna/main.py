@@ -428,6 +428,8 @@ class YAML:
                 `representer.represent_sequence`, or `representer.represent_mapping`.
             from_yaml: How to read one back, as `(constructor, node) -> object`, with the
                 same precedence over a `from_yaml` on the class.
+                For collection contents, call `constructor.construct_mapping(node)` or
+                `constructor.construct_sequence(node)`; for a scalar, read `node.value`.
 
         Returns:
             `cls`, so this also works as a decorator.
@@ -772,6 +774,8 @@ def register_class(
             it also wins over a classmethod the class does have.
         from_yaml: How to read one back, as `(constructor, node) -> object`, with the same
             precedence over a `from_yaml` on the class.
+            Use `constructor.construct_mapping(node)` or `constructor.construct_sequence(node)`
+            for collection contents, or `node.value` for a scalar.
 
     Returns:
         `cls`, so this also works as a decorator.

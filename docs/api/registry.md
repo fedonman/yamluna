@@ -8,9 +8,11 @@ Each `YAML()` starts with its own registrations. Use `yaml.register_class()` for
 from dataclasses import dataclass
 from yamluna import YAML, TagRegistry
 
+
 @dataclass
 class Server:
     port: int
+
 
 registry = TagRegistry()
 writer = YAML(registry=registry)

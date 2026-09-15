@@ -217,6 +217,8 @@ class TagRegistry:
                 cannot add one to, such as a type from a C extension.
             from_yaml: How to read one back, as `(constructor, node) -> object`. Wins over
                 a `from_yaml` on the class in the same way.
+                Use `constructor.construct_mapping(node)` or `constructor.construct_sequence(node)`
+                for collection contents, or `node.value` for a scalar.
 
         Returns:
             `cls` itself, so the method also works as a decorator.

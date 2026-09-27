@@ -12,7 +12,7 @@ dual licensed as above, without any additional terms or conditions.
 
 ## The vendored scanner
 
-`crates/yamluna-scanner` is a fork of `saphyr-parser` 0.0.12 and carries its own
+`crates/yamluna-scanner` is a fork of `saphyr-parser` 0.1.0 and carries its own
 copyright holders under the same dual licence. Redistributing it means carrying
 their licences too: they are in `crates/yamluna-scanner/LICENSE` and
 `crates/yamluna-scanner/.licenses/`, and every change made to the fork is logged

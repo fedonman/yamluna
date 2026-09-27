@@ -82,7 +82,7 @@ fn test_empty_doc() {
         [
             Event::StreamStart,
             Event::DocumentStart(true),
-            Event::Scalar("~".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar("".into(), ScalarStyle::Plain, AnchorRef::default(), None),
             Event::DocumentEnd,
             Event::StreamEnd,
         ]
@@ -342,7 +342,7 @@ fn test_bad_docstart() {
         [
             Event::StreamStart,
             Event::DocumentStart(true),
-            Event::Scalar("~".into(), ScalarStyle::Plain, AnchorRef::default(), None),
+            Event::Scalar("".into(), ScalarStyle::Plain, AnchorRef::default(), None),
             Event::DocumentEnd,
             Event::StreamEnd,
         ]

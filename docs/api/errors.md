@@ -1,86 +1,23 @@
 # Errors
 
-The hierarchy mirrors `ruamel.yaml.error`, one class per ruamel class that `typ='rt'` can
-raise, so an `except` block carried over from ruamel keeps compiling and keeps catching.
-[Errors](../guide/errors.md) shows what each one looks like on a real broken document.
+All YAML exceptions below inherit from `YAMLError` and can be imported from `yamluna`. Catch that base class to report YAML failures together.
 
-```text
-Exception
-├── YAMLError
-│   └── MarkedYAMLError
-│       ├── ScannerError
-│       ├── ParserError
-│       ├── ComposerError
-│       ├── ConstructorError
-│       ├── RepresenterError
-│       ├── EmitterError
-│       └── DuplicateKeyError
-└── YAMLStreamError
+| Exception | Meaning |
+| --- | --- |
+| `ScannerError` | Invalid YAML syntax or an undefined alias |
+| `ComposerError` | `load()` received more than one document |
+| `ConstructorError` | A value or tag could not be loaded |
+| `DuplicateKeyError` | A mapping repeats a key; subclass of `ConstructorError` |
+| `RepresenterError` | An object could not be converted to YAML |
+| `EmitterError` | The document could not be written as YAML |
+| `YAMLStreamError` | An unsupported input, output, or context-manager argument |
 
-Warning
-├── YAMLWarning
-│   ├── MarkedYAMLWarning
-│   └── ReusedAnchorWarning
-└── YAMLFutureWarning
-    └── MarkedYAMLFutureWarning
-        └── DuplicateKeyFutureWarning
-```
+`MarkedYAMLError` adds `problem`, `problem_mark`, `context`, and `context_mark`. A mark has `name`, `line`, and `column` attributes. Line and column numbers start at zero. Not every error has a mark; use `getattr(error, 'problem_mark', None)`.
 
-Two things in that tree are worth knowing before you write the `except`. `YAMLStreamError`
-sits beside `YAMLError` rather than under it, which is where ruamel puts it, so it is not
-caught by `except YAMLError`. And two of the names never fire: the Rust core reports every
-parse failure as a `ScannerError`, so `ParserError` is an import-compatibility shim, and
-yamluna keeps both definitions of a re-used anchor, so `ReusedAnchorWarning` is never issued.
-Catching `YAMLError` covers everything yamluna raises out of a load or a dump.
+`ParserError` is available for ruamel.yaml compatibility; syntax errors from yamluna are reported as `ScannerError`.
 
-## Errors
+Warnings inherit from `YAMLWarning`. With `allow_duplicate_keys = True`, a repeated key emits `DuplicateKeyFutureWarning` and the last value wins.
 
-::: yamluna.YAMLError
+File-access errors remain ordinary Python exceptions such as `FileNotFoundError`. Invalid settings may raise `ValueError` or `TypeError`.
 
-::: yamluna.MarkedYAMLError
-
-::: yamluna.ScannerError
-
-::: yamluna.ParserError
-
-::: yamluna.ComposerError
-
-::: yamluna.ConstructorError
-
-::: yamluna.RepresenterError
-
-::: yamluna.EmitterError
-
-::: yamluna.DuplicateKeyError
-
-::: yamluna.YAMLStreamError
-
-## Warnings
-
-::: yamluna.YAMLWarning
-
-::: yamluna.MarkedYAMLWarning
-
-::: yamluna.ReusedAnchorWarning
-
-::: yamluna.YAMLFutureWarning
-
-::: yamluna.MarkedYAMLFutureWarning
-
-::: yamluna.DuplicateKeyFutureWarning
-
-## Positions
-
-A `MarkedYAMLError` carries up to two marks, `context_mark` and `problem_mark`, and both are
-`Mark` objects. `line` and `column` are 0-based; the rendered message prints them 1-based.
-`FileMark`, `StringMark` and `StreamMark` are ruamel's three names for the same thing, and in
-yamluna they are the same class: a mark with no `buffer` behaves exactly as ruamel's
-`StreamMark` does.
-
-::: yamluna.Mark
-
-::: yamluna.FileMark
-
-::: yamluna.StringMark
-
-::: yamluna.StreamMark
+See [handle errors](../guide/errors.md) for a runnable example with output.

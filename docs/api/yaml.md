@@ -1,25 +1,61 @@
-# The YAML object
+# YAML
 
-`YAML()` is the entry point and, for most programs, the only name you import. One instance
-carries the emitter settings, the tag registry, and the records of the stream it loaded last.
-`typ='rt'` is the only mode there is, so `YAML()` with no arguments is what you want; any
-other `typ` raises `ValueError`.
+```python
+from yamluna import YAML
 
-The settings are plain attributes you assign after construction rather than constructor
-arguments. Each one is documented below with what it does to the output;
-[Settings](../guide/settings.md) shows them working on a real document.
+yaml = YAML()
+print(yaml.dump(yaml.load('ready: true\n')), end='')
+```
 
-::: yamluna.YAML
+Output:
 
-## One registry for a whole application
+```yaml
+ready: true
+```
 
-Each `YAML()` builds its own empty [`TagRegistry`](registry.md#yamluna.TagRegistry), so two
-instances in one process never see each other's registrations. When you want the opposite,
-one registry an application registers everything with, use these two names and construct the
-instance as `YAML(registry=default_registry)`. A plain `YAML()` never consults it.
+## Constructor
 
-[Custom classes and tags](../guide/custom-classes.md) covers which of the two you want.
+`YAML(*, output=None, registry=None)`
 
-::: yamluna.register_class
+- `output`: destination for the `with` form below.
+- `registry`: a `TagRegistry` to share. By default, each instance gets its own.
 
-::: yamluna.default_registry
+There is no `typ` argument. Set formatting options after creating the instance.
+
+## Methods
+
+| Method | Returns |
+| --- | --- |
+| `load(stream)` | One document as a Python object, or `None` for an empty document |
+| `load_all(stream)` | A list of document objects |
+| `dump(data, stream=None)` | YAML text, or `None` when writing to a destination |
+| `dump_all(documents, stream=None)` | YAML text for an iterable of documents, or `None` when writing |
+| `indent(mapping=None, sequence=None, offset=None)` | `None`; sets the supplied indentation options |
+| `register_class(cls, *, tag=None, source=None, to_yaml=None, from_yaml=None)` | The registered class; also available as `register` |
+
+Input accepts YAML text, bytes, bytearrays, paths, and readable streams. Output accepts paths and writable streams. Use `Path('config.yaml')` for a filename. See [read and write YAML](../guide/load-and-dump.md).
+
+## Write several documents with a context manager
+
+```python
+from io import StringIO
+from yamluna import YAML
+
+output = StringIO()
+with YAML(output=output) as yaml:
+    yaml.dump({'name': 'web'})
+    yaml.dump({'name': 'worker'})
+print(output.getvalue(), end='')
+```
+
+Output:
+
+```yaml
+name: web
+---
+name: worker
+```
+
+Inside the block, `dump()` returns `None` and collects documents. A successful exit writes them together; an exception leaves the destination untouched. Pass the destination to `YAML(output=...)`, not to the individual `dump()` calls.
+
+See [settings](../guide/settings.md) and [errors](errors.md).

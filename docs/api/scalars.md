@@ -1,73 +1,42 @@
-# Scalar types
+# String and number types
 
-Every scalar a load produces keeps its source lexeme: the characters exactly as the author
-wrote them, quotes and block header included. A scalar you did not change is re-emitted from
-that text, so its spelling survives whatever a re-formatter would have done to it:
+Use these types when you want to choose how a new value appears in YAML. Loaded values keep their original spelling automatically.
 
-```pycon
->>> from yamluna import YAML
->>> yaml = YAML()
->>> data = yaml.load('a: 1_000.5\nb: +12\nc: 0X1F\nd: 2001-12-14t21:59:43.10-05:00\n')
->>> data['a'], data['c']
-(ScalarFloat(1_000.5), HexInt(0X1F))
->>> data['a'] + 0.5, data['c'] + 1
-(1001.0, 32)
->>> print(yaml.dump(data), end='')
-a: 1_000.5
-b: +12
-c: 0X1F
-d: 2001-12-14t21:59:43.10-05:00
+| Type or helper | Example | YAML style |
+| --- | --- | --- |
+| `LiteralScalarString` | `LiteralScalarString('one\ntwo\n')` | A `\|` block that keeps line breaks |
+| `FoldedScalarString` | `FoldedScalarString('one paragraph\n')` | A `>` block |
+| `SingleQuotedScalarString` | `SingleQuotedScalarString('hello')` | `'hello'` |
+| `DoubleQuotedScalarString` | `DoubleQuotedScalarString('hello')` | `"hello"` |
+| `PlainScalarString` | `PlainScalarString('hello')` | Unquoted, when safe for the value |
+| `ScalarInt` | `ScalarInt(7, width=3)` | `007` |
+| `HexInt` | `HexInt(31, caps=True)` | `0x1F` |
+| `OctalInt` | `OctalInt(493)` | `0o755` |
+| `BinaryInt` | `BinaryInt(10)` | `0b1010` |
+| `ScalarFloat` | `ScalarFloat(1.5)` | A formatted floating-point number |
+| `ScalarBoolean` | Loaded from a non-default boolean spelling | Preserves spellings such as `TRUE` |
+| `TimeStamp` | Loaded from a timestamp | Preserves timestamp formatting |
+| `preserve_literal(text)` | `preserve_literal('one\ntwo\n')` | Normalize line endings and use a literal block |
+| `walk_tree(data)` | `walk_tree(config)` | Convert multiline strings to literal blocks in place |
+
+`PreservedScalarString` is an alias for `LiteralScalarString`.
+
+Set `yaml.preserve_quotes = True` when using quoted-string classes:
+
+```python
+from yamluna import YAML, DoubleQuotedScalarString
+
+yaml = YAML()
+yaml.preserve_quotes = True
+print(yaml.dump({'version': DoubleQuotedScalarString('1.0')}), end='')
 ```
 
-Assign a value of your own and the lexeme no longer applies, so the emitter spells it in the
-style the class names. That is the other half of what these types are for: constructing one
-is how you choose the style of a value you are writing. [Scalar styles and
-types](../guide/scalars.md) works through the choices.
+Output:
 
-## Strings
+```yaml
+version: "1.0"
+```
 
-One `str` subclass per YAML scalar style. The value itself is always the cooked one, with
-escapes resolved and block scalars folded, so these compare and concatenate like any other
-string. `PreservedScalarString` is ruamel's older name for `LiteralScalarString` and is the
-same class, so `isinstance(s, LiteralScalarString)` catches both.
+`ScalarBoolean` behaves like a boolean in conditions, but `value is True` is false for these wrapper objects. Use `bool(value)` or an equality comparison.
 
-::: yamluna.ScalarString
-
-::: yamluna.LiteralScalarString
-
-::: yamluna.FoldedScalarString
-
-::: yamluna.SingleQuotedScalarString
-
-::: yamluna.DoubleQuotedScalarString
-
-::: yamluna.PlainScalarString
-
-::: yamluna.PreservedScalarString
-
-## String helpers
-
-::: yamluna.preserve_literal
-
-::: yamluna.walk_tree
-
-## Numbers, booleans and timestamps
-
-`ScalarInt` and its three base subclasses are `int`s, `ScalarFloat` is a `float`,
-`ScalarBoolean` is an `int` (Python has no other way to subclass `bool`), and `TimeStamp` is a
-`datetime`. Arithmetic on any of them gives you a plain builtin back, except for the
-in-place operators on `ScalarInt`, which keep the formatting.
-
-::: yamluna.ScalarInt
-
-::: yamluna.HexInt
-
-::: yamluna.OctalInt
-
-::: yamluna.BinaryInt
-
-::: yamluna.ScalarFloat
-
-::: yamluna.ScalarBoolean
-
-::: yamluna.TimeStamp
+See [strings and numbers](../guide/scalars.md) for editing examples.

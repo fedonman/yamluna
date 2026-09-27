@@ -45,23 +45,12 @@ def klass(name: str, module: str) -> type:
     return type(name, (), {'__module__': module})
 
 
-# -- typ ------------------------------------------------------------------------------
+# -- construction ---------------------------------------------------------------------
 
 
-def test_default_is_round_trip() -> None:
-    assert YAML().typ == ['rt']
-
-
-@pytest.mark.parametrize('typ', ['rt', ['rt'], ('rt',)])
-def test_rt_is_accepted_however_it_is_spelled(typ: Any) -> None:
-    assert YAML(typ=typ).typ == ['rt']
-
-
-@pytest.mark.parametrize('typ', ['safe', 'base', 'unsafe', ['safe'], ['rt', 'safe'], 42])
-def test_every_other_typ_is_rejected(typ: Any) -> None:
-    with pytest.raises(ValueError, match='README') as exc:
-        YAML(typ=typ)
-    assert "typ='rt' only" in str(exc.value)
+def test_repr_names_no_mode() -> None:
+    # Round trip is the only mode, so there is none to name and no `typ` to carry.
+    assert repr(YAML()) == 'YAML()'
 
 
 # -- settings -------------------------------------------------------------------------

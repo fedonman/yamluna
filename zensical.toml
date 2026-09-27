@@ -1,7 +1,7 @@
 [project]
 site_url = "https://fedonman.github.io/yamluna/"
 site_name = "yamluna"
-site_description = "Round-trip YAML for Python: comments, blank lines, quoting and layout survive a load, an edit and a dump."
+site_description = "Edit YAML from Python while keeping comments, quotes, and layout."
 site_author = "Vyron Vasileiadis"
 
 copyright = "Copyright &copy; 2026 Vyron Vasileiadis"
@@ -13,37 +13,33 @@ edit_uri = "edit/main/docs/"
 nav = [
   { "Home" = "index.md" },
   { "Why yamluna" = "why.md" },
-  { "How it compares" = "comparison.md" },
-  { "Install" = "install.md" },
-  { "Guide" = [
-      { "Overview" = "guide/index.md" },
-      { "Loading and dumping" = "guide/load-and-dump.md" },
-      { "Comments and blank lines" = "guide/comments.md" },
-      { "Scalar styles and types" = "guide/scalars.md" },
-      { "Anchors, aliases and merge keys" = "guide/anchors.md" },
-      { "Custom classes and tags" = "guide/custom-classes.md" },
-      { "Settings" = "guide/settings.md" },
-      { "Errors" = "guide/errors.md" },
+  { "Compare libraries" = "comparison.md" },
+  { "Get started" = [
+      { "Install" = "install.md" },
+      { "Read and write YAML" = "guide/load-and-dump.md" },
       { "Examples" = "guide/examples.md" },
   ] },
+  { "Common tasks" = [
+      { "Find a task" = "guide/index.md" },
+      { "Comments" = "guide/comments.md" },
+      { "Strings and numbers" = "guide/scalars.md" },
+      { "Anchors and merges" = "guide/anchors.md" },
+      { "Custom classes" = "guide/custom-classes.md" },
+      { "Settings" = "guide/settings.md" },
+      { "Handle errors" = "guide/errors.md" },
+      { "Known limitations" = "guide/limitations.md" },
+  ] },
   { "Migrating from ruamel.yaml" = [
-      { "The port" = "migrating/index.md" },
-      { "Behaviour differences" = "migrating/differences.md" },
+      { "Switch to yamluna" = "migrating/index.md" },
+      { "Behavior differences" = "migrating/differences.md" },
   ] },
   { "API reference" = [
       { "Overview" = "api/index.md" },
       { "YAML" = "api/yaml.md" },
       { "Containers" = "api/containers.md" },
-      { "Scalar types" = "api/scalars.md" },
+      { "Strings and numbers" = "api/scalars.md" },
       { "Tag registry" = "api/registry.md" },
       { "Errors" = "api/errors.md" },
-  ] },
-  { "Internals" = [
-      { "Architecture" = "internals/index.md" },
-      { "The document model" = "internals/document-model.md" },
-      { "The forked scanner" = "internals/scanner.md" },
-      { "Testing" = "internals/testing.md" },
-      { "Measured ruamel behaviour" = "internals/ruamel-behaviour.md" },
   ] },
   { "Changelog" = "changelog.md" },
 ]

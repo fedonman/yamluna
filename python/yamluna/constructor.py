@@ -341,10 +341,13 @@ class Constructor:
 
     One instance per load is enough: anchors are reset for each document, as YAML
     requires. `source` and `name` are used only to give errors a snippet and a filename.
+    In a `from_yaml` hook, use `construct_mapping(node)` or `construct_sequence(node)`
+    to read a collection's contents without applying its own tag again.
     """
 
     __slots__ = (
         '_anchors',
+        '_containers',
         '_directives',
         '_nodes',
         '_version',
@@ -391,6 +394,7 @@ class Constructor:
         self.name = name
         self._nodes: list[Node] = []
         self._anchors: dict[str, Any] = {}
+        self._containers: dict[int, CommentedMap | CommentedSeq] = {}
         self._directives: dict[str, str] = {}
         self._version: tuple[int, int] | None = version
 
@@ -466,6 +470,7 @@ class Constructor:
         """
         self._nodes = doc.nodes
         self._anchors = {}
+        self._containers = {}
         self._directives = dict(doc.tag_directives)
         self._version = doc.version or self.version
         if doc.root is None:
@@ -643,7 +648,36 @@ class Constructor:
             # exists. Bound it must be: `{&a [x]: 1, *a: 2}` aliases a key from inside its
             # own mapping.
             return self._register(node, seq)
+        return self._tagged_container(self.construct_sequence(node), node)
+
+    def construct_sequence(self, node: Node) -> CommentedSeq:
+        """Construct a sequence's contents without applying its own tag.
+
+        Use this inside a `from_yaml` hook. Child nodes are fully constructed, including
+        their registered classes and aliases. Repeated calls for the same node return
+        the same sequence, so child hooks run only once. Contents already built before
+        entering the hook are reused.
+
+        Args:
+            node: A sequence node from the document this constructor is loading.
+
+        Returns:
+            A `CommentedSeq` with the items, comments, and formatting of `node`.
+
+        Raises:
+            ConstructorError: `node` is not a sequence, or a child cannot be constructed.
+            ComposerError: An alias names an anchor that has not been defined.
+            DuplicateKeyError: A child mapping repeats a key or merge key.
+
+        """
+        if node.kind != KIND_SEQUENCE:
+            raise self._error(kind='constructor', message='expected a sequence node', node=node)
+        cached = self._containers.get(id(node))
+        if isinstance(cached, CommentedSeq):
+            return cached
         seq = CommentedSeq()
+        # Keep the raw container separate from the object a registered hook returns.
+        self._containers[id(node)] = seq
         self._register(node, seq)
         for position, child in enumerate(node.children):
             item = self._nodes[child]
@@ -654,7 +688,7 @@ class Constructor:
             self._note_source(seq, position, value, item)
             seq.lc.add_idx_line_col(position, [item.line, item.col])
         self._decorate(seq, node)
-        return self._tagged_container(seq, node)
+        return seq
 
     def _place_children(self, owner: Any, items: Iterable[tuple[int, int]]) -> None:
         """Record where each child of a key collection was written."""
@@ -666,8 +700,8 @@ class Constructor:
             owner.lc.add_idx_line_col(position, [item.line, item.col])
 
     def _mapping(self, node: Node, *, as_key: bool) -> Any:
-        pairs = list(zip(node.children[::2], node.children[1::2], strict=True))
         if as_key:
+            pairs = list(zip(node.children[::2], node.children[1::2], strict=True))
             built = [(self._build(k, as_key=True), self._build(v, as_key=True)) for k, v in pairs]
             key_map: Any = CommentedKeyMap(built)
             self._register(node, key_map)
@@ -676,11 +710,40 @@ class Constructor:
                 k, v = self._nodes[key_index], self._nodes[value_index]
                 key_map.lc.add_kv_line_col(key, [k.line, k.col, v.line, v.col])
             return key_map
+        return self._tagged_container(self.construct_mapping(node), node)
 
+    def construct_mapping(self, node: Node) -> CommentedMap:
+        """Construct a mapping's contents without applying its own tag.
+
+        Use this inside a `from_yaml` hook. Keys and values are fully constructed,
+        including nested collections, registered classes, and aliases. Merge keys and
+        duplicate-key settings follow the normal loading rules. Repeated calls for the
+        same node return the same mapping without invoking child hooks again.
+
+        Args:
+            node: A mapping node from the document this constructor is loading.
+
+        Returns:
+            A `CommentedMap` with the entries, merges, comments, and formatting of `node`.
+
+        Raises:
+            ConstructorError: `node` is not a mapping, or a child cannot be constructed.
+            ComposerError: An alias names an anchor that has not been defined.
+            DuplicateKeyError: A mapping repeats a key or merge key.
+
+        """
+        if node.kind != KIND_MAPPING:
+            raise self._error(kind='constructor', message='expected a mapping node', node=node)
+        cached = self._containers.get(id(node))
+        if isinstance(cached, CommentedMap):
+            return cached
+
+        pairs = list(zip(node.children[::2], node.children[1::2], strict=True))
         merge_positions = set(node.merge)
         explicit_positions = set(node.explicit)
         explicit_keys: list[Any] = []
         mapping = CommentedMap()
+        self._containers[id(node)] = mapping
         self._register(node, mapping)
         merges: list[Mapping[Any, Any]] = []
         merge_pos: int | None = None
@@ -725,7 +788,7 @@ class Constructor:
             mapping.add_yaml_merge(merges)
             mapping.merge.merge_pos = merge_pos or 0
         self._decorate(mapping, node)
-        return self._tagged_container(mapping, node)
+        return mapping
 
     def _merge_values(self, index: int, node: Node) -> list[Mapping[Any, Any]]:
         """Return the mappings behind a `<<`: one alias, or a sequence of them."""

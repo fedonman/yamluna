@@ -42,7 +42,7 @@ from yamluna.comments import (
     CommentedSet,
     TaggedScalar,
 )
-from yamluna.constructor import UNRESOLVED, construct, construct_all, resolve
+from yamluna.constructor import UNRESOLVED, Constructor, construct, construct_all, resolve
 from yamluna.error import (
     ComposerError,
     ConstructorError,
@@ -595,6 +595,104 @@ def test_a_from_yaml_hook_passed_at_registration_is_used() -> None:
     node = scalar('7', tag=('!', 'Circuit', '!Circuit'))
     got = tree(mapping([('k', node)]), registry=registry)['k']
     assert type(got) is Circuit and got.qubits == 7
+
+
+@pytest.mark.parametrize(
+    ('method', 'container', 'keys', 'kind'),
+    [
+        ('construct_mapping', mapping, ('child', 'alias'), CommentedMap),
+        ('construct_sequence', seq, (0, 1), CommentedSeq),
+    ],
+)
+def test_collection_hooks_reuse_contents_and_preserve_aliases(method, container, keys, kind):
+    calls = []
+
+    def read_child(constructor, node):
+        calls.append('child')
+        return Circuit(**constructor.construct_mapping(node))
+
+    def read_parent(constructor, node):
+        calls.append('parent')
+        contents = getattr(constructor, method)(node)
+        assert getattr(constructor, method)(node) is contents
+        return Custom(contents)
+
+    registry = TagRegistry()
+    registry.register_class(Circuit, from_yaml=read_child)
+    registry.register_class(Custom, from_yaml=read_parent)
+    child = mapping([('qubits', '7')], tag=('!', 'Circuit', '!Circuit'), anchor='child')
+    children = [child, alias('child')]
+    entries = list(zip(keys, children, strict=True)) if container is mapping else children
+    parent = container(entries, tag=('!', 'Custom', '!Custom'), anchor='parent')
+    got = tree(
+        mapping([('parent', parent), ('copy', alias('parent')), ('child', alias('child'))]),
+        registry=registry,
+    )
+
+    assert calls == ['child', 'parent']
+    assert got['copy'] is got['parent']
+    contents = got['parent'].a
+    assert type(contents) is kind
+    assert contents[keys[0]].qubits == 7
+    assert contents[keys[0]] is contents[keys[1]] is got['child']
+
+
+def test_construct_mapping_in_a_hook_preserves_merges_and_comments():
+    def read(constructor, node):
+        return Custom(constructor.construct_mapping(node))
+
+    registry = TagRegistry()
+    registry.register_class(Custom, from_yaml=read)
+    base = mapping([('nested', seq(['true', '2.5']))], anchor='base')
+    own = scalar('3', eol=comment('# count', own_line=False, col=12))
+    tagged = mapping(
+        [('<<', alias('base')), ('count', own)],
+        merge=[0],
+        tag=('!', 'Custom', '!Custom'),
+    )
+    got = tree(mapping([('base', base), ('custom', tagged)]), registry=registry)
+
+    state = got['custom'].a
+    assert state == {'nested': [True, 2.5], 'count': 3}
+    assert state.merge[0] is got['base']
+    assert state['nested'] is got['base']['nested']
+    assert state.ca.items['count'][C_VALUE_EOL].value == '# count'
+
+
+@pytest.mark.parametrize(
+    ('method', 'node', 'expected'),
+    [
+        ('construct_mapping', mapping([], tag=('!', 'Custom', '!Custom')), {}),
+        ('construct_sequence', seq([], tag=('!', 'Custom', '!Custom')), []),
+    ],
+)
+def test_collection_helpers_handle_empty_nodes_and_reset_between_documents(method, node, expected):
+    def read(constructor, node):
+        return Custom(getattr(constructor, method)(node))
+
+    registry = TagRegistry()
+    registry.register_class(Custom, from_yaml=read)
+    constructor = Constructor(registry=registry)
+    document = doc(node)
+    first = constructor.construct(document).a
+    second = constructor.construct(document).a
+    assert first == second == expected
+    assert first is not second
+
+
+@pytest.mark.parametrize(
+    ('method', 'node', 'expected'),
+    [
+        ('construct_mapping', scalar('1', line=4, col=2), 'mapping'),
+        ('construct_mapping', seq([], line=4, col=2), 'mapping'),
+        ('construct_sequence', scalar('1', line=4, col=2), 'sequence'),
+        ('construct_sequence', mapping([], line=4, col=2), 'sequence'),
+    ],
+)
+def test_collection_helpers_reject_the_wrong_node_kind(method, node, expected):
+    with pytest.raises(ConstructorError, match=f'expected a {expected} node') as excinfo:
+        getattr(Constructor(), method)(node)
+    assert 'line 5, column 3' in str(excinfo.value)
 
 
 def test_a_class_with_no_from_yaml_and_no_mapping_state_says_both_ways_to_fix_it() -> None:

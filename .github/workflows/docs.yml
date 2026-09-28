@@ -20,9 +20,9 @@ jobs:
     name: zensical build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - uses: actions/configure-pages@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: actions/configure-pages@v6
       - run: uv venv --python 3.13
       # `mkdocstrings[python]` is not optional: docs/api/*.md are `:::` directives, and
       # without the handler every page under "API reference" renders as an empty page.
@@ -40,7 +40,7 @@ jobs:
             grep -E 'Warning|issues? found' build.log
             exit 1
           fi
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
@@ -53,4 +53,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

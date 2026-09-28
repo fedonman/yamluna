@@ -7,6 +7,8 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+# Only the extension module for the Python wheel; it is not a library for crates.io.
+publish = false
 
 [lib]
 name = "_yamluna"

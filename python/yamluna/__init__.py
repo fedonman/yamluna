@@ -93,8 +93,8 @@ try:
 except PackageNotFoundError:
     # Running from a source checkout with nothing installed: there is no distribution
     # metadata to read a version out of.
-    __version__ = '0.1.0'
-"""The installed distribution's version, or `'0.1.0'` when yamluna is not installed."""
+    __version__ = '0.1.1'
+"""The installed distribution's version, or `'0.1.1'` when yamluna is not installed."""
 
 __all__ = [
     'YAML',

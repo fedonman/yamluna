@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.1] — 2026-09-28
+
+### Fixed
+
+- The source distribution includes the licence files. PyPI rejected the 0.1.0 source distribution without them, so 0.1.0 is available as wheels only.
+
 ## [0.1.0] — 2026-09-28
 
 First alpha release of yamluna: YAML for Python, out of the box.

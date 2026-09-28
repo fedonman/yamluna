@@ -7,7 +7,7 @@ First alpha release of yamluna: YAML for Python, out of the box.
 ### Features
 
 - Load, edit, and save YAML with comments, blank lines, quotes, anchors, and layout, with no settings required.
-- Save and load Python classes: decorate your own with `@yaml.register_class`, or register types you do not own, such as numpy's `ndarray` or `Decimal`, by passing `to_yaml` and `from_yaml` functions. Tags are namespaced by source package, and each `YAML()` instance keeps its own registrations.
+- Save and load Python classes: decorate your own with `@yaml.register_class`, or register types you do not own, such as numpy's `ndarray` or `Decimal`, by passing `to_yaml` and `from_yaml` functions. Objects can sit anywhere in a document, including in lists and inside flow collections, and hooks may return frozen dataclasses or `Enum` members. Tags are namespaced by source package, and each `YAML()` instance keeps its own registrations.
 - Work with familiar dictionaries and lists, including helpers to add comments and rename keys.
 - Preserve comments when reordering or deleting entries, subject to the limits below.
 - Read and write multiple documents with `load_all()` and `dump_all()`.

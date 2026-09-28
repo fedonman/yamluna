@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import re
 import warnings
 from collections.abc import Iterable, Mapping
@@ -1089,13 +1090,16 @@ class Constructor:
 def _park(value: Any, node: Node) -> Any:
     """Park on `value` the record it was built from, and return `value`.
 
-    A bare `str`, `int` or `None` is left alone; the parent keeps its record under
-    `SOURCE_ATTRIB` instead.
+    A bare `str`, `int` or `None` is left alone, and so is an object that refuses the
+    attribute, such as a frozen dataclass a `from_yaml` hook returned; the parent keeps
+    the record under `SOURCE_ATTRIB` instead.
     """
     # Those builtins have no `__dict__` and no slot for the attribute either, so the
     # `setattr` below would raise on them.
     if hasattr(value, '__dict__') or hasattr(type(value), NODE_ATTRIB):
-        setattr(value, NODE_ATTRIB, node)
+        # `FrozenInstanceError` is an `AttributeError`.
+        with contextlib.suppress(AttributeError):
+            setattr(value, NODE_ATTRIB, node)
     return value
 
 

@@ -276,7 +276,12 @@ def _state(obj: Any) -> Mapping[Any, Any]:
     The record the object was loaded from is left out.  It is parked on the object under
     `NODE_ATTRIB` and lands in `__dict__` like anything else, but it is this package's
     bookkeeping rather than a field of the user's class.
+
+    A class has no state of its own to walk: `__getstate__` on it is the unbound method,
+    and an `Enum` member reaches its class through `__objclass__`.
     """
+    if isinstance(obj, type):
+        return {}
     state = obj.__getstate__() if hasattr(obj, '__getstate__') else getattr(obj, '__dict__', None)
     if not isinstance(state, Mapping):
         return {}

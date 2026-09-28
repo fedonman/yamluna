@@ -7,14 +7,16 @@ need the real load and dump pipeline take the `pipeline` fixture, which skips un
 
 from __future__ import annotations
 
+import enum
 import importlib.util
 import io
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
 import yamluna
-from yamluna import YAML, ComposerError, YAMLStreamError, default_registry
+from yamluna import YAML, CommentedSeq, ComposerError, YAMLStreamError, default_registry
 from yamluna.main import _decode, _read, _write
 
 if TYPE_CHECKING:
@@ -428,6 +430,79 @@ def test_setting_version_forces_the_directive_and_the_marker() -> None:
     yaml = YAML()
     yaml.version = (1, 2)
     assert yaml.dump(yaml.load('a: 1\n')) == '%YAML 1.2\n---\na: 1\n'
+
+
+# -- registered classes through the whole pipeline --------------------------------------
+
+
+@pytest.mark.usefixtures('pipeline')
+def test_a_registered_object_in_a_list_puts_its_tag_on_a_line_of_its_own() -> None:
+    """`- !Server host: a` would tag the key `host`, not the mapping, and not reload."""
+    yaml = YAML()
+
+    @yaml.register_class
+    @dataclass
+    class Server:
+        host: str
+
+    data = {'servers': [Server('a'), Server('b')]}
+    text = yaml.dump(data)
+    assert text is not None
+    assert text.endswith('servers:\n- !Server\n  host: a\n- !Server\n  host: b\n')
+    assert yaml.load(text) == data
+
+
+@pytest.mark.usefixtures('pipeline')
+def test_a_block_collection_inside_a_flow_one_is_written_flow() -> None:
+    outer = CommentedSeq([[1, 2], {'x': 3}])
+    outer.fa.set_flow_style()
+    yaml = YAML()
+    text = yaml.dump({'a': outer})
+    assert text == 'a: [[1, 2], {x: 3}]\n'
+    assert yaml.load(text) == {'a': [[1, 2], {'x': 3}]}
+
+
+@pytest.mark.usefixtures('pipeline')
+def test_a_from_yaml_hook_may_return_a_frozen_dataclass() -> None:
+    yaml = YAML()
+
+    @yaml.register_class
+    @dataclass(frozen=True)
+    class Version:
+        text: str
+
+        @classmethod
+        def to_yaml(cls, representer: Any, obj: Any) -> int:
+            return representer.represent_scalar(representer.plan.tags[cls], obj.text)
+
+        @classmethod
+        def from_yaml(cls, _constructor: Any, node: Any) -> Any:
+            return cls(node.value)
+
+    loaded = yaml.load('release: !Version 1.4.2  # approved\n')
+    assert loaded['release'] == Version('1.4.2')
+    text = yaml.dump(loaded)
+    assert text is not None
+    assert text.endswith('release: !Version 1.4.2  # approved\n')
+
+
+@pytest.mark.usefixtures('pipeline')
+def test_an_enum_with_hooks_round_trips() -> None:
+    class Level(enum.Enum):
+        INFO = 20
+
+    yaml = YAML()
+    yaml.register_class(
+        Level,
+        to_yaml=lambda representer, v: representer.represent_scalar(
+            representer.plan.tags[Level], v.name
+        ),
+        from_yaml=lambda _constructor, node: Level[node.value],
+    )
+    text = yaml.dump({'level': Level.INFO})
+    assert text is not None
+    assert text.endswith('level: !Level INFO\n')
+    assert yaml.load(text)['level'] is Level.INFO
 
 
 # -- documents with no root object -----------------------------------------------------

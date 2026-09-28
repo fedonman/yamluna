@@ -129,11 +129,11 @@ The same pattern works for `Decimal`, `UUID`, or a class from a C extension. [Cu
 
 ## Why yamluna?
 
-- **Round trips without settings.** In the project's 40-file round-trip corpus, yamluna reproduces all 40 files byte for byte; ruamel.yaml 0.19.1 reproduces 3 under the tested settings. There is no `typ=` and no `indent()` call to match the file's style. [Comparison and method.][comparison]
+- **Round trips without settings.** In the project's 40-file round-trip corpus, yamluna reproduces all 40 files byte for byte; ruamel.yaml reproduces 3, StrictYAML 2, and PyYAML and py-yaml12 none. There is no `typ=` and no `indent()` call to match the file's style. [Comparison and method.][comparison]
 - **Python objects in and out.** One decorator for your own classes, two functions for anyone else's. Tags are namespaced by package, and a hand-written `!Server` resolves as long as only one registered class could be meant.
 - **Comments that follow your edits.** Reorder a list or delete a setting and its comments go with it. [Examples and current limits.][why]
-- **Fast.** The project's recorded release-build benchmarks show a load-and-save cycle 1.8 to 6.3 times faster than ruamel.yaml 0.19.1. [See the measurements.][comparison]
-- **Familiar API.** Coming from ruamel.yaml? Change the import and remove `typ=`. [Migration guide.][migration]
+- **Fast.** A load-and-save cycle is 1.7 to 6.0 times faster than ruamel.yaml and faster than StrictYAML, the other libraries that keep comments. Libraries that discard formatting, such as PyYAML with libyaml, are faster still. [See the measurements.][comparison]
+- **Familiar API.** Coming from PyYAML, ruamel.yaml, py-yaml12, or StrictYAML? The [migration guides][migration] list the changes; for ruamel.yaml, it is mostly the import and `typ=`.
 
 ## Install
 

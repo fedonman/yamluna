@@ -15,7 +15,7 @@ First alpha release of yamluna: YAML for Python, out of the box.
 - Read YAML 1.2 and documents that explicitly declare YAML 1.1.
 - Support Python 3.11+, with type annotations. Licensed under MIT or Apache-2.0.
 
-The [comparison](https://fedonman.github.io/yamluna/comparison/) has preservation results and recorded performance measurements against ruamel.yaml 0.19.1.
+The [comparison](https://fedonman.github.io/yamluna/comparison/) has features, round-trip results, and speed measurements against PyYAML, ruamel.yaml, py-yaml12, and StrictYAML.
 
 ### Known limitations
 
@@ -27,4 +27,4 @@ The [comparison](https://fedonman.github.io/yamluna/comparison/) has preservatio
 - Duplicate keys cannot both be retained in a Python dictionary.
 - Empty documents need the same loader and their original stream positions to retain comments and markers.
 
-See [known limitations](https://fedonman.github.io/yamluna/guide/limitations/) for workarounds and [migration](https://fedonman.github.io/yamluna/migrating/) for differences from ruamel.yaml.
+See [known limitations](https://fedonman.github.io/yamluna/guide/limitations/) for workarounds and [migration](https://fedonman.github.io/yamluna/migrating/) for switching from PyYAML, ruamel.yaml, py-yaml12, or StrictYAML.

@@ -28,9 +28,12 @@ nav = [
       { "Settings" = "guide/settings.md" },
       { "Handle errors" = "guide/errors.md" },
       { "Known limitations" = "guide/limitations.md" },
-      { "Migrating from ruamel.yaml" = [
-          { "Switch to yamluna" = "migrating/index.md" },
-          { "Behavior differences" = "migrating/differences.md" },
+      { "Switch to yamluna" = [
+          "migrating/index.md",
+          { "From PyYAML" = "migrating/pyyaml.md" },
+          { "From ruamel.yaml" = "migrating/ruamel.md" },
+          { "ruamel.yaml differences" = "migrating/differences.md" },
+          { "From py-yaml12 or StrictYAML" = "migrating/others.md" },
       ] },
   ] },
   { "API reference" = [

@@ -73,13 +73,13 @@ The decorator is the whole setup for your own class. For a class you cannot chan
 
 ## What you get
 
-**Byte-identical round trips.** In the project's 40-file corpus, yamluna reproduces every file exactly; ruamel.yaml 0.19.1 reproduces 3. [Compare libraries](comparison.md).
+**Byte-identical round trips.** In the project's 40-file corpus, yamluna reproduces every file exactly; ruamel.yaml reproduces 3, StrictYAML 2, and PyYAML and py-yaml12 none. [Compare libraries](comparison.md).
 
 **Objects that know where they came from.** Tags are namespaced by package, so two libraries can each register a `Server`. Each `YAML()` has its own registrations.
 
 **Comments that follow your edits.** Reorder a list or delete a setting and its comments go with it. [Why yamluna](why.md) has examples and the current edge cases.
 
-**Fast.** The project's recorded benchmarks show a load-and-save cycle 1.8 to 6.3 times faster than ruamel.yaml 0.19.1.
+**Fast.** A load-and-save cycle is 1.7 to 6.0 times faster than ruamel.yaml. [Compare libraries](comparison.md) has the numbers for PyYAML, py-yaml12, and StrictYAML too.
 
 ## Next steps
 
@@ -93,4 +93,4 @@ python -m pip install yamluna
 - [Read and write YAML](guide/load-and-dump.md): strings, files, and multiple documents.
 - [Examples](guide/examples.md): recipes for configs, dataclasses, numpy arrays, and decimals.
 - [User guide](guide/index.md): every task, from custom classes to comments and formatting.
-- [Switch from ruamel.yaml](migrating/index.md): the changes to make in your code.
+- [Switch to yamluna](migrating/index.md): the changes to make coming from PyYAML, ruamel.yaml, py-yaml12, or StrictYAML.

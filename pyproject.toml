@@ -35,6 +35,8 @@ Issues = "https://github.com/fedonman/yamluna/issues"
 [dependency-groups]
 # numpy is for `examples/register_class.py`, which CI runs.
 dev = ["pytest>=8", "ruamel.yaml==0.19.1", "maturin>=1.7,<2", "ruff", "ty", "numpy"]
+# `bench/libraries.py`: the other libraries the comparison page measures.
+bench = ["ruamel.yaml==0.19.1", "pyyaml", "py-yaml12", "strictyaml"]
 # The documentation site. `mkdocstrings[python]` is what renders docs/api/*.md;
 # without it those pages build clean and come out empty.
 docs = ["zensical", "mkdocstrings[python]"]

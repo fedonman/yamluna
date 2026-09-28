@@ -6,7 +6,7 @@ yamluna is for Python code that reads and writes YAML, including files that peop
 
 An unchanged `+12` stays `+12`. A list indented by four spaces stays indented by four spaces. An unused anchor keeps its name, and `---` and `...` markers stay where they were. You don't configure a formatter to recreate the file's style, because nothing you did not edit is re-formatted.
 
-This read-edit-save workflow is called a **round trip**. In the project's 40-file round-trip corpus, yamluna reproduces all 40 files byte for byte; ruamel.yaml 0.19.1 reproduces 3 with the tested settings. [Results and method](comparison.md).
+This read-edit-save workflow is called a **round trip**. In the project's 40-file round-trip corpus, yamluna reproduces all 40 files byte for byte. ruamel.yaml reproduces 3 and StrictYAML 2; PyYAML and py-yaml12 reproduce none, because they drop comments and reformat what they write. [Results and method](comparison.md).
 
 ## Your objects, not just dictionaries
 
@@ -45,4 +45,4 @@ Deleting a setting also removes its attached comments, and renaming a key with `
 
 ## Fast
 
-Parsing and writing are done by a Rust core. The project's recorded release-build benchmarks show a complete load and save running 1.8 to 6.3 times faster than ruamel.yaml 0.19.1, depending on the file. [Compare speed and features](comparison.md), or [start with a file](guide/load-and-dump.md).
+Parsing and writing are done by a Rust core. A complete load and save runs 1.7 to 6.0 times faster than ruamel.yaml, depending on the file, and faster than StrictYAML. PyYAML with libyaml and py-yaml12 are faster than yamluna because they keep nothing of the original text, which is the trade to weigh if you never save the file back. [Compare speed and features](comparison.md), or [start with a file](guide/load-and-dump.md).

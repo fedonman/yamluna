@@ -20,7 +20,7 @@ Loaded mappings and sequences work like Python dictionaries and lists, with the 
 ## Choosing and switching
 
 - [Why yamluna](../why.md): what it does differently, with examples.
-- [Compare libraries](../comparison.md): yamluna, ruamel.yaml, PyYAML, and others, with round-trip and speed measurements.
-- [Switch from ruamel.yaml](../migrating/index.md): the code changes to make, and the [behavior differences](../migrating/differences.md) to expect.
+- [Compare libraries](../comparison.md): yamluna, PyYAML, ruamel.yaml, py-yaml12, and StrictYAML, with features, round-trip results, and speed.
+- [Switch to yamluna](../migrating/index.md): the code changes to make, with guides [from PyYAML](../migrating/pyyaml.md), [from ruamel.yaml](../migrating/ruamel.md), and [from py-yaml12 or StrictYAML](../migrating/others.md).
 
 For method signatures, use the [API reference](../api/index.md).

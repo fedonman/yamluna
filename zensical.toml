@@ -1,7 +1,7 @@
 [project]
 site_url = "https://fedonman.github.io/yamluna/"
 site_name = "yamluna"
-site_description = "Edit YAML from Python while keeping comments, quotes, and layout."
+site_description = "YAML for Python, out of the box: round trips that keep the file as written, and your own classes stored and loaded as themselves."
 site_author = "Vyron Vasileiadis"
 
 copyright = "Copyright &copy; 2026 Vyron Vasileiadis"
@@ -11,30 +11,30 @@ repo_name = "fedonman/yamluna"
 edit_uri = "edit/main/docs/"
 
 nav = [
-  { "Home" = "index.md" },
-  { "Why yamluna" = "why.md" },
-  { "Compare libraries" = "comparison.md" },
   { "Get started" = [
+      "index.md",
       { "Install" = "install.md" },
       { "Read and write YAML" = "guide/load-and-dump.md" },
       { "Examples" = "guide/examples.md" },
   ] },
-  { "Common tasks" = [
-      { "Find a task" = "guide/index.md" },
+  { "User guide" = [
+      "guide/index.md",
+      { "Why yamluna" = "why.md" },
+      { "Compare libraries" = "comparison.md" },
+      { "Custom classes" = "guide/custom-classes.md" },
       { "Comments" = "guide/comments.md" },
       { "Strings and numbers" = "guide/scalars.md" },
       { "Anchors and merges" = "guide/anchors.md" },
-      { "Custom classes" = "guide/custom-classes.md" },
       { "Settings" = "guide/settings.md" },
       { "Handle errors" = "guide/errors.md" },
       { "Known limitations" = "guide/limitations.md" },
-  ] },
-  { "Migrating from ruamel.yaml" = [
-      { "Switch to yamluna" = "migrating/index.md" },
-      { "Behavior differences" = "migrating/differences.md" },
+      { "Migrating from ruamel.yaml" = [
+          { "Switch to yamluna" = "migrating/index.md" },
+          { "Behavior differences" = "migrating/differences.md" },
+      ] },
   ] },
   { "API reference" = [
-      { "Overview" = "api/index.md" },
+      "api/index.md",
       { "YAML" = "api/yaml.md" },
       { "Containers" = "api/containers.md" },
       { "Strings and numbers" = "api/scalars.md" },

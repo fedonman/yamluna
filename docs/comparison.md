@@ -1,12 +1,13 @@
 # Compare Python YAML libraries
 
-**Choose yamluna when your Python code edits YAML that people also maintain.** It combines detailed formatting preservation, comments that follow edits, and faster read-and-write cycles than ruamel.yaml in the project's benchmarks.
+**Choose yamluna when your Python code reads and writes YAML and you want the file, and your objects, back as they were.** It combines byte-identical round trips, class registration for your own types and third-party ones, comments that follow edits, and faster read-and-write cycles than ruamel.yaml in the project's benchmarks.
 
 ## At a glance
 
 | Your priority | Library to consider |
 | --- | --- |
 | Edit files while preserving comments and layout | **yamluna** |
+| Save and load your own classes, or types such as `ndarray`, with namespaced tags | **yamluna** |
 | An established round-trip library with a broader API | [ruamel.yaml](https://yaml.dev/doc/ruamel.yaml/) |
 | Load YAML values into Python with a widely used library | [PyYAML](https://pyyaml.org/wiki/PyYAMLDocumentation) |
 | YAML 1.2 parsing and generation with a Rust implementation | [py-yaml12](https://github.com/posit-dev/py-yaml12) |

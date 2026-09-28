@@ -1,6 +1,6 @@
 # Tag registry
 
-Each `YAML()` starts with its own registrations. Use `yaml.register_class()` for most tasks; create a `TagRegistry` when several instances should share them.
+Each `YAML()` starts with its own registrations. Use `yaml.register_class()` for most tasks, either as the decorator `@yaml.register_class` or by calling it with the class; create a `TagRegistry` when several instances should share them.
 
 ## Share classes between a writer and a reader
 
@@ -44,4 +44,4 @@ Registering the same class again replaces its registration, including hooks. Two
 
 For application-wide registration, `yamluna.register_class()` writes to `yamluna.default_registry`. Opt into it with `YAML(registry=yamluna.default_registry)`; a plain `YAML()` stays independent.
 
-See [custom classes](../guide/custom-classes.md) for complete save-and-load examples.
+See [custom classes](../guide/custom-classes.md) for complete save-and-load examples, including [types you do not own](../guide/custom-classes.md#register-a-class-you-do-not-own) such as numpy's `ndarray`.

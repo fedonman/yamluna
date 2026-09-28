@@ -1,8 +1,8 @@
-# Edit YAML. Keep it human.
+# YAML for Python, out of the box
 
-yamluna is a Python library for updating YAML files while keeping their comments, quotes, blank lines, and layout. Your script changes the values; people can still recognize the file.
+yamluna reads and writes YAML without setup. A plain `YAML()` keeps everything you did not touch exactly as it was written, and a registered class goes into the file as a tagged object and loads back as itself.
 
-## Try it
+## Edit a file
 
 ```python
 from yamluna import YAML
@@ -35,17 +35,53 @@ ports:
   - 8080
 ```
 
-## Why yamluna?
+Comments, blank lines, quotes, indentation, anchors, and document markers all survive the load and save. There is no `typ=` to choose and no `indent()` call to match the file's style.
 
-**Smaller diffs.** Keep the formatting people chose, including indentation, anchors, and document markers.
+## Store Python objects
 
-**Comments that stay useful.** Comments follow the entries you reorder or delete. [See it in action](why.md), including the current edge cases.
+```python
+from dataclasses import dataclass
+from yamluna import YAML
 
-**Fast updates.** The project's recorded benchmarks show a 1.8–6.3× faster load-and-save cycle than ruamel.yaml 0.19.1. [Compare libraries](comparison.md).
+yaml = YAML()
 
-**Classes that work together.** Register classes from different packages, even when they share a name. Each `YAML()` has its own registrations.
 
-## Get started
+@yaml.register_class
+@dataclass
+class Server:
+    host: str
+    port: int = 80
+
+
+text = yaml.dump({'primary': Server('web-1', 8080)})
+print(text, end='')
+print(yaml.load(text)['primary'])
+```
+
+Output:
+
+```text
+%TAG ! tag:__main__/
+---
+primary: !Server
+  host: web-1
+  port: 8080
+Server(host='web-1', port=8080)
+```
+
+The decorator is the whole setup for your own class. For a class you cannot change, such as numpy's `ndarray` or `Decimal`, call `register_class` with a `to_yaml` and a `from_yaml` function; [custom classes](guide/custom-classes.md#register-a-class-you-do-not-own) shows both.
+
+## What you get
+
+**Byte-identical round trips.** In the project's 40-file corpus, yamluna reproduces every file exactly; ruamel.yaml 0.19.1 reproduces 3. [Compare libraries](comparison.md).
+
+**Objects that know where they came from.** Tags are namespaced by package, so two libraries can each register a `Server`. Each `YAML()` has its own registrations.
+
+**Comments that follow your edits.** Reorder a list or delete a setting and its comments go with it. [Why yamluna](why.md) has examples and the current edge cases.
+
+**Fast.** The project's recorded benchmarks show a load-and-save cycle 1.8 to 6.3 times faster than ruamel.yaml 0.19.1.
+
+## Next steps
 
 Install from PyPI with Python 3.11+:
 
@@ -53,8 +89,8 @@ Install from PyPI with Python 3.11+:
 python -m pip install yamluna
 ```
 
-- [Install](install.md) — set up your environment.
-- [Read and write YAML](guide/load-and-dump.md) — strings, files, and multiple documents.
-- [Common tasks](guide/index.md) — comments, formatting, and custom classes.
-- [Switch from ruamel.yaml](migrating/index.md) — the changes to make in your code.
-- [Known limitations](guide/limitations.md) — what to check before adopting it.
+- [Install](install.md): set up your environment.
+- [Read and write YAML](guide/load-and-dump.md): strings, files, and multiple documents.
+- [Examples](guide/examples.md): recipes for configs, dataclasses, numpy arrays, and decimals.
+- [User guide](guide/index.md): every task, from custom classes to comments and formatting.
+- [Switch from ruamel.yaml](migrating/index.md): the changes to make in your code.

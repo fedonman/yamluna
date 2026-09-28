@@ -4,12 +4,12 @@ build-backend = "maturin"
 
 [project]
 name = "yamluna"
-description = "Round-trip YAML for Python, with a Rust core and a tag registry that knows what namespace your classes came from."
+description = "YAML for Python, out of the box: byte-identical round trips, and your own classes and third-party types saved and loaded as themselves. Rust core."
 requires-python = ">=3.11"
 license = "MIT OR Apache-2.0"
 authors = [{ name = "Vyron Vasileiadis", email = "vyron@qilimanjaro.tech" }]
 readme = "README.md"
-keywords = ["yaml", "round-trip", "comments", "rust"]
+keywords = ["yaml", "round-trip", "serialization", "dataclasses", "config", "comments", "rust"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -33,7 +33,10 @@ Changelog = "https://fedonman.github.io/yamluna/changelog/"
 Issues = "https://github.com/fedonman/yamluna/issues"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruamel.yaml==0.19.1", "maturin>=1.7,<2", "ruff", "ty"]
+# numpy is for `examples/register_class.py`, which CI runs.
+dev = ["pytest>=8", "ruamel.yaml==0.19.1", "maturin>=1.7,<2", "ruff", "ty", "numpy"]
+# `bench/libraries.py`: the other libraries the comparison page measures.
+bench = ["ruamel.yaml==0.19.1", "pyyaml", "py-yaml12", "strictyaml"]
 # The documentation site. `mkdocstrings[python]` is what renders docs/api/*.md;
 # without it those pages build clean and come out empty.
 docs = ["zensical", "mkdocstrings[python]"]

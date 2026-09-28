@@ -31,7 +31,7 @@ from typing import Any, ClassVar, Self, SupportsIndex, SupportsInt
 
 from yamluna.scalarstring import _Anchored
 
-__all__ = ['BinaryInt', 'HexInt', 'OctalInt', 'ScalarInt', 'from_lexeme']
+__all__ = ['BinaryInt', 'HexInt', 'OctalInt', 'ScalarInt', 'Yaml11OctalInt', 'from_lexeme']
 
 _INT_RE = re.compile(
     r"""^(?P<sign>[-+]?)
@@ -39,6 +39,9 @@ _INT_RE = re.compile(
            | (?P<dec>[0-9_]+) )$""",
     re.VERBOSE,
 )
+# YAML 1.1's octal spelling: a leading `0` and no letter. YAML 1.2 reads the same text as a
+# decimal with a leading zero, so this is tried only for a `%YAML 1.1` document.
+_YAML11_OCTAL_RE = re.compile(r'^(?P<sign>[-+]?)0(?P<body>[0-7_]*[0-7][0-7_]*)$')
 
 # Format fields copied onto the result of in-place arithmetic. `_lexeme` is deliberately not
 # among them: the value changed, so the source text no longer describes it.
@@ -280,6 +283,23 @@ class HexInt(ScalarInt):
         return format(abs(int(self)), 'X' if self._caps else 'x')
 
 
+class Yaml11OctalInt(OctalInt):
+    """An integer written in YAML 1.1's octal spelling, as `0755`.
+
+    YAML 1.2 reads `0755` as the decimal 755, so only a document that declares `%YAML 1.1`
+    loads one. It is written back with the same leading `0`.
+
+    Example:
+        ```pycon
+        >>> from_lexeme('0755', yaml11=True) == 0o755
+        True
+
+        ```
+    """
+
+    prefix = '0'
+
+
 _BY_BASE: dict[str, tuple[type[ScalarInt], int]] = {
     'b': (BinaryInt, 2),
     'x': (HexInt, 16),
@@ -287,17 +307,20 @@ _BY_BASE: dict[str, tuple[type[ScalarInt], int]] = {
 }
 
 
-def from_lexeme(text: str) -> ScalarInt:
+def from_lexeme(text: str, *, yaml11: bool = False) -> ScalarInt:
     """Build the `ScalarInt` subclass that matches an integer lexeme.
 
     Args:
         text: The integer exactly as the source wrote it: an optional sign, then either a
             `0b`, `0o` or `0x` prefix and its digits, or decimal digits. Underscores are
             allowed anywhere in the digits.
+        yaml11: Read a leading `0` followed by octal digits, such as `0755`, as YAML 1.1
+            does: an octal number rather than a decimal one.
 
     Returns:
-        A `BinaryInt`, `OctalInt` or `HexInt` for a prefixed lexeme, otherwise a
-        `ScalarInt`. Its `lexeme()` returns `text` byte for byte.
+        A `BinaryInt`, `OctalInt` or `HexInt` for a prefixed lexeme, a `Yaml11OctalInt`
+        for a YAML 1.1 octal, otherwise a `ScalarInt`. Its `lexeme()` returns `text` byte
+        for byte.
 
     Raises:
         ValueError: `text` is not an integer lexeme.
@@ -310,24 +333,30 @@ def from_lexeme(text: str) -> ScalarInt:
         ```
 
     """
+    if yaml11 and (octal := _YAML11_OCTAL_RE.match(text)) is not None:
+        return _build(Yaml11OctalInt, 8, text, octal['sign'], octal['body'])
     m = _INT_RE.match(text)
     if m is None:
         msg = f'not an integer lexeme: {text!r}'
         raise ValueError(msg)
-    sign = m['sign']
     body = m['body'] or m['dec']
+    if m['base'] is None:
+        cls, base = ScalarInt, 10
+    else:
+        cls, base = _BY_BASE[m['base'].lower()]
+    return _build(cls, base, text, m['sign'], body)
+
+
+def _build(cls: type[ScalarInt], base: int, text: str, sign: str, body: str) -> ScalarInt:
+    """Return a `cls` for the digits `body`, carrying `text` and its formatting."""
     digits = body.replace('_', '')
     kw: dict[str, Any] = {
         'underscore': _split_underscores(body),
         'sign': sign,
         'lexeme': text,
     }
-    if m['base'] is None:
-        cls, base = ScalarInt, 10
-    else:
-        cls, base = _BY_BASE[m['base'].lower()]
-        if cls is HexInt:
-            kw['caps'] = any(c in 'ABCDEF' for c in digits)
+    if cls is HexInt:
+        kw['caps'] = any(c in 'ABCDEF' for c in digits)
     # Leading zeros are the only thing a width has to describe; ruamel does the same.
     if len(digits) > 1 and digits[0] == '0':
         kw['width'] = len(digits)

@@ -61,6 +61,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
+import functools
 import re
 import warnings
 from collections.abc import Iterable, Mapping
@@ -284,8 +286,8 @@ def resolve(lexeme: str, version: tuple[int, int] | None = None) -> Any:  # noqa
     Args:
         lexeme: The scalar's source text, exactly as written.
         version: The document's YAML version. `(1, 1)` widens the booleans to the YAML 1.1
-            spellings (`yes`, `on`, `n`, and the rest); every other value, `None`
-            included, uses the YAML 1.2 core schema.
+            spellings (`yes`, `on`, `n`, and the rest) and reads `0755` as an octal
+            number; every other value, `None` included, uses the YAML 1.2 core schema.
 
     Returns:
         `None` for a null spelling, a bare `bool`, `int` or `float` where that reproduces
@@ -311,7 +313,7 @@ def resolve(lexeme: str, version: tuple[int, int] | None = None) -> Any:  # noqa
         value = bools[lexeme]
         return value if lexeme in _CANONICAL_BOOL else ScalarBoolean(value, lexeme=lexeme)
     if _INT_RE.fullmatch(lexeme):
-        return _int(lexeme)
+        return _int(lexeme, yaml11=version == (1, 1))
     if _INF_NAN_RE.fullmatch(lexeme) or _FLOAT_RE.fullmatch(lexeme):
         return _float_from_lexeme(lexeme)
     if _DATE_HEAD.match(lexeme):
@@ -322,9 +324,9 @@ def resolve(lexeme: str, version: tuple[int, int] | None = None) -> Any:  # noqa
     return UNRESOLVED
 
 
-def _int(lexeme: str) -> Any:
+def _int(lexeme: str, *, yaml11: bool = False) -> Any:
     """Return a `ScalarInt` subclass, or a bare `int` when `str(int)` reproduces the lexeme."""
-    value = _int_from_lexeme(lexeme)
+    value = _int_from_lexeme(lexeme, yaml11=yaml11)
     # `scalarint` keeps the shape it parsed out of the lexeme private, and offers no
     # predicate for "the plain one"; this is the only caller that has to ask.
     plain = (
@@ -516,7 +518,7 @@ class Constructor:
         if isinstance(value, bool):
             promoted: Any = ScalarBoolean(value, lexeme=lexeme)
         elif isinstance(value, int):
-            promoted = _int_from_lexeme(lexeme)
+            promoted = _int_from_lexeme(lexeme, yaml11=self._version == (1, 1))
         elif isinstance(value, float):
             promoted = _float_from_lexeme(lexeme)
         elif isinstance(value, str) and not isinstance(value, ScalarString):
@@ -625,9 +627,11 @@ class Constructor:
                 )
             return found
         if kind in ('int', 'float', 'timestamp'):
-            build = {'int': _int, 'float': _float_from_lexeme, 'timestamp': _timestamp_from_lexeme}[
-                kind
-            ]
+            build = {
+                'int': functools.partial(_int, yaml11=self._version == (1, 1)),
+                'float': _float_from_lexeme,
+                'timestamp': _timestamp_from_lexeme,
+            }[kind]
             try:
                 return build(value.strip())
             except ValueError:
@@ -1089,13 +1093,16 @@ class Constructor:
 def _park(value: Any, node: Node) -> Any:
     """Park on `value` the record it was built from, and return `value`.
 
-    A bare `str`, `int` or `None` is left alone; the parent keeps its record under
-    `SOURCE_ATTRIB` instead.
+    A bare `str`, `int` or `None` is left alone, and so is an object that refuses the
+    attribute, such as a frozen dataclass a `from_yaml` hook returned; the parent keeps
+    the record under `SOURCE_ATTRIB` instead.
     """
     # Those builtins have no `__dict__` and no slot for the attribute either, so the
     # `setattr` below would raise on them.
     if hasattr(value, '__dict__') or hasattr(type(value), NODE_ATTRIB):
-        setattr(value, NODE_ATTRIB, node)
+        # `FrozenInstanceError` is an `AttributeError`.
+        with contextlib.suppress(AttributeError):
+            setattr(value, NODE_ATTRIB, node)
     return value
 
 

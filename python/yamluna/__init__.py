@@ -1,7 +1,9 @@
-"""Round-trip YAML for Python.
+"""YAML for Python, out of the box.
 
 `yamluna` loads a document, lets you change it, and writes it back with the comments,
-blank lines, quoting, anchors and layout the author put there. It replaces
+blank lines, quoting, anchors and layout the author put there. `YAML.register_class`
+saves your own classes, and types you do not own such as numpy's `ndarray`, under
+namespaced tags and loads them back as themselves. It replaces
 `ruamel.yaml`'s `typ='rt'` and fixes the round-trip defects of that mode: a comment stays
 with the item it describes when you insert or delete, `---` and `...` survive, each node
 reproduces its own indentation instead of having one global setting re-applied to it, and

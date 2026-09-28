@@ -1,6 +1,6 @@
-# Behavior differences
+# ruamel.yaml behavior differences
 
-These are the main changes to expect when switching from ruamel.yaml 0.19.1 to yamluna 0.1.0. Start with the [migration guide](index.md) for code changes.
+These are the main changes to expect when switching from ruamel.yaml 0.19.1 to yamluna 0.1.0. Start with the [migration guide](ruamel.md) for code changes.
 
 ## Saved files look closer to the input
 

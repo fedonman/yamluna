@@ -1,56 +1,55 @@
 # yamluna-scanner
 
-[yamluna-scanner](https://github.com/saphyr-rs/yamluna-scanner) is a fully compliant YAML 1.2 parser implementation written in pure Rust.
+The YAML 1.2 scanner and parser under [yamluna](https://github.com/fedonman/yamluna). It is a fork
+of [`saphyr-parser`](https://crates.io/crates/saphyr-parser) 0.1.0 that keeps the parts of the
+source a round trip needs and upstream discards: comments, whether a collection was written in
+block or flow style, anchor names, and the `%YAML` version.
 
-**If you want to load to a YAML Rust structure or manipulate YAML objects, use `saphyr` instead of `yamluna-scanner`. This crate contains only the parser.**
+Like upstream, it turns a stream of characters into a stream of events with spans. It does not
+build a tree; [`yamluna-core`](https://crates.io/crates/yamluna-core) does that. If you want to
+load YAML into Rust values, use [`saphyr`](https://crates.io/crates/saphyr) instead.
 
-This work is based on [`yaml-rust`](https://github.com/chyh1990/yaml-rust) with fixes towards being compliant to the [YAML test suite](https://github.com/yaml/yaml-test-suite/). `yaml-rust`'s parser is heavily influenced by `libyaml` and `yaml-cpp`.
+```rust
+use yamluna_scanner::{Event, Parser};
 
-`yamluna-scanner` is a pure Rust YAML 1.2 implementation that benefits from the memory safety and other benefits from the Rust language.
-
-## Installing
-
-Add the crate from crates.io:
-
-```sh
-cargo add yamluna-scanner
+let mut comments = Vec::new();
+for item in Parser::new_from_str("a: 1  # one\n# two\n").keep_comments(true) {
+    let (event, _span) = item.unwrap();
+    if let Event::Comment(text) = event {
+        comments.push(text.into_owned());
+    }
+}
+assert_eq!(comments, ["# one", "# two"]);
 ```
 
-## TODO how-to
+## Differences from saphyr-parser
 
-## Security
+- `Parser::keep_comments(true)` interleaves `Event::Comment` events with the rest of the stream
+  in source order. It is off by default.
+- `Event::SequenceStart` and `Event::MappingStart` carry a `StructureStyle`, `Block` or `Flow`.
+- Anchors are an `AnchorRef` holding both the interned id and the name as written, in place of
+  upstream's bare `usize`.
+- `Parser::version()` returns the current document's `%YAML` version.
+- `Input::skip_ws_to_eol` takes an extra parameter, so a custom `Input` implementation written
+  for upstream needs a one-line change.
 
-This library does not try to interpret any type specifiers in a YAML document, so there is no risk of, say, instantiating a socket with fields and communicating with the outside world just by parsing a YAML document.
+The fork also fixes five upstream bugs: `%TAG` directives that replaced one another, the
+`Display` output of a resolved `Tag`, quoted-scalar spans that ran past the closing quote,
+`Marker` documentation that described byte offsets and 1-based columns, and a tab after `:`
+inside a flow mapping being rejected. Each change is recorded, with its tests, in
+[FORK.md](https://github.com/fedonman/yamluna/blob/main/crates/yamluna-scanner/FORK.md).
 
-## Specification Compliance
+The crate passes the [YAML test suite](https://github.com/yaml/yaml-test-suite), which is its
+regression check against every patch. It does not act on tags, so parsing a document never
+constructs anything from it.
 
-This implementation is fully compatible with the YAML 1.2 specification. In order to help with compliance, `yamluna-scanner` tests against (and passes) the [YAML test suite](https://github.com/yaml/yaml-test-suite/).
+## Licence
 
-## License
-
-Licensed under either of
-
- * Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
- * MIT license (http://opensource.org/licenses/MIT)
-
-at your option.
-
-Since this repository was originally maintained by [chyh1990](https://github.com/chyh1990), there are 2 sets of licenses. A license of each set must be included in redistributions. See the [LICENSE](LICENSE) file for more details.
-
-You can find licences in the [`.licenses`](.licenses) subfolder.
-
-## Contribution
-
-[Fork this repository](https://github.com/saphyr-rs/yamluna-scanner/fork) and [Create a Pull Request on Github](https://github.com/saphyr-rs/yamluna-scanner/compare/master...saphyr-rs:yamluna-scanner:master). You may need to click on "compare across forks" and select your fork's branch.
-
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
-
-## Links
-
-* [yamluna-scanner source code repository](https://github.com/saphyr-rs/yamluna-scanner)
-
-* [yamluna-scanner releases on crates.io](https://crates.io/crates/yamluna-scanner)
-
-* [yamluna-scanner documentation on docs.rs](https://docs.rs/yamluna-scanner/latest/yamluna-scanner/)
-
-* [yaml-test-suite](https://github.com/yaml/yaml-test-suite)
+This crate carries two sets of licences, from the two upstream authors: Chen Yuheng, who wrote
+`yaml-rust`, and Ethiraric, who continued it as `saphyr-parser`. Each is under either the MIT
+licence or the Apache License, Version 2.0, at your option, and a redistribution must include
+both sets. The
+[LICENSE](https://github.com/fedonman/yamluna/blob/main/crates/yamluna-scanner/LICENSE) file says
+which code falls under which, and the licence texts are in
+[`.licenses`](https://github.com/fedonman/yamluna/tree/main/crates/yamluna-scanner/.licenses).
+yamluna's own changes are under MIT or Apache-2.0, at your option.

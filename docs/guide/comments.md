@@ -71,7 +71,7 @@ name: demo
 workers: 3   # production capacity
 ```
 
-`move_to_end(key)` reorders a mapping entry with its comments. List `reverse()` and `sort()` also carry comments with their items. [See a list example](../why.md).
+`move_to_end(key)` reorders a mapping entry with its comments. List `reverse()` and `sort()` also carry comments with their items. [See a list example](../why.md#comments-follow-your-edits).
 
 ## Useful methods
 

@@ -2,32 +2,31 @@
 // Copyright 2023, Ethiraric.
 // See the LICENSE file at the top-level directory of this distribution.
 
-//! YAML 1.2 parser implementation in pure Rust.
+//! YAML 1.2 scanner and parser for yamluna.
 //!
-//! **If you want to load to a YAML Rust structure or manipulate YAML objects, use `saphyr` instead
-//! of `yamluna-scanner`. This crate contains only the parser.**
+//! This is a fork of [`saphyr-parser`](https://crates.io/crates/saphyr-parser) 0.1.0 that keeps
+//! what a round trip needs and upstream discards: comments ([`Parser::keep_comments`]), whether a
+//! collection was written in block or flow style ([`StructureStyle`]), anchor names
+//! ([`AnchorRef`]), and the `%YAML` version ([`Parser::version`]). Like upstream, it turns a
+//! stream of characters into a stream of [`Event`]s with [`Span`]s and does not build a tree;
+//! [`yamluna-core`](https://crates.io/crates/yamluna-core) does that. To load YAML into Rust
+//! values, use [`saphyr`](https://crates.io/crates/saphyr) instead.
 //!
-//! This is YAML 1.2 parser implementation and low-level parsing API for YAML. It allows users to
-//! fetch a stream of YAML events from a stream of characters/bytes.
+//! Every change from upstream is recorded in
+//! [FORK.md](https://github.com/fedonman/yamluna/blob/main/crates/yamluna-scanner/FORK.md).
 //!
 //! # Usage
-//!
-//! This crate is [on github](https://github.com/saphyr-rs/yamluna-scanner) and can be used by adding
-//! `yamluna-scanner` to the dependencies in your project's `Cargo.toml`:
 //!
 //! ```sh
 //! cargo add yamluna-scanner
 //! ```
 //!
 //! # Features
-//! **Note:** With all features disabled, this crate's MSRV is `1.65.0`.
 //!
 //! #### `debug_prints`
 //! Enables the `debug` module and usage of debug prints in the scanner and the parser. Do not
 //! enable if you are consuming the crate rather than working on it as this can significantly
 //! decrease performance.
-//!
-//! The MSRV for this feature is `1.70.0`.
 //!
 //! This feature is _not_ `no_std` compatible.
 

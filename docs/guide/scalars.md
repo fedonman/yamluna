@@ -71,6 +71,6 @@ Ordinary arithmetic, such as `config['mask'] = config['mask'] + 1`, returns a pl
 
 ## YAML versions
 
-yamluna uses YAML 1.2 by default: `yes`, `no`, `on`, and `off` are strings; `true` and `false` are booleans. A document beginning with `%YAML 1.1` and `---` uses the older rules, where `yes` and `on` are also booleans.
+yamluna uses YAML 1.2 by default: `yes`, `no`, `on`, and `off` are strings; `true` and `false` are booleans. A document beginning with `%YAML 1.1` and `---` uses the older rules, where `yes` and `on` are also booleans and `0755` is the octal number 493 rather than the decimal 755.
 
 [Scalar type reference](../api/scalars.md) lists the available formatting classes.

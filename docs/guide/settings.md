@@ -56,7 +56,7 @@ For these two settings, `None` keeps the original markers, `True` adds them, and
 | `allow_duplicate_keys` | `False` | Set `True` to warn and keep the last value of a repeated key |
 | `version` | `None` | Set `(1, 2)` or `(1, 1)` to write a YAML version directive |
 
-`version` controls output. Input declaring `%YAML 1.1` uses YAML 1.1 rules; input without a directive uses YAML 1.2 rules.
+`version` controls output. Input declaring `%YAML 1.1` uses YAML 1.1 rules for booleans and octal numbers; input without a directive uses YAML 1.2 rules.
 
 For Windows-style line endings, set `yaml.line_break = '\r\n'`. Automatic detection does not preserve them in every file.
 

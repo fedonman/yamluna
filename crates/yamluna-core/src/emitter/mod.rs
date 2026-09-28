@@ -380,7 +380,9 @@ impl Emitter<'_> {
         let n = d.node(id);
         // The flow separation in front of this node held its trivia and has written them.
         let pre_written = self.ahead.take() == Some(id);
-        let flow = self.flow_style(n);
+        // Inside `[]` or `{}` every collection is flow, whatever style it was given: a block
+        // collection there is not YAML.
+        let flow = site.flow || self.flow_style(n);
         // Forcing a loaded collection into the other style invalidates every position under it.
         let echo = site.echo && !(n.is_collection() && flow != (n.style == Style::Flow));
         let block_coll = n.is_collection() && !flow;
@@ -481,7 +483,9 @@ impl Emitter<'_> {
                     self.w.place(n.pos, place, echo);
                     eol_written |= self.flow(d, n, &n.children(), site.ind, echo)?;
                 } else {
-                    self.sequence(d, n, items, site.ind, echo, compact)?;
+                    // `- !tag` or `- &anchor` takes the whole line: properties cannot open a
+                    // compact collection, so a first child on that line would get them instead.
+                    self.sequence(d, n, items, site.ind, echo, compact && !headed)?;
                 }
             }
             NodeKind::Mapping { entries } => {
@@ -489,7 +493,7 @@ impl Emitter<'_> {
                     self.w.place(n.pos, place, echo);
                     eol_written |= self.flow(d, n, &n.children(), site.ind, echo)?;
                 } else {
-                    self.mapping(d, n, entries, site.ind, echo, compact)?;
+                    self.mapping(d, n, entries, site.ind, echo, compact && !headed)?;
                 }
             }
         }

@@ -1,17 +1,26 @@
-# Common tasks
+# User guide
 
-Start with [reading and writing YAML](load-and-dump.md). Loaded mappings and sequences work like Python dictionaries and lists, with the file's formatting kept alongside them.
+Loaded mappings and sequences work like Python dictionaries and lists, with the file's formatting kept alongside them, and registered classes load as their own objects. Start with [reading and writing YAML](load-and-dump.md) if you have not used yamluna before.
+
+## Common tasks
 
 | I want to… | Guide |
 | --- | --- |
+| Save and load my own classes | [Custom classes](custom-classes.md#register-your-own-class) |
+| Store types I do not own, such as `ndarray` or `Decimal` | [Custom classes](custom-classes.md#register-a-class-you-do-not-own) |
 | Update a string, file, or multi-document stream | [Read and write YAML](load-and-dump.md) |
 | Add comments or move entries with their comments | [Comments](comments.md) |
 | Keep quotes or write multiline text | [Strings and numbers](scalars.md) |
 | Use shared values and defaults | [Anchors and merges](anchors.md) |
-| Save and load Python objects | [Custom classes](custom-classes.md) |
 | Choose indentation or document markers | [Settings](settings.md) |
 | Report invalid YAML | [Handle errors](errors.md) |
 | Copy a practical recipe | [Examples](examples.md) |
 | Check current edge cases | [Known limitations](limitations.md) |
+
+## Choosing and switching
+
+- [Why yamluna](../why.md): what it does differently, with examples.
+- [Compare libraries](../comparison.md): yamluna, PyYAML, ruamel.yaml, py-yaml12, and StrictYAML, with features, round-trip results, and speed.
+- [Switch to yamluna](../migrating/index.md): the code changes to make, with guides [from PyYAML](../migrating/pyyaml.md), [from ruamel.yaml](../migrating/ruamel.md), and [from py-yaml12 or StrictYAML](../migrating/others.md).
 
 For method signatures, use the [API reference](../api/index.md).

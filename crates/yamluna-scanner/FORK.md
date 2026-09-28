@@ -1,10 +1,12 @@
 # `yamluna-scanner` fork log
 
-Vendored from **`saphyr-parser` 0.0.12** (MIT OR Apache-2.0, see `LICENSE`), plus the 402-case `yaml-test-suite` and the upstream unit tests, which are the regression net for every patch below. They must stay green:
+Vendored from **`saphyr-parser` 0.0.12** and synced to **0.1.0** (MIT OR Apache-2.0, see `LICENSE`), plus the 402-case `yaml-test-suite` and the upstream unit tests, which are the regression net for every patch below. They must stay green:
 
 ```sh
 cargo test -p yamluna-scanner
 ```
+
+The 0.1.0 sync carries upstream's only change, [saphyr#129](https://github.com/saphyr-rs/saphyr/pull/129): an empty node is now `Event::Scalar("")` instead of `Event::Scalar("~")`, so the 402-case suite no longer needs its `=VAL :` → `=VAL :~` rewrite. None of the patches below are upstream as of 0.1.0.
 
 Every patch is either an **upstreamable bug fix** (a defect in `saphyr-parser` that should be filed there) or a **yamluna feature** (something a round-trip library needs that upstream has no reason to carry). Line numbers are as of this file being written.
 

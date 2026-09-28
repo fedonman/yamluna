@@ -1109,7 +1109,7 @@ impl<'a> Loader<'a> {
             }
             ScalarStyle::Plain => {
                 // A synthetic empty node has whatever token happened to be current as its span.
-                if (value == "~" || value.is_empty()) && text.trim() != value {
+                if value.is_empty() && !text.trim().is_empty() {
                     None
                 } else {
                     Some(text.to_owned())

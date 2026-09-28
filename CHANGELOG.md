@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 — unreleased
+## [0.1.0] — 2026-09-28
 
 First alpha release of yamluna: edit YAML from Python while keeping the file readable.
 

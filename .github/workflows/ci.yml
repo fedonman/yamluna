@@ -18,7 +18,7 @@ jobs:
     name: cargo test / clippy / fmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -37,10 +37,10 @@ jobs:
       matrix:
         python: ['3.11', '3.12', '3.13']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.2.0
       - run: uv venv --python ${{ matrix.python }}
       # `pip install -e .` builds the extension through maturin, the build backend.
       - run: uv pip install -e . --group dev
@@ -52,10 +52,10 @@ jobs:
     name: maturin build (abi3) + fresh-venv install
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.2.0
       - run: uv tool install 'maturin>=1.7,<2'
       - run: maturin build --release --out dist
       # `abi3-py311` in crates/yamluna-py/Cargo.toml must show up as a cp311-abi3 tag.
@@ -65,7 +65,7 @@ jobs:
       - run: uv venv /tmp/fresh --python 3.13
       - run: uv pip install --python /tmp/fresh/bin/python dist/*.whl
       - run: /tmp/fresh/bin/python ci/smoke.py
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheel
           path: dist/*.whl
@@ -75,10 +75,10 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.2.0
       - run: uv venv --python 3.13
       - run: uv pip install -e . --group dev
       - run: .venv/bin/python tests/differential.py | tee -a "$GITHUB_STEP_SUMMARY"
@@ -87,8 +87,8 @@ jobs:
     name: ruff
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
       # `select = ["ALL"]` in pyproject.toml, with a short ignore list that each carries its
       # reason. `ci/smoke.py` is executed by the wheel job, so it is linted like everything else.
       - run: uvx ruff check python tests bench examples ci
@@ -98,10 +98,10 @@ jobs:
     name: ty
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.2.0
       - run: uv venv --python 3.13
       # `ty` resolves third-party imports out of the environment, and the tests import the
       # compiled extension, so the project is installed rather than just its dependencies.

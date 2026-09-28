@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: |
           tag="${GITHUB_REF_NAME#v}"
           crate=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
@@ -40,7 +40,7 @@ jobs:
           - { os: macos-latest,   target: aarch64 }
           - { os: windows-latest, target: x64 }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # `abi3-py311` means one wheel per platform rather than one per Python version, so
       # this matrix is the whole support surface: 3.11 and every version after it.
       - uses: PyO3/maturin-action@v1
@@ -49,7 +49,7 @@ jobs:
           args: --release --out dist
           manylinux: auto
           sccache: 'true'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ matrix.os }}-${{ matrix.target }}
           path: dist/*.whl
@@ -58,12 +58,12 @@ jobs:
     name: sdist
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: PyO3/maturin-action@v1
         with:
           command: sdist
           args: --out dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: dist/*.tar.gz
@@ -75,10 +75,10 @@ jobs:
     needs: wheels
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with: { name: wheel-ubuntu-latest-x86_64, path: dist }
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.2.0
       - run: uv venv /tmp/fresh --python 3.13
       - run: uv pip install --python /tmp/fresh/bin/python dist/*.whl
       - run: /tmp/fresh/bin/python ci/smoke.py
@@ -94,7 +94,7 @@ jobs:
     permissions:
       id-token: write   # trusted publishing: no API token to store or rotate
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { path: dist, merge-multiple: true }
       - run: ls -l dist
       - uses: pypa/gh-action-pypi-publish@release/v1
@@ -106,15 +106,15 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with: { path: dist, merge-multiple: true }
       - name: the changelog section for this tag
         run: |
           v="${GITHUB_REF_NAME#v}"
           awk -v v="$v" '$0 ~ "^## \\["v"\\]" {p=1; next} p && /^## \[/ {exit} p' CHANGELOG.md > notes.md
           cat notes.md
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           body_path: notes.md
           files: dist/*

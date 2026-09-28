@@ -636,7 +636,7 @@ fn implicit_flow_mapping_is_flow() {
             "+DOC",
             "+SEQ flow",
             "+MAP flow",
-            "=VAL :~",
+            "=VAL :",
             "=VAL :1",
             "-MAP",
             "-SEQ",

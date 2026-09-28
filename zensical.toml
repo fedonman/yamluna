@@ -49,6 +49,10 @@ nav = [
 
 [project.theme]
 language = "en"
+# The header shows the logo at favicon size, where the striped mark in logo.svg blurs, so both
+# use the solid crescent.
+logo = "assets/favicon.svg"
+favicon = "assets/favicon.svg"
 features = [
   "announce.dismiss",
   "content.action.edit",

@@ -66,11 +66,11 @@ PyYAML follows YAML 1.1. yamluna follows YAML 1.2 unless a document starts with 
 | In the file | PyYAML | yamluna |
 | --- | --- | --- |
 | `yes`, `no`, `on`, `off` | `True` / `False` | The strings `'yes'`, `'no'`, `'on'`, `'off'` |
-| `0755` | `493`, an octal number | `755` |
+| `0755` | `493`, an octal number | `755`, or `493` under `%YAML 1.1` |
 | `0o755` | The string `'0o755'` | `493` |
 | `1e3` | The string `'1e3'` | `1000.0` |
 
-`true`, `false`, `null`, and `~` load the same way in both. Dates and timestamps load as `datetime` values in both, except that a date alone is a `datetime.date` in PyYAML and a `TimeStamp`, a `datetime` subclass, in yamluna. For files that rely on `yes` and `on` being booleans, add `%YAML 1.1` and `---` at the top, and yamluna reads those spellings as booleans.
+`true`, `false`, `null`, and `~` load the same way in both. Dates and timestamps load as `datetime` values in both, except that a date alone is a `datetime.date` in PyYAML and a `TimeStamp`, a `datetime` subclass, in yamluna. For files that rely on YAML 1.1 rules, add `%YAML 1.1` and `---` at the top: yamluna then reads `yes` and `on` as booleans and `0755` as an octal number, and writes them back with the same spelling.
 
 Loaded values are subclasses of the built-in types: mappings are `dict`, lists are `list`, and numbers written in a form Python would not reproduce, such as `0x1F`, keep that spelling in `int` and `float` subclasses. `isinstance` checks, arithmetic, and `json.dumps` work unchanged; `type(value) is dict` does not. One exception: `true` and `false` load as plain `bool`, but other spellings such as `True` load as `ScalarBoolean`, an `int` subclass, because `bool` cannot be subclassed. `json.dumps` writes it as `1`, so convert with `bool(value)` first.
 

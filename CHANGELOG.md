@@ -12,7 +12,7 @@ First alpha release of yamluna: YAML for Python, out of the box.
 - Preserve comments when reordering or deleting entries, subject to the limits below.
 - Read and write multiple documents with `load_all()` and `dump_all()`.
 - Choose styles for new strings and numbers, indentation, and document markers.
-- Read YAML 1.2 and documents that explicitly declare YAML 1.1.
+- Read YAML 1.2, and documents that explicitly declare YAML 1.1 with its booleans (`yes`, `on`) and octal numbers (`0755`).
 - Support Python 3.11+, with type annotations. Licensed under MIT or Apache-2.0.
 
 The [comparison](https://fedonman.github.io/yamluna/comparison/) has features, round-trip results, and speed measurements against PyYAML, ruamel.yaml, py-yaml12, and StrictYAML.

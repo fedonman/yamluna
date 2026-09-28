@@ -52,7 +52,7 @@ from yamluna.error import (
 from yamluna.registry import TagRegistry
 from yamluna.scalarbool import ScalarBoolean
 from yamluna.scalarfloat import ScalarFloat
-from yamluna.scalarint import BinaryInt, HexInt, OctalInt, ScalarInt
+from yamluna.scalarint import BinaryInt, HexInt, OctalInt, ScalarInt, Yaml11OctalInt
 from yamluna.scalarstring import (
     DoubleQuotedScalarString,
     FoldedScalarString,
@@ -198,6 +198,37 @@ def test_yaml_11_boolean_spellings(lexeme: str, expected: bool) -> None:  # noqa
     d = doc(mapping([('flag', lexeme)]), version=(1, 1))
     assert construct(d)['flag'].lexeme() == lexeme
     assert construct(doc(mapping([('flag', lexeme)])))['flag'] == lexeme
+
+
+@pytest.mark.parametrize(
+    ('lexeme', 'expected'),
+    [('0755', 0o755), ('00755', 0o755), ('-012', -0o12), ('0_755', 0o755), ('00', 0)],
+)
+def test_yaml_11_octal_spelling(lexeme: str, expected: int) -> None:
+    """`0755` is octal only under an explicit %YAML 1.1; YAML 1.2 reads it as decimal."""
+    got = resolve(lexeme, version=(1, 1))
+    assert type(got) is Yaml11OctalInt
+    assert got == expected and got.lexeme() == lexeme
+    assert resolve(lexeme) == int(lexeme.replace('_', ''), 10)
+
+
+@pytest.mark.parametrize('lexeme', ['0', '09', '12', '0o755'])
+def test_yaml_11_leaves_other_integers_alone(lexeme: str) -> None:
+    assert resolve(lexeme, version=(1, 1)) == resolve(lexeme)
+
+
+def test_yaml_11_octal_keeps_its_spelling_through_arithmetic() -> None:
+    value = resolve('0755', version=(1, 1))
+    value += 1
+    assert value == 0o756 and value.lexeme() == '0756'
+
+
+def test_yaml_11_octal_under_an_explicit_int_tag() -> None:
+    d = doc(
+        mapping([('mode', scalar('0755', tag=('!!', 'int', 'tag:yaml.org,2002:int')))]),
+        version=(1, 1),
+    )
+    assert construct(d)['mode'] == 0o755
 
 
 def test_scalars_through_a_document() -> None:

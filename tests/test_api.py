@@ -432,6 +432,18 @@ def test_setting_version_forces_the_directive_and_the_marker() -> None:
     assert yaml.dump(yaml.load('a: 1\n')) == '%YAML 1.2\n---\na: 1\n'
 
 
+@pytest.mark.usefixtures('pipeline')
+def test_a_yaml_11_octal_loads_as_octal_and_keeps_its_spelling() -> None:
+    yaml = YAML()
+    source = '%YAML 1.1\n---\nmode: 0755\n'
+    config = yaml.load(source)
+    assert config['mode'] == 0o755
+    assert yaml.dump(config) == source
+    config['mode'] += 1
+    assert yaml.dump(config) == '%YAML 1.1\n---\nmode: 0756\n'
+    assert YAML().load('mode: 0755\n')['mode'] == 755
+
+
 # -- registered classes through the whole pipeline --------------------------------------
 
 

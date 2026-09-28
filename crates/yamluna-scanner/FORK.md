@@ -116,6 +116,6 @@ src/parser.rs      Event::Comment, AnchorRef, StructureStyle, Parser::{keep_comm
 src/scanner.rs     TokenType::Comment, keep_comments/pending_comments plumbing, B3, B4, B5
 src/input.rs       skip_ws_to_eol comment capture, fetch_while_non_breakz
 src/input/str.rs   skip_ws_to_eol override kept in sync
-src/lib.rs         re-export AnchorRef and StructureStyle
+src/lib.rs         re-export AnchorRef and StructureStyle; crate docs describe the fork
 tests/*            updated for the new event shapes; strings the suite compares are unchanged
 ```

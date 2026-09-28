@@ -1,6 +1,9 @@
 [package]
 name = "yamluna-core"
 description = "Round-trip YAML document model, loader and emitter for yamluna."
+readme = "README.md"
+categories = ["encoding", "parser-implementations"]
+keywords = ["yaml", "round-trip", "comments", "emitter", "parser"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

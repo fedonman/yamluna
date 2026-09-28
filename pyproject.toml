@@ -46,6 +46,13 @@ manifest-path = "crates/yamluna-py/Cargo.toml"
 python-source = "python"
 module-name = "yamluna._yamluna"
 features = ["pyo3/extension-module"]
+# maturin lists the root licence files in PKG-INFO but leaves them out of the sdist when
+# `manifest-path` points into a workspace, and PyPI rejects an sdist that is missing them.
+include = [
+  { path = "LICENSE", format = "sdist" },
+  { path = "LICENSE-APACHE", format = "sdist" },
+  { path = "LICENSE-MIT", format = "sdist" },
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

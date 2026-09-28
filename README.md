@@ -147,7 +147,7 @@ Pass a `Path` to read or write a file: `yaml.load(Path('config.yaml'))` and `yam
 
 ## Learn more
 
-[Documentation][docs] · [User guide][guide] · [API reference][api] · [Changelog](CHANGELOG.md) · [Report an issue](https://github.com/fedonman/yamluna/issues)
+[Documentation][docs] · [User guide][guide] · [API reference][api] · [Changelog][changelog] · [Report an issue](https://github.com/fedonman/yamluna/issues)
 
 Python 3.11+ · YAML 1.2, with support for documents declaring YAML 1.1 · MIT or Apache-2.0
 
@@ -160,3 +160,4 @@ Python 3.11+ · YAML 1.2, with support for documents declaring YAML 1.1 · MIT o
 [guide]: https://fedonman.github.io/yamluna/guide/
 [classes]: https://fedonman.github.io/yamluna/guide/custom-classes/
 [api]: https://fedonman.github.io/yamluna/api/
+[changelog]: https://fedonman.github.io/yamluna/changelog/

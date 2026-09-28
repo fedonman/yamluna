@@ -1,6 +1,4 @@
-# yamluna
-
-**YAML for Python, out of the box.**
+![yamluna: YAML for Python, out of the box.](https://raw.githubusercontent.com/fedonman/yamluna/main/docs/assets/banner.svg)
 
 yamluna reads and writes YAML without setup. A plain `YAML()` loads a file, lets you change it, and saves it with everything you did not touch exactly as it was written: comments, blank lines, quotes, indentation, anchors, and document markers. Register a class and its objects go into the file under a tag and load back as themselves, whether it is your own dataclass or a type you do not own, such as numpy's `ndarray`. Parsing and writing happen in Rust.
 
